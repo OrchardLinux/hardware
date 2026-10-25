@@ -1,0 +1,61 @@
+name: Verify public manifests
+on:
+  workflow_dispatch:
+    inputs:
+      cli_tag:
+        description: Published CLI wheel-pair requirements to test
+        required: true
+        default: v0.1.8
+      omarchy_publish_run:
+        description: Exact Omarchy publication run to await
+        required: true
+      launcher_run:
+        description: Exact shared-launcher build and attachment run to await
+        required: true
+permissions:
+  contents: read
+  actions: read
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CLI_TAG: ${{ inputs.cli_tag }}
+      PUBLISH_RUN: ${{ inputs.omarchy_publish_run }}
+      LAUNCHER_RUN: ${{ inputs.launcher_run }}
+    steps:
+      - name: Wait for the exact publication jobs
+        run: |
+          [[ "$PUBLISH_RUN" =~ ^[0-9]+$ && "$LAUNCHER_RUN" =~ ^[0-9]+$ ]]
+          [[ "$CLI_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          gh run watch "$PUBLISH_RUN" --repo OrchardLinux/omarchy-a --interval 10 --exit-status
+          gh run watch "$LAUNCHER_RUN" --repo OrchardLinux/hardware --interval 10 --exit-status
+      - name: Install only the public released wheel pair
+        run: |
+          echo "ORCHARD_HOME=$RUNNER_TEMP/orchard-public-verification" >> "$GITHUB_ENV"
+          python3 -m venv .venv
+          .venv/bin/python -m pip install --only-binary=:all: -r "https://github.com/OrchardLinux/cli/releases/download/$CLI_TAG/requirements.txt"
+          .venv/bin/python -m pip check
+      - name: Resolve both live distro indexes and the device-selected launcher
+        run: |
+          for distro in minimal-linux omarchy-a; do
+            .venv/bin/orchard distros "$distro" "https://github.com/OrchardLinux/$distro/releases/latest/download/index.toml"
+            .venv/bin/orchard resolve "$distro" --boot > "$distro-boot.json"
+            .venv/bin/orchard resolve "$distro" > "$distro-install.json"
+          done
+          launcher=$(.venv/bin/python -c 'from orchard_cli.releases import launch_manifest; print(launch_manifest("j71b"))')
+          .venv/bin/orchard resolve "$launcher" --boot > launcher-boot.json
+          .venv/bin/python - <<'PY'
+          import json
+          from pathlib import Path
+          for name in ('minimal-linux', 'omarchy-a', 'launcher'):
+              boot = json.loads(Path(name + '-boot.json').read_text())
+              assert set(boot['files']) == {'pongo', 'recovery'}
+              assert boot['manifest']['profile'] == 'j71b'
+              if name != 'launcher':
+                  installed = json.loads(Path(name + '-install.json').read_text())
+                  assert set(installed['files']) == {'pongo', 'recovery', 'root'}
+                  assert installed['manifest']['profile'] == 'j71b'
+          print('PASS: public distro discovery, boot-only/full receipt verification, and default launcher resolution')
+          PY
