@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 import shutil
 import subprocess
+from orchard_hardware import buildenv
 
 
 def main():
@@ -38,13 +39,16 @@ def main():
     for p in builtin:
         shutil.copyfile(p, dest / p.name)
     (dest / 'modules.order').write_text(''.join(n + '\n' for n in names))
-    podman = shutil.which('podman')
-    if podman is None:
-        parser.error('Podman is required')
-    subprocess.run([podman, 'run', '--rm', '--network', 'none', '--userns', 'keep-id',
-                    '-v', f'{args.output.resolve()}:/stage:rw',
-                    'localhost/orchard-hardware-kernel-toolchain:bookworm',
-                    'depmod', '-b', '/stage', release], check=True)
+    if buildenv.native():
+        subprocess.run(['depmod', '-b', str(args.output.resolve()), release], check=True)
+    else:
+        podman = shutil.which('podman')
+        if podman is None:
+            parser.error('Podman is required')
+        subprocess.run([podman, 'run', '--rm', '--network', 'none', '--userns', 'keep-id',
+                        '-v', f'{args.output.resolve()}:/stage:rw',
+                        'localhost/orchard-hardware-kernel-toolchain:bookworm',
+                        'depmod', '-b', '/stage', release], check=True)
     print(f'Staged {len(rows)} modules for {release} in {args.output}')
 
 

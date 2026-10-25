@@ -6,8 +6,13 @@ on:
     tags: ['v*']
     paths-ignore: ['docs/**', '**/*.md']
   workflow_dispatch:
+    inputs:
+      reuse_run_id:
+        description: Exact prior run supplying unchanged tools and Pongo artifacts
+        required: false
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: hardware-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref_type != 'tag' }}
@@ -138,15 +143,27 @@ jobs:
       ORCHARD_BUILD_ENV_ID: debian-bookworm-arm64-llvm19-rust1.90.0
       RUSTUP_TOOLCHAIN: '1.90.0'
     steps:
+      - name: Reuse unchanged successful outputs
+        if: inputs.reuse_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: hardware-tools
+          path: out
+          run-id: ${{ inputs.reuse_run_id }}
+          github-token: ${{ github.token }}
       - run: apt-get update && apt-get install -y git ca-certificates python3 python3-venv
+        if: inputs.reuse_run_id == ''
       - uses: actions/checkout@v4
+        if: inputs.reuse_run_id == ''
         with:
           persist-credentials: false
       - uses: actions/download-artifact@v4
+        if: inputs.reuse_run_id == ''
         with:
           name: hardware-packages
           path: out/packages
       - name: Install the combined toolchain once and reuse the wheel
+        if: inputs.reuse_run_id == ''
         run: |
           bash ci/install-toolchains recovery m1n1
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
@@ -154,11 +171,13 @@ jobs:
           .venv/bin/python -m pip install out/packages/*.whl
           echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
       - name: Build static recovery tools
+        if: inputs.reuse_run_id == ''
         run: |
           OMA_RECOVERY_TOOLS_WORK="$PWD/out/recovery-tools" bash boot/initramfs/j71b/recovery/build-tools
           mkdir -p out/components/boot
           cp out/recovery-tools/bin/* out/components/boot/
       - name: Build quiet loader
+        if: inputs.reuse_run_id == ''
         run: |
           bash boot/m1n1/build j71b --output "$PWD/out/components/quiet/m1n1.bin" \
             --work-dir "$PWD/out/loader-work" --extra-patch "$PWD/boot/quiet/m1n1.patch" \
@@ -178,18 +197,30 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 60
     steps:
+      - name: Reuse unchanged successful outputs
+        if: inputs.reuse_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: hardware-pongo
+          path: out
+          run-id: ${{ inputs.reuse_run_id }}
+          github-token: ${{ github.token }}
       - uses: actions/checkout@v4
+        if: inputs.reuse_run_id == ''
         with:
           persist-credentials: false
       - uses: actions/setup-python@v5
+        if: inputs.reuse_run_id == ''
         with:
           python-version: '3.12'
       - name: Fingerprint the Apple toolchain
+        if: inputs.reuse_run_id == ''
         id: toolchain
         run: |
           fingerprint=$({ sw_vers; xcodebuild -version; xcrun --sdk iphoneos --show-sdk-build-version; xcrun clang --version; } | shasum -a 256 | awk '{print $1}')
           echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v4
+        if: inputs.reuse_run_id == ''
         id: pongo-cache
         with:
           path: |
@@ -197,12 +228,13 @@ jobs:
             out/pongo-source.tar.gz
           key: quiet-pongo-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('boot/quiet/build-pongo.py', 'boot/quiet/pongo.patch') }}
       - name: Build quiet Pongo once (including newlib)
-        if: steps.pongo-cache.outputs.cache-hit != 'true'
+        if: inputs.reuse_run_id == '' && steps.pongo-cache.outputs.cache-hit != 'true'
         run: |
           python boot/quiet/build-pongo.py --output out/quiet/pongo.bin --work-dir out/pongo-work
           tar -C out/quiet -czf out/quiet-pongo.tar.gz pongo.bin
           tar -C out/pongo-work/source --exclude=.git -czf out/pongo-source.tar.gz .
       - name: Record cache usage
+        if: inputs.reuse_run_id == ''
         env:
           CACHE_HIT: ${{ steps.pongo-cache.outputs.cache-hit }}
         run: |
