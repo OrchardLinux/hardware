@@ -16,6 +16,18 @@ on:
       omarchy_tag:
         description: Optional published Omarchy A release to support as well
         required: false
+      hardware_run_id:
+        description: Optional exact hardware CI run for first-release assembly
+        required: false
+      cli_run_id:
+        description: Exact CLI CI run when using first-release assembly
+        required: false
+      minimal_run_id:
+        description: Exact Minimal Linux CI run when using first-release assembly
+        required: false
+      omarchy_run_id:
+        description: Exact Omarchy CI run when including its first-release image
+        required: false
       attach_assets:
         description: Attach new launcher assets to the selected hardware release (never overwrite)
         type: boolean
@@ -27,6 +39,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
+      actions: read
       id-token: write
       attestations: write
       artifact-metadata: write
@@ -43,7 +56,61 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Download exact hardware build inputs
+        if: inputs.hardware_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: hardware-release-assets
+          path: out/hardware
+          repository: OrchardLinux/hardware
+          run-id: ${{ inputs.hardware_run_id }}
+          github-token: ${{ github.token }}
+      - name: Download exact cli build inputs
+        if: inputs.hardware_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: cli-wheel-pair
+          path: out/cli
+          repository: OrchardLinux/cli
+          run-id: ${{ inputs.cli_run_id }}
+          github-token: ${{ github.token }}
+      - name: Download exact minimal-linux build inputs
+        if: inputs.hardware_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: minimal-release-assets
+          path: out/minimal
+          repository: OrchardLinux/minimal-linux
+          run-id: ${{ inputs.minimal_run_id }}
+          github-token: ${{ github.token }}
+      - name: Download exact omarchy-a build inputs
+        if: inputs.hardware_run_id != '' && inputs.omarchy_tag != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: omarchy-release-assets
+          path: out/omarchy
+          repository: OrchardLinux/omarchy-a
+          run-id: ${{ inputs.omarchy_run_id }}
+          github-token: ${{ github.token }}
+      - name: Verify and install exact first-release inputs
+        if: inputs.hardware_run_id != ''
+        run: |
+          [[ "$HARDWARE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ && "$CLI_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$MINIMAL_TAG" =~ ^v[A-Za-z0-9][A-Za-z0-9._-]*$ ]]
+          [[ -z "$OMARCHY_TAG" || "$OMARCHY_TAG" =~ ^v[A-Za-z0-9][A-Za-z0-9._-]*$ ]]
+          cmp out/cli/orchard_hardware-*.whl out/hardware/orchard_hardware-*.whl
+          python -m pip install --only-binary=:all: out/cli/*.whl
+          python -c 'import importlib.metadata as m, os; assert "v" + m.version("orchard-hardware") == os.environ["HARDWARE_TAG"]; assert "v" + m.version("orchard-cli") == os.environ["CLI_TAG"]'
+          python -m pip check
+          sudo apt-get update && sudo apt-get install -y zstd
+          (cd out/hardware && sha256sum --check --ignore-missing SHA256SUMS)
+          (cd out/minimal && sha256sum --check --ignore-missing SHA256SUMS)
+          if [[ -n "$OMARCHY_TAG" ]]; then
+            (cd out/omarchy && sha256sum --check --ignore-missing SHA256SUMS)
+          fi
+          tar -xzf out/hardware/j71b-components.tar.gz -C out
       - name: Fetch pinned public inputs
+        if: inputs.hardware_run_id == ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
