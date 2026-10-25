@@ -10,6 +10,9 @@ on:
       reuse_run_id:
         description: Exact prior run supplying unchanged tools and Pongo artifacts
         required: false
+      reuse_package_run_id:
+        description: Exact prior run supplying the unchanged hardware wheel (sdist is refreshed)
+        required: false
 permissions:
   contents: read
   actions: read
@@ -31,8 +34,26 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
         run: python -c 'import os, tomllib; assert os.environ["TAG"] == "v" + tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]'
+      - name: Reuse the unchanged hardware wheel
+        if: inputs.reuse_package_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: hardware-packages
+          path: out/reused
+          run-id: ${{ inputs.reuse_package_run_id }}
+          github-token: ${{ github.token }}
       - name: Build the distribution once for all jobs
-        run: python -m pip install build && python -m build
+        env:
+          REUSE_PACKAGE_RUN_ID: ${{ inputs.reuse_package_run_id }}
+        run: |
+          args=()
+          if [[ -n "$REUSE_PACKAGE_RUN_ID" ]]; then
+            args+=(--sdist)
+            mkdir -p dist
+            cp out/reused/*.whl dist/
+          fi
+          python -m pip install build
+          python -m build "${args[@]}"
       - uses: actions/upload-artifact@v4
         with:
           name: hardware-packages
@@ -228,7 +249,7 @@ jobs:
             out/pongo-source.tar.gz
           key: quiet-pongo-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('boot/quiet/build-pongo.py', 'boot/quiet/pongo.patch') }}
       - name: Build quiet Pongo once (including newlib)
-        if: inputs.reuse_run_id == '' && steps.pongo-cache.outputs.cache-hit != 'true'
+        if: steps.pongo-cache.outputs.cache-hit != 'true' && inputs.reuse_run_id == ''
         run: |
           python boot/quiet/build-pongo.py --output out/quiet/pongo.bin --work-dir out/pongo-work
           tar -C out/quiet -czf out/quiet-pongo.tar.gz pongo.bin
