@@ -45,5 +45,10 @@ jobs:
           gh attestation verify assets/SHA256SUMS --repo "$GH_REPO"
       - name: Publish the exact existing assets without rebuilding or overwriting
         run: |
-          gh release create "$TAG" assets/* --target "$SOURCE_SHA" --latest --title "$TAG" \
-            --notes 'Automated build and checksum verification passed. Experimental: physical-device qualification is not claimed.'
+          if gh release view "$TAG" --json assets >/dev/null 2>&1; then
+            [[ "$(gh release view "$TAG" --json assets --jq '.assets | length')" == 0 ]]
+            gh release upload "$TAG" assets/*
+          else
+            gh release create "$TAG" assets/* --target "$SOURCE_SHA" --latest --title "$TAG" \
+              --notes 'Automated build and checksum verification passed. Experimental: physical-device qualification is not claimed.'
+          fi
