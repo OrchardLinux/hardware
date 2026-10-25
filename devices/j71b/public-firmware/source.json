@@ -1,0 +1,21 @@
+{
+  "source": "https://www.kernel.org/pub/software/network/wireless-regdb/wireless-regdb-2025.10.07.tar.xz",
+  "source_sha256": "d4c872a44154604c869f5851f7d21d818d492835d370af7f58de8847973801c3",
+  "alpine_package": "wireless-regdb-2025.10.07-r0",
+  "apk_sha256": "630695a73d08fde54c1a0ea40d160a37cc50746977885a882ddd062e09161e1d",
+  "verification": "Installed through Alpine APK signature checking; database and detached signature byte-identical to upstream release. Kernel signature enforcement remains enabled.",
+  "files": {
+    "regulatory.db": {
+      "bytes": 6328,
+      "sha256": "5560f4f0fdac7d1bb2adf8d4d083f39e3bee5ba55192feadadc091df55a813eb"
+    },
+    "regulatory.db.p7s": {
+      "bytes": 1085,
+      "sha256": "5dd27969661bed1e021ce435f535a53f201705bda14c2dba0db6353d1cdc6fff"
+    },
+    "LICENSE": {
+      "bytes": 880,
+      "sha256": "678b0df753c86198fc496d1f1033429bbd57f101472132ee7eaaf9f5e0a7fae1"
+    }
+  }
+}

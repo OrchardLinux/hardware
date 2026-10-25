@@ -1,0 +1,33 @@
+diff --git a/drivers/nvme/host/pci.c b/drivers/nvme/host/pci.c
+--- a/drivers/nvme/host/pci.c
++++ b/drivers/nvme/host/pci.c
+@@ -39,4 +39,7 @@ static bool j71b_ro_test;
+ module_param(j71b_ro_test, bool, 0000);
+ MODULE_PARM_DESC(j71b_ro_test, "Explicit J71b read-only storage experiment opt-in");
++static bool j71b_rw;
++module_param(j71b_rw, bool, 0444);
++MODULE_PARM_DESC(j71b_rw, "Explicit J71b recovery read-write NVMe opt-in");
+ static struct nvme_dev *j71b_current;
+ static bool j71b_stopping, j71b_quiesced;
+@@ -1328,6 +1331,6 @@ static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
+ 
+ 	/* Both single and batched requests reach this BEFORE DMA/start/submission. */
+ 	if (of_machine_is_compatible("apple,j71b") &&
+-	    !j71b_ro_command_allowed(((struct nvme_queue *)
++	    !j71b_rw && !j71b_ro_command_allowed(((struct nvme_queue *)
+ 			req->mq_hctx->driver_data)->qid,
+ 			(const unsigned char *)&iod->cmd)) {
+@@ -3814,6 +3817,6 @@ static int nvme_probe(struct pci_dev *pdev, const struct pci_device_id *id)
+ 	int result = -ENOMEM;
+ 
+ 	if (of_machine_is_compatible("apple,j71b") &&
+-	    (!j71b_ro_test || pdev->vendor != PCI_VENDOR_ID_APPLE ||
++	    (!(j71b_ro_test || j71b_rw) || pdev->vendor != PCI_VENDOR_ID_APPLE ||
+ 	     pdev->device != PCI_DEVICE_ID_APPLE_ANS_NVME))
+ 		return -EPERM;
+@@ -4395,4 +4398,4 @@ static int __init nvme_init(void)
+ {
+-	if (of_machine_is_compatible("apple,j71b") && !j71b_ro_test)
++	if (of_machine_is_compatible("apple,j71b") && j71b_ro_test == j71b_rw)
+ 		return -EPERM;
+ 	if (of_machine_is_compatible("apple,j71b")) {

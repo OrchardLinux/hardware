@@ -1,0 +1,10 @@
+{
+  "busybox": {
+    "url": "https://deb.debian.org/debian/pool/main/b/busybox/busybox-static_1.35.0-4+deb12u1+b1_arm64.deb",
+    "sha256": "732c9135564fc71337e0e05fb4da4d11e6c28c1834bce3e405e575afef2a52f5"
+  },
+  "dropbear": {
+    "url": "https://dropbear.nl/mirror/releases/dropbear-2026.94.tar.bz2",
+    "sha256": "e098034a843699200c8c977a991fff73159735bf795d5f72ef672c41a6b1ae81"
+  }
+}

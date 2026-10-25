@@ -1,0 +1,13 @@
+#!/bin/sh
+# Verify the installed payload and the initramfs activation receipt, read-only.
+set -eu
+[ "$(uname -r)" = @KERNEL_RELEASE@ ]
+[ "$(tr '\000' '\n' < /proc/device-tree/compatible | head -1)" = apple,j71b ]
+[ "$(awk '{print}' /sys/class/block/nvme0n1p1/ro)" = 1 ]
+[ "$(awk '{print}' /sys/module/nvme/parameters/j71b_ro_failed)" = N ]
+[ -e /run/ipadlinux/j71b-early-ready ]
+[ -r /sys/module/j71b_charge_policy/parameters/sleep_parked ]
+[ ! -d /sys/module/j71b_charger ]
+[ "$(awk '{print}' /sys/module/j71b_z2/parameters/result)" = 0 ]
+[ -d /sys/class/net/wlan0 ] && [ -d /sys/class/bluetooth/hci0 ]
+sha256sum -c /usr/share/ipadlinux/hardware.SHA256SUMS >/dev/null

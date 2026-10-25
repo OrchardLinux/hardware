@@ -1,0 +1,48 @@
+#!/bin/sh
+# Device-owned, single-attempt touch sequence. Never force-unload on failure.
+set -eu
+[ "${1:-}" = --activate ] && [ "$#" -eq 1 ] || exit 2
+[ "$(uname -r)" = @KERNEL_RELEASE@ ]
+[ "$(awk '$2=="/" {print $3}' /proc/mounts)" = rootfs ]
+[ -d /sys/module/brcmfmac ] && [ -d /sys/module/nvme ]
+[ "$(cat /sys/module/nvme/parameters/j71b_ro_failed)" = N ]
+for part in /sys/class/block/nvme0n1p*; do [ "$(cat "$part/ro")" = 1 ]; done
+runtime=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+[ -d "$runtime/touch-start" ] && [ -d "$runtime/touch-runtime" ]
+[ ! -d /sys/module/j71b_z2 ]
+[ "$(dmesg | grep -c 'apple-dart.*translation fault' || true)" = 0 ]
+logdir=/run/orchard/touch
+[ ! -e "$logdir" ]
+mkdir -m700 "$logdir"
+stage() {
+    sh "$runtime/$1/run-on-ipad.sh" "$2" >"$logdir/$1-$2.log" 2>&1 || {
+        echo "TOUCH_STAGE_FAILED:$1:$2"; exit 1;
+    }
+}
+async_stage() {
+    sh "$runtime/$1/launch-on-ipad.sh" "$2" >"$logdir/$1-$2-launch.log" 2>&1
+    n=0
+    while [ ! -f "/run/$1/$2.exit" ]; do
+        n=$((n+1)); [ "$n" -le 20 ] || { echo "TOUCH_TIMEOUT:$1:$2"; exit 1; }
+        sleep 1
+    done
+    [ "$(cat "/run/$1/$2.exit")" = 0 ] || { echo "TOUCH_STAGE_FAILED:$1:$2"; exit 1; }
+}
+stage touch-start start
+async_stage touch-start deny
+stage touch-start attach-dry
+stage touch-start enable
+stage touch-start arm-reset
+async_stage touch-start reset
+stage touch-start arm-firmware
+async_stage touch-start firmware
+stage touch-start restore
+stage touch-runtime start
+stage touch-runtime attach-dry
+stage touch-runtime enable
+stage touch-runtime arm
+async_stage touch-runtime activate
+[ "$(cat /sys/module/j71b_z2/parameters/result)" = 0 ]
+[ "$(dmesg | grep -c 'apple-dart.*translation fault' || true)" = 0 ]
+[ "$(cat /sys/module/nvme/parameters/j71b_ro_failed)" = N ]
+echo TOUCH_INPUT_READY

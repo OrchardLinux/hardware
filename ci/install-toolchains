@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Install the union of the local recipes' package lists in one APT transaction.
+set -euo pipefail
+here=$(cd "$(dirname "$0")/.." && pwd)
+[[ $# -gt 0 ]] || { echo 'Select kernel, recovery and/or m1n1' >&2; exit 2; }
+recipes=()
+rust=false
+for name in "$@"; do
+  case "$name" in
+    kernel) recipes+=("$here/kernel/install-toolchain");;
+    recovery) recipes+=("$here/boot/initramfs/j71b/recovery/install-toolchain");;
+    m1n1) recipes+=("$here/boot/m1n1/install-toolchain"); rust=true;;
+    *) echo "Unknown toolchain: $name" >&2; exit 2;;
+  esac
+done
+list=$(mktemp)
+trap 'rm -f "$list"' EXIT
+for recipe in "${recipes[@]}"; do bash "$recipe" --packages >> "$list"; done
+mapfile -t packages < <(sort -u "$list")
+apt-get update
+apt-get install -y --no-install-recommends "${packages[@]}"
+if "$rust"; then bash "$here/boot/m1n1/install-toolchain" --rust-only; fi

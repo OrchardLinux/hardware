@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source='' build='' modules='' output='' localversion=''
+while (($#)); do
+  case "$1" in
+    --source) source=$2; shift 2;;
+    --build) build=$2; shift 2;;
+    --modules) modules=$2; shift 2;;
+    --output) output=$2; shift 2;;
+    --localversion) localversion=$2; shift 2;;
+    *) echo "Unknown argument: $1" >&2; exit 2;;
+  esac
+done
+if [[ ! -d "$source" || ! -f "$build/Module.symvers" || ! -d "$modules" ||
+      -z "$output" || -z "$localversion" || -e "$output" ]]; then
+  echo 'Usage: ./kernel/build-modules --source KERNEL_SOURCE --build KERNEL_OUTPUT --modules MODULE_SOURCES --localversion SUFFIX --output DIRECTORY' >&2
+  exit 2
+fi
+source=$(cd "$source" && pwd)
+build=$(cd "$build" && pwd)
+mkdir -p "$output"
+output=$(cd "$output" && pwd)
+groups=()
+for directory in "$modules"/*; do
+  [[ -d "$directory" && -f "$directory/Makefile" ]] || continue
+  group=${directory##*/}
+  mkdir -p "$output/$group"
+  cp -R "$directory/." "$output/$group/"
+  groups+=("$group")
+done
+[[ ${#groups[@]} -gt 0 ]] || { echo 'No external module groups' >&2; exit 1; }
+# shellcheck disable=SC2016 # Variables below belong to the recipe shell.
+python3 -m orchard_hardware.buildenv run \
+  --bind "$source:/src:ro" --bind "$build:/out:rw" --bind "$output:/modules:rw" \
+  --env "LOCALVERSION=$localversion" \
+  --image localhost/orchard-hardware-kernel-toolchain:bookworm -- bash -euc '
+    for group in "$ORCHARD_MODULES"/*; do
+      make -C "$ORCHARD_SRC" O="$ORCHARD_OUT" -j2 LLVM=-19 ARCH=arm64 \
+        LOCALVERSION="$LOCALVERSION" M="$group" modules
+    done
+  '
+echo "External modules: $output"

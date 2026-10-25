@@ -1,0 +1,16 @@
+Default project license: GPL-2.0-or-later (LICENSE).
+Kernel sources and patches: existing per-file SPDX identifiers; GPL version 2 text in LICENSE.
+
+Selected T8010 SmartIO, DMA, SPI and touchscreen support in the J71b kernel
+patches and modules incorporates or adapts work by Paul Praschl (Pauli1Go):
+https://github.com/Pauli1Go/HoolockLinux
+Reference revision: d49ac41cb898881457a97bb3cd44b7d92ff50a8c.
+The J71b firmware startup sequence was adapted from the J172 implementation;
+firmware packet validation also follows Pauli1Go's makez2fw format:
+https://github.com/Pauli1Go/HoolockLinux-linux-firmware
+Reference revision: 944541e67b4c603df328c77d30093551de802c17.
+Original copyright notices and per-file licenses remain applicable. This is
+selective reuse and adaptation, not a replacement of the pinned base kernel.
+
+m1n1: Asahi Linux Contributors, MIT (LICENSES/m1n1.txt).
+Wireless regulatory database: LICENSES/wireless-regdb.txt.

@@ -1,0 +1,110 @@
+--- a/src/kboot.c
++++ b/src/kboot.c
+@@ -352,6 +352,30 @@
+     return 0;
+ }
+ 
++/* J71b diagnostic: publish firmware-owned HMB; no PCIe/NVMe HW changes. */
++static int dt_set_nvme_hmb(void)
++{
++    u64 region[2];
++    fdt64_t reg[2];
++    int node = fdt_path_offset(dt, "nvme-hmb");
++    if (node < 0)
++        return 0;
++    int adt_node = adt_path_offset(adt, "/arm-io/nvme-mmu0");
++    if (adt_node < 0)
++        bail("ADT: /arm-io/nvme-mmu0 not found\n");
++    if (ADT_GETPROP_ARRAY(adt, adt_node, "sart-region", region) < 0 ||
++        !region[0] || !region[1] ||
++        (region[0] & 0xfffff) || (region[1] & 0xfffff) ||
++        region[0] + region[1] < region[0])
++        bail("ADT: invalid firmware HMB region\n");
++    fdt64_st(&reg[0], region[0]);
++    fdt64_st(&reg[1], region[1]);
++    if (fdt_setprop(dt, node, "reg", reg, sizeof(reg)))
++        bail("FDT: failed to publish firmware HMB\n");
++    printf("FDT: firmware HMB 0x%lx size 0x%lx\n", region[0], region[1]);
++    return 0;
++}
++
+ static int dt_set_memory(void)
+ {
+     int anode = adt_path_offset(adt, "/chosen");
+@@ -788,6 +812,11 @@
+         bail("ADT: /chosen not found\n");
+ 
+     for (size_t i = 0; i < sizeof(mac_address_devices) / sizeof(*mac_address_devices); i++) {
++        /* J71b provisions Wi-Fi MAC and calibration together from its own ADT. */
++        if (fdt_node_check_compatible(dt, 0, "apple,j71b") == 0 &&
++            !strcmp(mac_address_devices[i].alias, "wifi0"))
++            continue;
++
+         char propname[32];
+         snprintf(propname, sizeof(propname), "mac-address-%s", mac_address_devices[i].alias);
+ 
+@@ -996,8 +1025,55 @@
+     return 0;
+ }
+ 
++static int dt_set_wifi_j71b(void)
++{
++    const char *path = fdt_get_alias(dt, "wifi0");
++    if (!path)
++        return 0;
++
++    int node = fdt_path_offset(dt, path);
++    if (node < 0)
++        bail("FDT: J71b wifi0 alias points at nonexistent node\n");
++    if (fdt_getprop(dt, node, "local-mac-address", NULL) ||
++        fdt_getprop(dt, node, "brcm,cal-blob", NULL))
++        bail("FDT: J71b Wi-Fi identity already present; use generic public DTB\n");
++
++    int anode = adt_path_offset(adt, "/arm-io/uart2/wlan");
++    if (anode < 0) {
++        printf("ADT: J71b UART2 Wi-Fi node absent; not provisioning Wi-Fi\n");
++        return 0;
++    }
++    int chosen = adt_path_offset(adt, "/chosen");
++    if (chosen < 0)
++        bail("ADT: /chosen not found\n");
++
++    u32 mac_len, chosen_len, cal_len;
++    const u8 *mac = adt_getprop(adt, anode, "local-mac-address", &mac_len);
++    const u8 *chosen_mac = adt_getprop(adt, chosen, "mac-address-wifi0", &chosen_len);
++    const u8 *cal = adt_getprop(adt, anode, "wifi-calibration-msf", &cal_len);
++    const u8 empty_mac[6] = {0};
++    const u8 broadcast_mac[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
++    if (!mac || !chosen_mac || !cal || mac_len != 6 || chosen_len != 6 ||
++        cal_len != 1780 || (mac[0] & 1) ||
++        !memcmp(mac, empty_mac, sizeof(empty_mac)) ||
++        !memcmp(mac, broadcast_mac, sizeof(broadcast_mac)) ||
++        memcmp(mac, chosen_mac, 6)) {
++        printf("ADT: J71b Wi-Fi identity/calibration invalid or inconsistent; not provisioning\n");
++        return 0;
++    }
++
++    if (fdt_setprop(dt, node, "local-mac-address", mac, mac_len) < 0 ||
++        fdt_setprop(dt, node, "brcm,cal-blob", cal, cal_len) < 0)
++        bail("FDT: failed to set J71b Wi-Fi properties\n");
++    printf("FDT: J71b Wi-Fi MAC and calibration copied from live ADT (values suppressed)\n");
++    return 0;
++}
++
+ static int dt_set_wifi(void)
+ {
++    if (fdt_node_check_compatible(dt, 0, "apple,j71b") == 0)
++        return dt_set_wifi_j71b();
++
+     int anode = adt_path_offset(adt, "/arm-io/wlan");
+ 
+     if (anode < 0) {
+@@ -3030,6 +3106,8 @@
+      */
+     if (dt_set_memory())
+         return -1;
++    if (dt_set_nvme_hmb())
++        return -1;
+ 
+     if (fdt_pack(dt))
+         bail("FDT: fdt_pack() failed\n");

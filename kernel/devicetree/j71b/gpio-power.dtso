@@ -1,0 +1,19 @@
+/dts-v1/;
+/plugin/;
+
+/* J71b s2idle wake candidate. The Power/Home interrupts are GPIO child
+ * IRQs on AP GPIO group0. The GPIO PMGR domain was not marked always-on;
+ * genpd may shut it down in real s2idle even though gpio-keys is a wakeup
+ * source. Keep this domain powered AND disable PMGR hardware auto-gating
+ * while testing physical Power wake. This remains an untested hypothesis.
+ * No PMIC, storage, or user-specific data is included.
+ */
+/ {
+	fragment@0 {
+		target = <&ps_gpio>;
+		__overlay__ {
+			apple,always-on;
+			apple,manual-pm;
+		};
+	};
+};

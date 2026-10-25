@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Acquire pinned public inputs and build static AArch64 recovery tools.
+set -euo pipefail
+here=$(cd "$(dirname "$0")" && pwd)
+work="${OMA_RECOVERY_TOOLS_WORK:-$here/.work/tools}"
+mkdir -p "$work"
+python3 - "$here/upstream.lock" "$work" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+import tempfile
+import urllib.request
+
+lock = json.loads(pathlib.Path(sys.argv[1]).read_text())
+work = pathlib.Path(sys.argv[2])
+for component, filename in (('busybox', 'busybox.deb'),
+                            ('dropbear', 'dropbear.tar.bz2')):
+    item = lock[component]
+    target = work / filename
+    if target.exists():
+        source = target.open('rb')
+    else:
+        temporary = tempfile.NamedTemporaryFile(dir=work, prefix=filename + '.', delete=False)
+        try:
+            with urllib.request.urlopen(item['url']) as response, temporary:
+                for block in iter(lambda: response.read(1024 * 1024), b''):
+                    temporary.write(block)
+            source = pathlib.Path(temporary.name).open('rb')
+        except BaseException:
+            pathlib.Path(temporary.name).unlink(missing_ok=True)
+            raise
+    with source:
+        digest = hashlib.sha256()
+        for block in iter(lambda: source.read(1024 * 1024), b''):
+            digest.update(block)
+    if digest.hexdigest() != item['sha256']:
+        if not target.exists():
+            pathlib.Path(temporary.name).unlink(missing_ok=True)
+        raise SystemExit(f'{component} checksum differs from upstream.lock')
+    if not target.exists():
+        pathlib.Path(temporary.name).rename(target)
+    print(f'Verified {component}: {target}')
+PY
+python3 -m orchard_hardware.buildenv build --arch arm64 --file "$here/Containerfile" \
+  --image localhost/orchard-hardware-recovery-tools:bookworm --context "$here"
+python3 -m orchard_hardware.buildenv run --arch arm64 \
+  --bind "$work:/work:rw" --bind "$here:/recipe:ro" \
+  --image localhost/orchard-hardware-recovery-tools:bookworm -- bash /recipe/build-tools-in-container
+echo "Recovery tools: $work/bin"

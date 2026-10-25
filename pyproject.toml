@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "orchard-hardware"
+version = "0.1.9"
+description = "Hardware support, public recipes, runtime and image construction"
+readme = "README.md"
+license = "GPL-2.0-only AND GPL-2.0-or-later AND MIT AND ISC"
+license-files = ["LICENSE", "NOTICE", "LICENSES/*"]
+requires-python = ">=3.9"
+dependencies = ["tomli>=2; python_version < '3.11'"]
+
+[project.urls]
+Repository = "https://github.com/OrchardLinux/hardware"
+Documentation = "https://github.com/OrchardLinux/hardware/blob/main/BUILD.md"
+Issues = "https://github.com/OrchardLinux/hardware/issues"
+
+[tool.setuptools]
+include-package-data = false
+packages = ["orchard_hardware", "orchard_hardware.image", "orchard_hardware.apple", "orchard_hardware.boot", "orchard_hardware.boot.initramfs"]
+package-dir = {orchard_hardware = "."}
+
+[tool.setuptools.package-data]
+orchard_hardware = [
+  "devices/*/device.toml", "devices/*/firmware.json", "devices/*/public-firmware/*", "schemas/v1/*.json",
+  "launcher/*.py", "runtime/j71b/*.py", "runtime/j71b/phase2-hardware", "runtime/j71b/j71b-*",
+  "devices/j71b/touch/runtime/touch-activate", "devices/j71b/touch/runtime/*/*.sh",
+  "boot/initramfs/j71b/recovery/*.json", "boot/initramfs/j71b/recovery/Containerfile",
+  "boot/initramfs/j71b/recovery/init", "boot/initramfs/j71b/recovery/usb-gadget",
+  "boot/initramfs/j71b/recovery/authorize-key", "boot/initramfs/j71b/recovery/start-ssh",
+  "boot/initramfs/j71b/recovery/capture-adt", "boot/initramfs/j71b/recovery/udhcpd.conf",
+  "boot/initramfs/j71b/recovery/upstream.lock", "boot/initramfs/j71b/recovery/build-tools*",
+  "boot/initramfs/j71b/recovery/install-toolchain",
+  "boot/initramfs/j71b/busybox/*.py", "boot/initramfs/j71b/busybox/Containerfile",
+  "boot/quiet/*.py", "boot/quiet/*.patch",
+  "boot/m1n1/build", "boot/m1n1/install-toolchain", "boot/m1n1/Containerfile", "boot/m1n1/upstream.lock", "boot/m1n1/patches/*/*.patch",
+  "kernel/Containerfile", "kernel/install-toolchain", "kernel/build", "kernel/build-modules", "kernel/stage-modules.py",
+  "kernel/upstream.lock", "kernel/configs/*/*", "kernel/devicetree/*/*",
+  "kernel/patches/*/*.patch", "kernel/modules/*/*/*"
+]

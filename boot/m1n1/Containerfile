@@ -1,0 +1,4 @@
+FROM docker.io/library/debian:bookworm
+ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo PATH=/opt/cargo/bin:/usr/lib/llvm-19/bin:$PATH
+COPY install-toolchain /tmp/install-toolchain
+RUN bash /tmp/install-toolchain && rm /tmp/install-toolchain && rm -rf /var/lib/apt/lists/*

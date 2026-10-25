@@ -1,0 +1,18 @@
+#!/bin/bash
+set -euo pipefail
+work=${ORCHARD_WORK:-/work}
+[[ ! -e "$work/bin" ]] || { echo 'Tool output exists; choose a fresh work directory' >&2; exit 1; }
+build=$(mktemp -d "$work/build.XXXXXX")
+tar -xjf "$work/dropbear.tar.bz2" -C "$build"
+cd "$build/dropbear-2026.94"
+# Static musl avoids the installed system's NSS/libc ABI.
+printf '%s\n' '#define DROPBEAR_SVR_PASSWORD_AUTH 0' '#define DROPBEAR_SVR_PAM_AUTH 0' > localoptions.h
+CC=musl-gcc ./configure --enable-static --disable-zlib
+make -j2 PROGRAMS='dropbear dropbearkey'
+dpkg-deb -x "$work/busybox.deb" "$build/package"
+mkdir "$build/bin"
+cp "$build/package/bin/busybox" "$build/bin/busybox"
+cp dropbear dropbearkey "$build/bin/"
+chmod 755 "$build/bin/busybox" "$build/bin/dropbear" "$build/bin/dropbearkey"
+mv "$build/bin" "$work/bin"
+echo "Static recovery tools copied to $work/bin"

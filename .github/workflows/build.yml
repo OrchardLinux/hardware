@@ -1,0 +1,287 @@
+name: Build hardware
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths-ignore: ['docs/**', '**/*.md']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: hardware-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check release version
+        if: github.ref_type == 'tag'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: python -c 'import os, tomllib; assert os.environ["TAG"] == "v" + tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]'
+      - name: Build the distribution once for all jobs
+        run: python -m pip install build && python -m build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hardware-packages
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 2
+  test:
+    needs: package
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        python: ['3.9', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: hardware-packages
+          path: out/packages
+      - run: python -m pip install out/packages/*.whl && python -m pip check
+      - run: python -m unittest discover -s tests -v
+  native-smoke:
+    needs: test
+    runs-on: ubuntu-24.04-arm
+    env:
+      ORCHARD_BUILD_NATIVE: '1'
+      ORCHARD_BUILD_ENV_ID: ubuntu-24.04-arm-smoke
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: hardware-packages
+          path: out/packages
+      - run: python -m pip install out/packages/*.whl
+      - name: Compile and execute through the native recipe runner
+        run: |
+          mkdir -p out/native-source out/native-output
+          printf 'int main(void) { return 0; }\n' > out/native-source/test.c
+          # shellcheck disable=SC2016
+          python -m orchard_hardware.buildenv run --image unused-native \
+            --bind "$PWD/out/native-source:/src:ro" --bind "$PWD/out/native-output:/out:rw" --cwd /src -- \
+            bash -euc 'cc "$ORCHARD_SRC/test.c" -o "$ORCHARD_OUT/test"; "$ORCHARD_OUT/test"'
+          test -s out/native-output/test
+  kernel:
+    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+    needs: native-smoke
+    runs-on: ubuntu-24.04-arm
+    container: debian:bookworm
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+    env:
+      ORCHARD_BUILD_NATIVE: '1'
+      ORCHARD_BUILD_ENV_ID: debian-bookworm-arm64-llvm19
+    steps:
+      - run: apt-get update && apt-get install -y git ca-certificates python3 python3-venv
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: hardware-packages
+          path: out/packages
+      - name: Install kernel toolchain and the existing wheel
+        run: |
+          bash kernel/install-toolchain
+          python3 -m venv .venv
+          .venv/bin/python -m pip install out/packages/*.whl
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+      - name: Build kernel, modules and device tree once
+        run: |
+          bash kernel/build j71b --output "$PWD/out/components/kernel"
+          dpkg-query -W > out/components/kernel-toolchain-packages.lock
+      - name: Archive components and corresponding kernel source
+        run: |
+          tar -C out -czf out/kernel-components.tar.gz components
+          tar -C kernel/.work/j71b/source --exclude=.git -czf out/kernel-source.tar.gz .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hardware-kernel
+          path: |
+            out/kernel-components.tar.gz
+            out/kernel-source.tar.gz
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 2
+  tools:
+    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+    needs: native-smoke
+    runs-on: ubuntu-24.04-arm
+    container: debian:bookworm
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      ORCHARD_BUILD_NATIVE: '1'
+      ORCHARD_BUILD_ENV_ID: debian-bookworm-arm64-llvm19-rust1.90.0
+      RUSTUP_TOOLCHAIN: '1.90.0'
+    steps:
+      - run: apt-get update && apt-get install -y git ca-certificates python3 python3-venv
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: hardware-packages
+          path: out/packages
+      - name: Install the combined toolchain once and reuse the wheel
+        run: |
+          bash ci/install-toolchains recovery m1n1
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          python3 -m venv .venv
+          .venv/bin/python -m pip install out/packages/*.whl
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+      - name: Build static recovery tools
+        run: |
+          OMA_RECOVERY_TOOLS_WORK="$PWD/out/recovery-tools" bash boot/initramfs/j71b/recovery/build-tools
+          mkdir -p out/components/boot
+          cp out/recovery-tools/bin/* out/components/boot/
+      - name: Build quiet loader
+        run: |
+          bash boot/m1n1/build j71b --output "$PWD/out/components/quiet/m1n1.bin" \
+            --work-dir "$PWD/out/loader-work" --extra-patch "$PWD/boot/quiet/m1n1.patch" \
+            --extra-cflags '-DQUIET_BOOT'
+          dpkg-query -W > out/components/tools-toolchain-packages.lock
+          tar -C out -czf out/tool-components.tar.gz components
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hardware-tools
+          path: out/tool-components.tar.gz
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 2
+  pongo:
+    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+    needs: native-smoke
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Fingerprint the Apple toolchain
+        id: toolchain
+        run: |
+          fingerprint=$({ sw_vers; xcodebuild -version; xcrun --sdk iphoneos --show-sdk-build-version; xcrun clang --version; } | shasum -a 256 | awk '{print $1}')
+          echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: pongo-cache
+        with:
+          path: |
+            out/quiet-pongo.tar.gz
+            out/pongo-source.tar.gz
+          key: quiet-pongo-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('boot/quiet/build-pongo.py', 'boot/quiet/pongo.patch') }}
+      - name: Build quiet Pongo once (including newlib)
+        if: steps.pongo-cache.outputs.cache-hit != 'true'
+        run: |
+          python boot/quiet/build-pongo.py --output out/quiet/pongo.bin --work-dir out/pongo-work
+          tar -C out/quiet -czf out/quiet-pongo.tar.gz pongo.bin
+          tar -C out/pongo-work/source --exclude=.git -czf out/pongo-source.tar.gz .
+      - name: Record cache usage
+        env:
+          CACHE_HIT: ${{ steps.pongo-cache.outputs.cache-hit }}
+        run: |
+          printf 'Quiet Pongo exact-input cache hit: %s\n' "${CACHE_HIT:-false}" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hardware-pongo
+          path: |
+            out/quiet-pongo.tar.gz
+            out/pongo-source.tar.gz
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 2
+  assets:
+    needs: [kernel, tools, pongo]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: hardware-*
+          path: out/downloads
+          merge-multiple: true
+      - name: Assemble public component bundle without rebuilding
+        run: |
+          mkdir -p out/publication
+          tar -xzf out/downloads/kernel-components.tar.gz -C out
+          tar -xzf out/downloads/tool-components.tar.gz -C out
+          tar -xzf out/downloads/quiet-pongo.tar.gz -C out/components/quiet
+          python ci/package_components.py --directory out/components --output out/publication/j71b-components.tar.gz
+          cp out/downloads/*.whl out/downloads/*.tar.gz out/publication/
+          rm out/publication/kernel-components.tar.gz out/publication/tool-components.tar.gz out/publication/quiet-pongo.tar.gz
+          git archive --format=tar.gz -o out/publication/hardware-source.tar.gz HEAD
+          (cd out/publication && sha256sum ./*.whl ./*.tar.gz > SHA256SUMS)
+      - name: Attest public build
+        if: toJSON(github.event.repository.private) == 'false'
+        id: attest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: out/publication/*
+      - name: Include public attestation bundle
+        if: toJSON(github.event.repository.private) == 'false'
+        env:
+          BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
+        run: cp "$BUNDLE_PATH" "out/publication/hardware-build.sigstore.jsonl"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hardware-release-assets
+          path: out/publication/*
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 2
+  draft:
+    if: github.ref_type == 'tag'
+    needs: assets
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: hardware-release-assets
+          path: assets
+      - name: Create draft release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" assets/* --draft --verify-tag \
+            --title "$TAG" --notes 'Public build assets; physical-device qualification is required before publication. Shared launcher assets are built separately.'

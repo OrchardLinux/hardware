@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+here=$(cd "$(dirname "$0")" && pwd)
+kernel_build='' headers='' output=''
+while (($#)); do
+  case "$1" in
+    --kernel-build) kernel_build=$2; shift 2;;
+    --headers) headers=$2; shift 2;;
+    --output) output=$2; shift 2;;
+    *) echo "Unknown argument: $1" >&2; exit 2;;
+  esac
+done
+base="$kernel_build/arch/arm64/boot/dts/apple/t8010-j71b-devbase.dtb"
+if [[ ! -f "$base" || ! -f "$headers/dt-bindings/pinctrl/apple.h" || -z "$output" || -e "$output" ]]; then
+  echo 'Usage: ./kernel/devicetree/j71b/build --kernel-build KERNEL_OUTPUT --headers KERNEL_SOURCE/include --output J71B.dtb' >&2
+  exit 2
+fi
+mkdir -p "$here/.work"
+work=$(mktemp -d "$here/.work/build.XXXXXX")
+trap 'rm -rf "$work"' EXIT
+cp "$base" "$work/base.dtb"
+# shellcheck disable=SC2016 # Variables below belong to the recipe shell.
+python3 -m orchard_hardware.buildenv run \
+  --bind "$here:/overlays:ro" --bind "$headers:/headers:ro" --bind "$work:/out:rw" \
+  --image localhost/orchard-hardware-kernel-toolchain:bookworm -- bash -euc '
+    src=$ORCHARD_OVERLAYS
+    out=$ORCHARD_OUT
+    dtc -@ -I dts -O dtb -o "$out/pcie.dtbo" "$src/pcie-wifi.dtso"
+    fdtoverlay -i "$out/base.dtb" -o "$out/pcie.dtb" "$out/pcie.dtbo"
+    dtc -@ -I dts -O dtb -o "$out/alias.dtbo" "$src/wifi-alias.dtso"
+    fdtoverlay -i "$out/pcie.dtb" -o "$out/alias.dtb" "$out/alias.dtbo"
+    clang-19 -E -P -x assembler-with-cpp -nostdinc -undef -D__DTS__ \
+      -I "$ORCHARD_HEADERS" "$src/battery-gauge.dtso" -o "$out/battery-gauge.pre.dts"
+    dtc -@ -I dts -O dtb -o "$out/gauge.dtbo" "$out/battery-gauge.pre.dts"
+    fdtoverlay -i "$out/alias.dtb" -o "$out/gauge.dtb" "$out/gauge.dtbo"
+    dtc -@ -I dts -O dtb -o "$out/bluetooth.dtbo" "$src/bluetooth.dtso"
+    fdtoverlay -i "$out/gauge.dtb" -o "$out/bluetooth.dtb" "$out/bluetooth.dtbo"
+    dtc -@ -I dts -O dtb -o "$out/gpio-power.dtbo" "$src/gpio-power.dtso"
+    fdtoverlay -i "$out/bluetooth.dtb" -o "$out/j71b.dtb" "$out/gpio-power.dtbo"
+  '
+actual=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$work/j71b.dtb")
+expected=d05ad7b7c3282f6bd75adf03add7fd676ddedf73a4e19b2f3ae49571309c7faa
+[[ "$actual" == "$expected" ]] || { echo "J71b DTB differs: $actual" >&2; exit 1; }
+mkdir -p "$(dirname "$output")"
+cp "$work/j71b.dtb" "$output"
+echo "DTB: $output (SHA-256 $actual)"

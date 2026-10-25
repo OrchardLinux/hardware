@@ -1,0 +1,27 @@
+#!/bin/sh
+# One root-owned renewer. No source guessing, supervisor, UDC or GUI dependency.
+set -eu
+[ "$(uname -r)" = @KERNEL_RELEASE@ ]
+lease=/sys/module/j71b_charge_policy/parameters/lease
+parked=/sys/module/j71b_charge_policy/parameters/sleep_parked
+[ -w "$lease" ] && [ -r "$parked" ]
+trap 'printf "0\n" > "$lease" 2>/dev/null || true' EXIT
+trap 'exit 0' TERM INT
+last=unknown
+while :; do
+    if [ "$(awk '{print}' "$parked")" = Y ]; then
+        state=sleep_parked
+    elif { printf '1\n' > "$lease"; } 2>/dev/null; then
+        state=guarded_425mA
+    else
+        # Clear a failed renewal/restore only if the kernel verifies handoff.
+        # Above95/below15 SOC, absent input or bad telemetry are normal refusals.
+        { printf '0\n' > "$lease"; } 2>/dev/null || true
+        state=refused_handoff_or_telemetry
+    fi
+    if [ "$state" != "$last" ]; then
+        printf 'j71b-charge: %s\n' "$state"
+        last=$state
+    fi
+    sleep 5
+done

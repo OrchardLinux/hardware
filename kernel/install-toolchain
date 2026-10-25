@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+packages=(bc bison ca-certificates clang-19 cpio device-tree-compiler flex gcc git kmod libelf-dev libssl-dev lld-19 llvm-19 make python3 xz-utils zstd)
+if [[ ${1:-} == --packages ]]; then printf '%s\n' "${packages[@]}"; exit 0; fi
+apt-get update
+apt-get install -y --no-install-recommends "${packages[@]}"

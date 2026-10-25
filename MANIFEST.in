@@ -1,0 +1,11 @@
+include README.md BUILD.md
+recursive-include boot *.md
+recursive-include kernel *.md
+recursive-include tests *.py
+recursive-include ci *.py
+include ci/install-toolchains
+recursive-include docs *.md
+recursive-include .github/workflows *.yml
+prune boot/m1n1/.work
+prune boot/quiet/.work
+global-exclude __pycache__ *.py[cod] .DS_Store

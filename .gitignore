@@ -1,0 +1,10 @@
+build/
+dist/
+*.egg-info/
+__pycache__/
+*.py[cod]
+.build.log
+.venv*/
+out/
+.work/
+.DS_Store

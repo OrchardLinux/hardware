@@ -1,0 +1,28 @@
+# iPad 6 Wi-Fi (J71b): hardware identity, boot assets and firmware recipe.
+schema = 1
+kind = "hardware.device"
+
+[device]
+profile = "j71b"
+name = "iPad 6 (Wi-Fi)"
+apple_products = ["iPad7,5"]
+dt_compatible = ["apple,j71b"]
+
+[match.dfu]
+chip = 0x8010
+board = 0x18
+
+[match.linux]
+product = "J71b Recovery"
+
+[boot]
+methods = ["checkm8-pongo"]
+launch_manifest = "https://github.com/OrchardLinux/hardware/releases/latest/download/j71b-launcher.boot.toml"
+
+[firmware]
+recipe = "firmware.json" # Relative to this device.toml; public recipe, not firmware bytes.
+
+[support]
+wifi = true # Static support; provisioning requires runtime-confirmed availability.
+usb_serial = true
+usb_network = true

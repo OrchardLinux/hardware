@@ -1,0 +1,55 @@
+/dts-v1/;
+/plugin/;
+
+/* J71b Bluetooth UART wiring: PMIC GPIO13, AP wake GPIO88 and UART3 IRQ221.
+ * Validate pinmux and transport lifecycle on the target device/kernel bundle.
+ * No private BT address or RF calibration is embedded here.
+ */
+/ {
+	fragment@0 {
+		target = <&pinctrl_ap>;
+		__overlay__ {
+			bluetooth_uart3_pins: bluetooth-uart3-pins {
+				pinmux = <0x10086 0x10087 0x10088 0x10089>;
+			};
+		};
+	};
+
+	fragment@1 {
+		target-path = "/soc";
+		__overlay__ {
+			#address-cells = <2>;
+			#size-cells = <2>;
+			serial@20a0cc000 {
+				compatible = "apple,t8010-uart", "apple,s5l-uart";
+				reg = <0x2 0x0a0cc000 0x0 0x4000>;
+				reg-io-width = <4>;
+				interrupt-parent = <&aic>;
+				interrupts = <0 221 4>;
+				clocks = <&clkref>, <&clkref>;
+				clock-names = "uart", "clk_uart_baud0";
+				power-domains = <&ps_uart3>;
+				pinctrl-0 = <&bluetooth_uart3_pins>;
+				pinctrl-names = "default";
+				uart-has-rtscts;
+				status = "okay";
+
+				bluetooth: bluetooth {
+					compatible = "apple,j71b-bcm4355c1-bt",
+						     "brcm,bcm4355c1-bt";
+					current-speed = <115200>;
+					max-speed = <3000000>;
+					shutdown-gpios = <&pmu_gpio 13 0>;
+					device-wakeup-gpios = <&pinctrl_ap 88 0>;
+				};
+			};
+		};
+	};
+
+	fragment@2 {
+		target-path = "/aliases";
+		__overlay__ {
+			bluetooth0 = "/soc/serial@20a0cc000/bluetooth";
+		};
+	};
+};

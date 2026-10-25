@@ -1,0 +1,23 @@
+#!/bin/sh
+# Run from the physically connected USB serial shell, with one public key on stdin.
+set -eu
+[ ! -e /run/orchard/ssh-revoking.json ] && [ ! -e /run/orchard/ssh-revoked.json ] || {
+    echo 'SSH access has been retired for this boot' >&2; exit 1;
+}
+set -f
+IFS= read -r line || { echo 'Missing public key' >&2; exit 1; }
+set -- $line
+[ "$#" -ge 2 ] && [ "$1" = ssh-ed25519 ] || {
+    echo 'Expected an Ed25519 public key' >&2; exit 1;
+}
+case $2 in *[!A-Za-z0-9+/=]*|'') echo 'Invalid key encoding' >&2; exit 1;; esac
+[ "${#2}" -ge 60 ] && [ "${#2}" -le 128 ] || {
+    echo 'Invalid key length' >&2; exit 1;
+}
+dir=${RECOVERY_SSH_DIR:-/root/.ssh}
+umask 077
+mkdir -p "$dir"
+chmod 700 "$dir"
+printf 'ssh-ed25519 %s\n' "$2" > "$dir/authorized_keys"
+chmod 600 "$dir/authorized_keys"
+echo 'Public key installed in RAM. Run recovery-start-ssh over serial.'

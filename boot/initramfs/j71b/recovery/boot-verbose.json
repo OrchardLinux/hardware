@@ -1,0 +1,3 @@
+{
+  "bootargs": "chosen.bootargs=j71b.recovery=1 oma.verbose=1 console=tty0 loglevel=7 ignore_loglevel fbcon=map:0\n"
+}

@@ -1,0 +1,11 @@
+/dts-v1/;
+/plugin/;
+/* J71b Wi-Fi alias only. No MAC, calibration, firmware, antenna SKU or board value. */
+/ {
+    fragment@0 {
+        target-path = "/aliases";
+        __overlay__ {
+            wifi0 = "/soc/pcie@610000000/pci@3,0/wifi@0,0";
+        };
+    };
+};

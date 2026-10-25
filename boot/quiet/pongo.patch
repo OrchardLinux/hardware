@@ -1,0 +1,53 @@
+diff --git a/src/drivers/framebuffer/fb.c b/src/drivers/framebuffer/fb.c
+index 2046513..20717dd 100644
+--- a/src/drivers/framebuffer/fb.c
++++ b/src/drivers/framebuffer/fb.c
+@@ -128,6 +128,11 @@ uint32_t colors_mix_alpha(uint32_t color1, uint32_t color2) {
+ 
+ void screen_putc(uint8_t c)
+ {
++#ifdef QUIET_BOOT
++    /* Only silence framebuffer text: serial and USB stdout stay intact. */
++    (void)c;
++    return;
++#endif
+     if (!gFramebuffer) return;
+     disable_interrupts();
+     if (c == '\b') {
+@@ -231,6 +236,13 @@ void screen_init(void) {
+     gFramebuffer = (uint32_t*)(0xfb0000000ULL + fboff);
+     gFramebufferCopy = (uint32_t*)alloc_contig(fbsize);
+ 
++#ifdef QUIET_BOOT
++    (void)width;
++    (void)height;
++    /* Keep row stride distinct from the visible width. */
++    basecolor = 0x00000000;
++    screen_fill(basecolor);
++#else
+     height &= 0xfff0;
+     scale_factor = 2;
+     if (width > 800)
+@@ -256,6 +268,7 @@ void screen_init(void) {
+         }
+     }
+     
++#endif
+     memcpy(gFramebufferCopy, gFramebuffer, fbsize);
+ 
+     basecolor = gFramebuffer[0];
+diff --git a/src/kernel/entry.c b/src/kernel/entry.c
+index b3361ec..4683f76 100644
+--- a/src/kernel/entry.c
++++ b/src/kernel/entry.c
+@@ -280,8 +280,10 @@ __attribute__((noinline)) void pongo_entry_cached(void)
+     __asm__ volatile("dsb sy");
+     if(boot_msg)
+         screen_puts(boot_msg);
++#ifndef QUIET_BOOT
+     else
+         screen_fill_basecolor();
++#endif
+ }
+ 
+ extern uint64_t gM1N1Base;

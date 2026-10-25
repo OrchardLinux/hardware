@@ -1,0 +1,23 @@
+#!/bin/sh
+# Write the raw ADT MTD contents to stdout. Nothing is written to the device.
+set -eu
+set -f
+mode=${1:-}
+[ "$#" -le 1 ] || exit 2
+case "$mode" in ''|--size) ;; *) exit 2;; esac
+
+table=${ADT_MTD_TABLE:-/proc/mtd}
+devices=${ADT_MTD_DEV:-/dev}
+[ -r "$table" ] || { echo 'ADT MTD table unavailable' >&2; exit 1; }
+
+match=$(awk '$1 ~ /^mtd[0-9]+:$/ && $4 == "\"adt\"" {
+    print substr($1, 4, length($1) - 4), $2
+}' "$table")
+# Exactly one named entry is required. Its size is checked on the host after transfer.
+set -- $match
+[ "$#" -eq 2 ] || { echo 'Expected exactly one ADT MTD entry' >&2; exit 1; }
+case $1 in *[!0-9]*|'') echo 'Invalid ADT MTD number' >&2; exit 1;; esac
+case $2 in *[!0-9a-fA-F]*|'') echo 'Invalid ADT MTD size' >&2; exit 1;; esac
+[ -r "$devices/mtd$1" ] || { echo 'ADT MTD device unavailable' >&2; exit 1; }
+if [ "$mode" = --size ]; then printf '%s\n' "$2"; exit 0; fi
+exec cat "$devices/mtd$1"

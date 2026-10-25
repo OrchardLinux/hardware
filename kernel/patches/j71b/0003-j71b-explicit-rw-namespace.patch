@@ -1,0 +1,17 @@
+diff --git a/drivers/nvme/host/core.c b/drivers/nvme/host/core.c
+--- a/drivers/nvme/host/core.c
++++ b/drivers/nvme/host/core.c
+@@ -2196,8 +2196,12 @@ static bool nvme_update_ns_info(struct nvme_ns *ns, struct nvme_id_ns *id,
+ 	return valid;
+ }
+ 
++static bool j71b_core_rw;
++module_param_named(j71b_rw, j71b_core_rw, bool, 0444);
++MODULE_PARM_DESC(j71b_rw, "Explicit J71b recovery read-write namespace opt-in");
++
+ static bool nvme_ns_is_readonly(struct nvme_ns *ns, struct nvme_ns_info *info)
+ {
+-	return of_machine_is_compatible("apple,j71b") ||
++	return (of_machine_is_compatible("apple,j71b") && !j71b_core_rw) ||
+ 		info->is_readonly || test_bit(NVME_NS_FORCE_RO, &ns->flags);
+ }

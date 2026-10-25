@@ -1,0 +1,61 @@
+#!/bin/sh
+# Public device-owned hardware preparation. No association or filesystem mounts.
+set -eu
+phase=preflight
+failed() {
+ rc=$?
+ [ "$rc" = 0 ] && return
+ printf 'Hardware failed: %s (exit %s); inspect, do not retry\n' "$phase" "$rc" >&2
+ dmesg > /run/orchard/hardware-failed.dmesg 2>/dev/null || true
+ exit "$rc"
+}
+trap failed EXIT
+step() { phase=$1; echo "$phase"; }
+[ "$(awk '$2=="/" {print $3}' /proc/mounts)" = rootfs ]
+[ ! -d /sys/module/nvme ]
+[ "$(grep -c '/dev/nvme' /proc/mounts || true)" = 0 ]
+step boot-readiness
+dmesg | grep -q J71B_GATE_PASS
+dmesg | grep -q J71B_GATE_STOP
+[ "$(cat /sys/class/power_supply/battery/present)" = 1 ]
+sha256sum -c /etc/orchard/public.SHA256SUMS > /run/orchard/public-verification.log
+mkdir -p /sys/kernel/debug
+mount -t debugfs debugfs /sys/kernel/debug
+step wifi
+modprobe gpio-apple-d2365
+modprobe fixed
+modprobe apple-t8010-wlan
+modprobe pci-pwrctrl-apple-wifi
+modprobe pcie-apple-h9p
+modprobe cfg80211
+modprobe brcmutil
+modprobe brcmfmac
+n=0
+while [ ! -d /sys/class/net/wlan0 ]; do n=$((n+1)); [ "$n" -le 20 ]; sleep 1; done
+step storage-fence
+modprobe nvme-core j71b_rw=1 max_retries=0 default_ps_max_latency_us=0
+modprobe nvme j71b_rw=1 max_host_mem_size_mb=0 io_queue_depth=8
+[ "$(cat /sys/module/nvme_core/parameters/j71b_rw)" = Y ]
+[ "$(cat /sys/module/nvme/parameters/j71b_rw)" = Y ]
+[ "$(cat /sys/class/nvme/nvme0/state)" = live ]
+[ "$(cat /sys/module/nvme/parameters/j71b_ro_failed)" = N ]
+for part in /sys/class/block/nvme0n1p*; do
+ [ -d "$part" ]; blockdev --setro "/dev/${part##*/}"; [ "$(cat "$part/ro")" = 1 ]
+done
+step touch
+sh /usr/libexec/orchard-j71b/touch-activate --activate
+step bluetooth
+modprobe bluetooth
+modprobe btbcm
+modprobe hci_uart
+n=0
+while ! dmesg | grep -q 'BCM (003.002.020) build 1328'; do n=$((n+1)); [ "$n" -le 20 ]; sleep 1; done
+[ -d /sys/class/bluetooth/hci0 ]
+step charging-policy
+modprobe j71b_charge_policy
+[ -r /sys/module/j71b_charge_policy/parameters/sleep_parked ]
+[ "$(dmesg | grep -c 'apple-dart.*translation fault' || true)" = 0 ]
+[ "$(cat /sys/module/nvme/parameters/j71b_ro_failed)" = N ]
+mkdir -p /run/ipadlinux
+echo ready > /run/ipadlinux/j71b-early-ready
+echo hardware-ready

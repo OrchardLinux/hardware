@@ -1,0 +1,77 @@
+diff --git a/src/fb.c b/src/fb.c
+index 2b85d9a..ccb342a 100644
+--- a/src/fb.c
++++ b/src/fb.c
+@@ -246,8 +246,14 @@ void fb_display_logo(void)
+     if (!console.initialized)
+         return;
+ 
++#ifdef QUIET_BOOT
++    /* Clear the inherited framebuffer; publish a black frame only once. */
++    memset32(fb.ptr, 0, fb.size);
++    fb_update();
++#else
+     printf("fb: display logo\n");
+     fb_blit_logo(logo);
++#endif
+ }
+ 
+ void fb_restore_logo(void)
+@@ -255,9 +261,13 @@ void fb_restore_logo(void)
+     if (!console.initialized)
+         return;
+ 
++#ifdef QUIET_BOOT
++    fb_display_logo();
++#else
+     if (!orig_logo.ptr)
+         return;
+     fb_blit_logo(&orig_logo);
++#endif
+ }
+ 
+ void fb_improve_logo(void)
+@@ -385,6 +395,12 @@ struct iodev iodev_fb = {
+ 
+ static void fb_clear_console(void)
+ {
++#ifdef QUIET_BOOT
++    /* Do not erase the inherited splash during init or the Linux handoff. */
++    console.cursor.col = 0;
++    console.cursor.row = 0;
++    return;
++#endif
+     for (u32 row = 0; row < console.cursor.max_row; ++row)
+         fb_clear_font_row(row);
+ 
+@@ -477,6 +493,9 @@ void fb_init(bool clear)
+         }
+     }
+ 
++#ifdef QUIET_BOOT
++    UNUSED(clear);
++#else
+     if (clear) {
+         memset32(fb.ptr, 0, fb.size);
+     } else {
+@@ -484,6 +503,7 @@ void fb_init(bool clear)
+         memset32(fb.ptr, 0, min(256, fb.size));
+     }
+ 
++#endif
+     fb_clear_console();
+ 
+     printf("fb console: max rows %d, max cols %d\n", console.cursor.max_row,
+@@ -492,6 +512,12 @@ void fb_init(bool clear)
+ 
+ void fb_set_active(bool active)
+ {
++#ifdef QUIET_BOOT
++    /* Keep UART/USB/log sinks, but never enable the framebuffer text sink. */
++    UNUSED(active);
++    console.active = false;
++    return;
++#endif
+     console.active = active;
+     if (active)
+         iodev_console_kick();
