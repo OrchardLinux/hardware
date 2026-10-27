@@ -11,12 +11,8 @@ on:
         required: true
         default: v0.1.10
       minimal_tag:
-        description: Published Minimal Linux release supplying the Alpine base userspace
+        description: Published Minimal Linux release (supplies the Alpine base and one compatible root)
         required: true
-      include_minimal_root:
-        description: Also advertise its installed root (requires matching kernel/modules)
-        type: boolean
-        default: true
       omarchy_tag:
         description: Optional published Omarchy A release to support as well
         required: false
@@ -52,7 +48,6 @@ jobs:
       HARDWARE_TAG: ${{ inputs.hardware_tag }}
       CLI_TAG: ${{ inputs.cli_tag }}
       MINIMAL_TAG: ${{ inputs.minimal_tag }}
-      INCLUDE_MINIMAL_ROOT: ${{ inputs.include_minimal_root }}
       OMARCHY_TAG: ${{ inputs.omarchy_tag }}
     steps:
       - uses: actions/checkout@v4
@@ -61,12 +56,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Require at least one installed root
-        run: |
-          if [[ "$INCLUDE_MINIMAL_ROOT" != true && -z "$OMARCHY_TAG" ]]; then
-            echo 'Select a matching Minimal Linux root or provide an Omarchy A release.' >&2
-            exit 1
-          fi
       - name: Await exact first-release image builds
         if: inputs.hardware_run_id != ''
         env:
@@ -150,11 +139,8 @@ jobs:
           (cd out/hardware && sha256sum --check --ignore-missing SHA256SUMS)
           tar -xzf out/hardware/j71b-components.tar.gz -C out
           gh release download "$MINIMAL_TAG" --repo OrchardLinux/minimal-linux \
+            --pattern rootfs.tar.gz --pattern rootfs.json --pattern build-receipt.json \
             --pattern base.tar.gz --pattern base.tar.gz.json --pattern SHA256SUMS --dir out/minimal
-          if [[ "$INCLUDE_MINIMAL_ROOT" == true ]]; then
-            gh release download "$MINIMAL_TAG" --repo OrchardLinux/minimal-linux \
-              --pattern rootfs.tar.gz --pattern rootfs.json --pattern build-receipt.json --dir out/minimal
-          fi
           (cd out/minimal && sha256sum --check --ignore-missing SHA256SUMS)
           if [[ -n "$OMARCHY_TAG" ]]; then
             mkdir -p out/omarchy
@@ -166,10 +152,7 @@ jobs:
       - name: Build and verify the shared launcher
         run: |
           python ci/launcher_inputs.py --components out/components --output out/launcher-inputs.json
-          installations=()
-          if [[ "$INCLUDE_MINIMAL_ROOT" == true ]]; then
-            installations+=(--installation out/minimal/rootfs.tar.gz out/minimal/rootfs.json out/minimal/build-receipt.json)
-          fi
+          installations=(--installation out/minimal/rootfs.tar.gz out/minimal/rootfs.json out/minimal/build-receipt.json)
           if [[ -n "$OMARCHY_TAG" ]]; then
             installations+=(--installation out/omarchy/rootfs.tar.zst out/omarchy/rootfs.json out/omarchy/build-receipt.json)
           fi
@@ -179,7 +162,7 @@ jobs:
             "${installations[@]}" --release "${HARDWARE_TAG#v}" \
             --public-base-url "https://github.com/OrchardLinux/hardware/releases/download/$HARDWARE_TAG" \
             --output out/launcher
-          # The host must carry this build's firmware recipe, not just its protocol.
+          # Require the paired host firmware recipe, not only the boot protocol.
           python - <<'PY'
           import os, re
           from pathlib import Path
