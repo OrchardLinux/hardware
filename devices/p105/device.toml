@@ -1,0 +1,25 @@
+# iPad mini 1 Wi-Fi (P105): identity and manual boot prerequisites.
+schema = 1
+kind = "hardware.device"
+
+[device]
+profile = "p105"
+name = "iPad mini 1 (Wi-Fi)"
+apple_products = ["iPad2,5"]
+dt_compatible = ["apple,p105ap"]
+
+[match.dfu]
+chip = 0x8942
+board = 0x0a
+
+[boot]
+methods = ["jailbreak-kdfu"]
+# The Orchard CLI adapter and published launch manifest remain pending.
+
+[firmware]
+recipe = "firmware.json"
+
+[support]
+wifi = true # Association was verified through the native desktop password UI.
+usb_serial = true
+usb_network = true

@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-2.0-only
+[Unit]
+Description=Cascadia P105 hardware ready for a desktop
+Requires=p105-platform.service p105-touch.service p105-keys.service
+Wants=p105-wifi-chip.service bluetooth.service
+After=p105-platform.service p105-touch.service p105-keys.service p105-wifi-chip.service bluetooth.service
+Before=graphical.target
+
+[Install]
+WantedBy=multi-user.target

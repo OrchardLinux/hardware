@@ -30,6 +30,12 @@ Choose new output paths. Producers use pinned upstream revisions, hardware patch
 
 The m1n1 backend is unbranded by default. A distro can pass `--extra-patch FILE`, `--include-header FILE`, and `--extra-cflags FLAGS` for its own presentation.
 
+## iPad mini 1 manual bring-up
+
+The [P105 hardware profile](devices/p105/README.md) covers the first-generation Wi-Fi iPad mini. Follow [the pinned source-preparation recipe](kernel/p105/README.md) and [systemd runtime integration](runtime/p105/README.md) for its ARMv7 boot path.
+
+This route uses an existing jailbreak and a root served over USB/NFS by the host. Its kernel embeds per-user recovery inputs. Keep the resulting boot bundle private; the J71b public component workflow continues to build J71b artifacts. The device profile supplies hardware identity without a published P105 launcher manifest.
+
 ## Runtime and image assembly
 
 - `image/runtime.py`: modules, hardware/touch scripts, device API and integrity lists.

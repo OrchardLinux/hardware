@@ -9,3 +9,10 @@ recursive-include .github/workflows *.yml
 prune boot/m1n1/.work
 prune boot/quiet/.work
 global-exclude __pycache__ *.py[cod] .DS_Store
+
+recursive-include devices/p105 *.md *.toml *.json
+recursive-include kernel/p105 *.md *.lock *.fragment *.patch prepare-source
+recursive-include runtime/p105 *.py *.md *.patch
+recursive-include runtime/p105/overlay *
+prune runtime/p105/build
+prune kernel/p105/.work

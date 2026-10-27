@@ -1,0 +1,65 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# Run with the initramfs /bin/sh before moving mounts or switching root.
+set -eu
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+ROOT=${1:-/newroot}
+NFSROOT=${2:-}
+[ "$ROOT" = /newroot ] || { echo "p105: expected /newroot" >&2; exit 1; }
+[ "$(cat "$ROOT/etc/cascadia/systemd-root" 2>/dev/null)" = p105-systemd-v1 ]
+[ -x "$ROOT/usr/lib/systemd/systemd" ]
+[ -x "$ROOT/usr/bin/sh" ]
+[ -x "$ROOT/usr/libexec/p105/systemd-init" ]
+[ -r "$ROOT/usr/lib/cascadia/p105-payload.list" ]
+
+# The current RAM boot supplies the static tools and private hardware inputs.
+# No Alpine executable or policy replaces the installed Arch init system.
+while IFS='|' read -r source target mode; do
+    [ -n "$source" ] || continue
+    case "$source|$target|$mode" in
+      'sbin/z2-boot|usr/libexec/p105/z2-boot|0755'|\
+      'sbin/p105-keys|usr/libexec/p105/p105-keys|0755'|\
+      'bin/busybox.static|usr/libexec/p105/busybox.static|0755'|\
+      'lib/firmware/P105.mtprops|usr/lib/firmware/P105.mtprops|0644'|\
+      'lib/firmware/mtcal.bin|usr/lib/firmware/mtcal.bin|0644'|\
+      'lib/firmware/apple/sgx543.fw|usr/lib/firmware/apple/sgx543.fw|0644'|\
+      'lib/firmware/brcm/brcmfmac4334.bin|usr/lib/firmware/brcm/brcmfmac4334.bin|0644'|\
+      'lib/firmware/brcm/BCM4334B0.hcd|usr/lib/firmware/brcm/BCM4334B0.hcd|0644') ;;
+      *) echo "p105: unsupported payload entry" >&2; exit 1 ;;
+    esac
+    [ -s "/$source" ]
+    mkdir -p "$ROOT/${target%/*}"
+    cp "/$source" "$ROOT/$target.tmp.$$"
+    chmod "$mode" "$ROOT/$target.tmp.$$"
+    chown 0:0 "$ROOT/$target.tmp.$$"
+    mv "$ROOT/$target.tmp.$$" "$ROOT/$target"
+done < "$ROOT/usr/lib/cascadia/p105-payload.list"
+(
+    cd "$ROOT"
+    while IFS='|' read -r source target mode; do
+        [ -z "$source" ] || sha256sum "$target"
+    done < usr/lib/cascadia/p105-payload.list
+) > "$ROOT/usr/lib/cascadia/p105-payload.sha256.tmp.$$"
+mv "$ROOT/usr/lib/cascadia/p105-payload.sha256.tmp.$$" "$ROOT/usr/lib/cascadia/p105-payload.sha256"
+
+# Keep the physical USB rescue console independent of NFS after PID 1 starts.
+mkdir -p "$ROOT/run" "$ROOT/tmp" "$ROOT/dev" "$ROOT/proc" "$ROOT/sys"
+if ! awk -v d="$ROOT/run" '$2==d && $3=="tmpfs" {f=1} END {exit !f}' /proc/mounts; then
+    mount -t tmpfs -o mode=755,size=16m,nosuid,nodev run "$ROOT/run"
+fi
+if ! awk -v d="$ROOT/tmp" '$2==d && $3=="tmpfs" {f=1} END {exit !f}' /proc/mounts; then
+    mount -t tmpfs -o mode=1777,size=128m,nosuid,nodev tmp "$ROOT/tmp"
+fi
+mkdir -p "$ROOT/run/p105-rescue/bin" "$ROOT/run/p105"
+cp /bin/busybox.static "$ROOT/run/p105-rescue/busybox"
+chmod 755 "$ROOT/run/p105-rescue/busybox"
+# Symlinks use the post-switch_root path.
+for applet in sh getty sleep cat grep awk stat touch rm mkdir mount umount ip dmesg ps; do
+    ln -sf /run/p105-rescue/busybox "$ROOT/run/p105-rescue/bin/$applet"
+done
+cp "$ROOT/usr/libexec/p105/acm-rescue" "$ROOT/run/p105-rescue/acm.sh"
+chmod 755 "$ROOT/run/p105-rescue/acm.sh"
+[ ! -r /etc/build-date ] || cp /etc/build-date "$ROOT/etc/build-date"
+cat /proc/sys/kernel/random/boot_id > "$ROOT/run/p105/boot-id"
+printf '%s\n' "${NFSROOT:-unknown}" > "$ROOT/run/p105/nfs-root"
+echo "P105: Arch systemd root prepared; hardware timing remains in z2-boot" > /dev/kmsg

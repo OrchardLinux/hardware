@@ -1,0 +1,62 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Project-Cascadia c20b85ebb951c704d7e3a664c378dde8276e3928
+--- a/initramfs/init
++++ b/initramfs/init
+@@ -4,8 +4,8 @@
+ #
+ # Everything here has to happen before a root filesystem can be chosen: the
+ # early mounts, the clock, the USB gadget, the network.  Then it picks a root
+-# and execs /sbin/p105-stage2, which starts the services.  Two roots are
+-# possible and both end in the same stage 2:
++# and enters its init. A marked NFS root supplies an installed systemd init;
++# the existing Cascadia roots keep /sbin/p105-stage2. The available roots are:
+ #
+ #   NFS  -- if /etc/nfsroot exists and the mount succeeds.  Survives reboots and
+ #           is not limited to what fits in 512 MB of RAM.
+@@ -157,7 +157,36 @@
+     done
+     if [ $nfs_ok = 1 ]; then
+         msg "P105: NFS root mounted (try $nfs_try)"
+-        if [ -x /newroot/sbin/p105-stage2 ]; then
++        if [ -e /newroot/etc/cascadia/systemd-root ]; then
++            # The root marker opts in to an installed init. Run the preparation
++            # script with this RAM shell so none of its code depends on the
++            # guest's C library before the switch. Keep this branch ahead of
++            # the legacy stage2 path, which updates an Alpine root in place.
++            if [ "$(cat /newroot/etc/cascadia/systemd-root 2>/dev/null)" = p105-systemd-v1 ] \
++                    && [ -x /newroot/usr/libexec/p105/prepare-root ] \
++                    && [ -x /newroot/usr/libexec/p105/systemd-init ] \
++                    && [ -x /newroot/usr/lib/systemd/systemd ] \
++                    && /bin/sh /newroot/usr/libexec/p105/prepare-root /newroot "$NFSROOT"; then
++                msg "P105: switching root to installed systemd on $NFSROOT"
++                # If a move fails, undo the earlier moves before RAM fallback.
++                if mount --move /dev /newroot/dev 2>/dev/null; then
++                    if mount --move /proc /newroot/proc 2>/dev/null; then
++                        if mount --move /sys /newroot/sys 2>/dev/null; then
++                            exec /bin/busybox.static switch_root /newroot \
++                                /usr/libexec/p105/systemd-init
++                        fi
++                        mount --move /newroot/proc /proc 2>/dev/null
++                    fi
++                    mount --move /newroot/dev /dev 2>/dev/null
++                fi
++                msg "P105: installed root mount handoff failed"
++            else
++                msg "P105: marked installed root failed preparation"
++            fi
++            # Preparation may have mounted either RAM filesystem before failing.
++            umount /newroot/tmp 2>/dev/null || true
++            umount /newroot/run 2>/dev/null || true
++        elif [ -x /newroot/sbin/p105-stage2 ]; then
+             cp /etc/resolv.conf /newroot/etc/resolv.conf 2>/dev/null || true
+             cp /etc/build-date  /newroot/etc/build-date  2>/dev/null || true
+             # Stage 2 is part of the boot, not of the root filesystem, so the
+@@ -230,7 +259,7 @@
+             mount --move /sys  /newroot/sys  2>/dev/null
+             exec switch_root /newroot /sbin/p105-stage2
+         fi
+-        msg "P105: $NFSROOT has no /sbin/p105-stage2 -- staying in RAM"
++        msg "P105: $NFSROOT has no usable boot entry -- staying in RAM"
+         umount /newroot 2>/dev/null
+     else
+         msg "P105: NFS mount failed after $nfs_try tries -- staying in RAM"

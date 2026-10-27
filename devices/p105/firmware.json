@@ -1,0 +1,88 @@
+{
+  "device": "iPad2,5",
+  "version": "8.4.1",
+  "build": "12H321",
+  "ipsw_url": "https://secure-appldnld.apple.com/ios8.4.1/031-31249-20150812-75235CC6-3C8F-11E5-848D-BE1A3A53DB92/iPad2,5_8.4.1_12H321_Restore.ipsw",
+  "ipsw_bytes": 1509764204,
+  "ipsw_sha256": "ce6cd59a4a3271eccb93b31c8d40e94ad966112999576663b3ab235196154756",
+  "preparation": {
+    "mode": "manual-source-only",
+    "source_url": "https://github.com/rzxvx/Project-Cascadia.git",
+    "source_commit": "c20b85ebb951c704d7e3a664c378dde8276e3928",
+    "entrypoint": "scripts/build-firmware.sh",
+    "rootfs_extractor": "scripts/rootfs-extract.py",
+    "rootfs_member": "058-24036-023.dmg",
+    "orchard_adapter": false,
+    "note": "The encrypted root filesystem and source generators require the pinned Cascadia workflow. Extraction patterns alone cannot prepare this recipe."
+  },
+  "extract_patterns": [
+    "^058-24036-023[.]dmg$",
+    "^kernelcache[.]release[.]p105$",
+    "^Firmware/dfu/iBSS[.]p105[.]RELEASE[.]dfu$",
+    "^Firmware/dfu/iBEC[.]p105[.]RELEASE[.]dfu$"
+  ],
+  "extracted_inputs": [
+    {
+      "name": "P105.mtprops",
+      "source_path": "usr/share/firmware/multitouch/P105.mtprops",
+      "sha256": "516b8db5f6144ad64698867b8f6e6209a49010fcff1cb103539fe5ea4ffb1390"
+    },
+    {
+      "name": "borg.trx",
+      "source_path": "usr/share/firmware/wifi/4334b1/borg.trx",
+      "sha256": "fcc6e5b6f085b7b1ae8558fe0af4a689ab9e7eb49689ef443e194865b0be7d12"
+    },
+    {
+      "name": "borg-t-st.txt",
+      "source_path": "usr/share/firmware/wifi/4334b1/borg-t-st.txt",
+      "sha256": "78d24471b6fecaf63ebda5d4e055d976905cda8230b2e166c3c2080f05aa6d81"
+    }
+  ],
+  "files": [
+    {
+      "name": "P105.mtprops",
+      "sha256": "516b8db5f6144ad64698867b8f6e6209a49010fcff1cb103539fe5ea4ffb1390",
+      "destination": "lib/firmware/P105.mtprops"
+    }
+  ],
+  "generated": [
+    {
+      "name": "brcmfmac4334.bin",
+      "destination": "lib/firmware/brcm/brcmfmac4334.bin",
+      "sha256": "c02d3308434b7e2251bb2e235362e31a6033a4bc909c030888e8f9085afec5f4",
+      "generator": "cascadia-trx-add-nvram",
+      "source_script": "scripts/trx-add-nvram.py",
+      "inputs": ["borg.trx", "borg-t-st.txt"],
+      "configuration": "Pinned upstream WIFI_MAC synthetic default. A MAC override requires a separate host-local output receipt."
+    },
+    {
+      "name": "BCM4334B0.hcd",
+      "destination": "lib/firmware/brcm/BCM4334B0.hcd",
+      "sha256": "b6791a67141f1a16447e916237180a049b89dfaab9c38451b33864dbb6a50dda",
+      "generator": "cascadia-bluetool-borg-tdk",
+      "source_script": "scripts/extract-bt-firmware.py",
+      "source_path": "usr/sbin/BlueTool",
+      "selection": "Borg TDK / BCM4334B1 37.4 MHz"
+    },
+    {
+      "name": "sgx543.fw",
+      "destination": "lib/firmware/apple/sgx543.fw",
+      "sha256": "5f929f351459b169ed91a68dce086dbc682b639c4a31846ef5b12837562e9a77",
+      "generator": "cascadia-sgx543-firmware",
+      "source_script": "scripts/extract-sgx-firmware.py",
+      "source_member": "kernelcache.release.p105"
+    }
+  ],
+  "private_inputs": [
+    {
+      "name": "mtcal.bin",
+      "destination": "lib/firmware/mtcal.bin",
+      "source": "The owner's iPad syscfg MtCl, captured from its jailbroken iOS",
+      "required": true,
+      "required_for": ["multitouch", "qualified desktop runtime"],
+      "allow_reference_fallback": false,
+      "publish": false,
+      "note": "Supply the owner's calibration explicitly. The upstream reference calibration is excluded; keep calibration bytes and hashes out of public recipes and releases."
+    }
+  ]
+}
