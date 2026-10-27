@@ -17,6 +17,7 @@ PROFILES = {
         },
         'helpers': ('j71b-check-platform', 'j71b-charge-lease'),
     },
+    'j71t': {'touch': None, 'modules': {}, 'helpers': ('j71t-check-platform',)},
 }
 
 

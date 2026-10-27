@@ -1,0 +1,11 @@
+#!/bin/sh
+# Verify the installed payload and the recovery activation receipt, read-only.
+set -eu
+[ "$(uname -r)" = @KERNEL_RELEASE@ ]
+[ "$(tr '\000' '\n' < /proc/device-tree/compatible | head -1)" = apple,j71t ]
+[ "$(awk '{print}' /sys/class/block/nvme0n1p1/ro)" = 1 ]
+case "$(awk '{print}' /sys/module/nvme/parameters/write_window)" in 1:[0-9]*-[0-9]*) ;; *) exit 1 ;; esac
+[ -e /run/ipadlinux/j71t-early-ready ]
+[ -d /sys/module/apple_n1 ] && [ -d /sys/module/apple_j71t_charger ]
+[ -d /sys/class/net/wlan0 ] && [ -d /sys/class/bluetooth/hci0 ]
+sha256sum -c /usr/share/ipadlinux/hardware.SHA256SUMS >/dev/null

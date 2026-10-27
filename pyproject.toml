@@ -26,6 +26,7 @@ package-dir = {orchard_hardware = "."}
 orchard_hardware = [
   "devices/*/device.toml", "devices/*/firmware.json", "devices/*/public-firmware/*", "schemas/v1/*.json",
   "launcher/*.py", "runtime/j71b/*.py", "runtime/j71b/phase2-hardware", "runtime/j71b/j71b-*",
+  "runtime/j71t/phase2-hardware", "runtime/j71t/j71t-*",
   "devices/j71b/touch/runtime/touch-activate", "devices/j71b/touch/runtime/*/*.sh",
   "boot/initramfs/j71b/recovery/*.json", "boot/initramfs/j71b/recovery/Containerfile",
   "boot/initramfs/j71b/recovery/init", "boot/initramfs/j71b/recovery/usb-gadget",
@@ -33,6 +34,7 @@ orchard_hardware = [
   "boot/initramfs/j71b/recovery/capture-adt", "boot/initramfs/j71b/recovery/udhcpd.conf",
   "boot/initramfs/j71b/recovery/upstream.lock", "boot/initramfs/j71b/recovery/build-tools*",
   "boot/initramfs/j71b/recovery/install-toolchain",
+  "boot/initramfs/j71t/recovery/*.json", "boot/initramfs/j71t/recovery/init", "boot/initramfs/j71t/recovery/usb-gadget",
   "boot/initramfs/j71b/busybox/*.py", "boot/initramfs/j71b/busybox/Containerfile",
   "boot/quiet/*.py", "boot/quiet/*.patch",
   "boot/m1n1/build", "boot/m1n1/install-toolchain", "boot/m1n1/Containerfile", "boot/m1n1/upstream.lock", "boot/m1n1/patches/*/*.patch",

@@ -1,0 +1,29 @@
+# iPad 5 Wi-Fi (J71t, S8003): hardware identity, boot assets and firmware recipe.
+schema = 1
+kind = "hardware.device"
+
+[device]
+profile = "j71t"
+name = "iPad 5 (Wi-Fi)"
+apple_products = ["iPad6,11"]
+dt_compatible = ["apple,j71t"]
+
+[match.dfu]
+chip = 0x8003 # iPad6,11 also ships as J71s (S8000, chip 0x8000); only J71t is supported.
+board = 0x10
+
+[match.linux]
+product = "J71t Recovery"
+
+[boot]
+methods = ["checkm8-pongo"]
+# No shared launcher yet: it needs per-device launcher asset names and a J71t
+# Minimal Linux root. Add launch_manifest when j71t-launcher.boot.toml exists.
+
+[firmware]
+recipe = "firmware.json" # Relative to this device.toml; public recipe, not firmware bytes.
+
+[support]
+wifi = true # Static support; provisioning requires runtime-confirmed availability.
+usb_serial = true
+usb_network = true

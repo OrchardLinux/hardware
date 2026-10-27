@@ -28,8 +28,10 @@ from image_policy import (verify_privileges, verify_session_access, ready,
 PROTOCOL = 1
 PROFILE = identity.PROFILE
 RUNTIME = Path(__file__).resolve().parent
-# Kernel evidence that the boot-time storage fence is intact: (parameter, value).
-FENCES = {'j71b': ('/sys/module/nvme/parameters/j71b_ro_failed', 'N')}
+# Kernel evidence that the boot-time storage fence is intact: (parameter,
+# full-match pattern). J71t accepts any write window confined to namespace 1.
+FENCES = {'j71b': ('/sys/module/nvme/parameters/j71b_ro_failed', 'N'),
+          'j71t': ('/sys/module/nvme/parameters/write_window', '1:[0-9]+-[0-9]+')}
 # Private firmware copied into J71b's staged touch activation roles.
 ROLE_FIRMWARE = {'j71b': ('t8010-smartio.bin', 'j71b-fwstart.z2fw')}
 RUN = Path('/run/orchard')
@@ -93,7 +95,7 @@ def no_faults():
     if re.search(r'apple-dart.*translation fault', text):
         raise ValueError('DART fault; hardware cannot be reused in this recovery boot')
     parameter, expected = FENCES[PROFILE]
-    if Path(parameter).read_text().strip() != expected:
+    if not re.fullmatch(expected, Path(parameter).read_text().strip()):
         raise ValueError('Storage fence failed')
 
 

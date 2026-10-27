@@ -1,0 +1,74 @@
+#!/bin/sh
+# Public device-owned J71t hardware preparation. No association or filesystem mounts.
+# The kernel holds the PCIe host and ANS until released here, after the private
+# mixin has been written, and drivers that read private firmware at probe time
+# are modules loaded below.
+set -eu
+phase=preflight
+failed() {
+ rc=$?
+ [ "$rc" = 0 ] && return
+ printf 'Hardware failed: %s (exit %s); inspect, do not retry\n' "$phase" "$rc" >&2
+ dmesg > /run/orchard/hardware-failed.dmesg 2>/dev/null || true
+ exit "$rc"
+}
+trap failed EXIT
+step() { phase=$1; echo "$phase"; }
+wait_for() {
+ n=0
+ until eval "$2"; do n=$((n+1)); [ "$n" -le "$1" ]; sleep 1; done
+}
+no_faults() {
+ [ "$(dmesg | grep -c 'apple-dart.*translation fault' || true)" = 0 ]
+ [ "$(cat /sys/module/nvme/parameters/write_window)" = "$window" ]
+}
+window=$(cat /sys/module/nvme/parameters/write_window)
+host_gate=/sys/module/pcie_apple_h9p/parameters/probe
+ans_gate=/sys/module/nvme/parameters/apple_ans_probe
+host=610000000.pcie
+[ "$(awk '$2=="/" {print $3}' /proc/mounts)" = rootfs ]
+[ "$(grep -c '/dev/nvme' /proc/mounts || true)" = 0 ]
+step boot-readiness
+# Recovery boot arguments set the window; it must be confined to namespace 1.
+case "$window" in 1:[0-9]*-[0-9]*) ;; *) false ;; esac
+[ "$(cat "$host_gate")" = N ] && [ "$(cat "$ans_gate")" = N ]
+[ ! -e /sys/class/nvme/nvme0 ]
+no_faults
+[ "$(cat /sys/class/power_supply/battery/present)" = 1 ]
+sha256sum -c /etc/orchard/public.SHA256SUMS > /run/orchard/public-verification.log
+step wifi
+echo Y > "$host_gate"
+# A synchronous reprobe could block on link training; poll with a deadline.
+[ -L "/sys/bus/platform/devices/$host/driver" ] || { echo "$host" > /sys/bus/platform/drivers_probe & }
+wait_for 30 '[ -d /sys/class/net/wlan0 ]'
+step storage-fence
+echo Y > "$ans_gate"
+for device in /sys/bus/pci/devices/*; do
+ [ -L "$device/driver" ] || [ "$(cat "$device/vendor")" != 0x106b ] && continue
+ case "$(cat "$device/class")" in 0x010802|0x018002) echo "${device##*/}" > /sys/bus/pci/drivers_probe & ;; esac
+done
+wait_for 60 '[ "$(cat /sys/class/nvme/nvme0/state 2>/dev/null)" = live ] && [ -e /sys/class/block/nvme0n1p1 ]'
+no_faults
+# Every partition starts read-only; the device API makes only the confirmed
+# target writable while it formats or mounts it.
+for part in /sys/class/block/nvme0n1p*; do
+ [ -d "$part" ]; blockdev --setro "/dev/${part##*/}"; [ "$(cat "$part/ro")" = 1 ]
+done
+for namespace in /sys/class/block/nvme0n[2-9]; do
+ [ ! -e "$namespace" ] || [ "$(cat "$namespace/ro")" = 1 ]
+done
+step touch
+modprobe apple_n1
+wait_for 20 'grep -q "Apple N1 Touchscreen" /proc/bus/input/devices'
+step bluetooth
+modprobe hci_uart
+wait_for 20 '[ -d /sys/class/bluetooth/hci0 ]'
+[ "$(dmesg | grep -c 'BCM: No valid J71t device address' || true)" = 0 ]
+step charging-policy
+modprobe apple_j71t_charger
+wait_for 10 '[ -d /sys/class/power_supply/charger ]'
+[ "$(dmesg | grep -c 'CBAT unavailable' || true)" = 0 ]
+no_faults
+mkdir -p /run/ipadlinux
+echo ready > /run/ipadlinux/j71t-early-ready
+echo hardware-ready
