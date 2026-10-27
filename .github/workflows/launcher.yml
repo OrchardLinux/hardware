@@ -5,14 +5,18 @@ on:
       hardware_tag:
         description: Published hardware release containing the wheel and component bundle
         required: true
-        default: v0.1.9
+        default: v0.1.10
       cli_tag:
         description: Published compatible CLI release
         required: true
-        default: v0.1.8
+        default: v0.1.10
       minimal_tag:
-        description: Published Minimal Linux release (supplies the Alpine base and one compatible root)
+        description: Published Minimal Linux release supplying the Alpine base userspace
         required: true
+      include_minimal_root:
+        description: Also advertise its installed root (requires matching kernel/modules)
+        type: boolean
+        default: true
       omarchy_tag:
         description: Optional published Omarchy A release to support as well
         required: false
@@ -48,6 +52,7 @@ jobs:
       HARDWARE_TAG: ${{ inputs.hardware_tag }}
       CLI_TAG: ${{ inputs.cli_tag }}
       MINIMAL_TAG: ${{ inputs.minimal_tag }}
+      INCLUDE_MINIMAL_ROOT: ${{ inputs.include_minimal_root }}
       OMARCHY_TAG: ${{ inputs.omarchy_tag }}
     steps:
       - uses: actions/checkout@v4
@@ -56,6 +61,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Require at least one installed root
+        run: |
+          if [[ "$INCLUDE_MINIMAL_ROOT" != true && -z "$OMARCHY_TAG" ]]; then
+            echo 'Select a matching Minimal Linux root or provide an Omarchy A release.' >&2
+            exit 1
+          fi
       - name: Await exact first-release image builds
         if: inputs.hardware_run_id != ''
         env:
@@ -139,8 +150,11 @@ jobs:
           (cd out/hardware && sha256sum --check --ignore-missing SHA256SUMS)
           tar -xzf out/hardware/j71b-components.tar.gz -C out
           gh release download "$MINIMAL_TAG" --repo OrchardLinux/minimal-linux \
-            --pattern rootfs.tar.gz --pattern rootfs.json --pattern build-receipt.json \
             --pattern base.tar.gz --pattern base.tar.gz.json --pattern SHA256SUMS --dir out/minimal
+          if [[ "$INCLUDE_MINIMAL_ROOT" == true ]]; then
+            gh release download "$MINIMAL_TAG" --repo OrchardLinux/minimal-linux \
+              --pattern rootfs.tar.gz --pattern rootfs.json --pattern build-receipt.json --dir out/minimal
+          fi
           (cd out/minimal && sha256sum --check --ignore-missing SHA256SUMS)
           if [[ -n "$OMARCHY_TAG" ]]; then
             mkdir -p out/omarchy
@@ -152,7 +166,10 @@ jobs:
       - name: Build and verify the shared launcher
         run: |
           python ci/launcher_inputs.py --components out/components --output out/launcher-inputs.json
-          installations=(--installation out/minimal/rootfs.tar.gz out/minimal/rootfs.json out/minimal/build-receipt.json)
+          installations=()
+          if [[ "$INCLUDE_MINIMAL_ROOT" == true ]]; then
+            installations+=(--installation out/minimal/rootfs.tar.gz out/minimal/rootfs.json out/minimal/build-receipt.json)
+          fi
           if [[ -n "$OMARCHY_TAG" ]]; then
             installations+=(--installation out/omarchy/rootfs.tar.zst out/omarchy/rootfs.json out/omarchy/build-receipt.json)
           fi
@@ -162,6 +179,19 @@ jobs:
             "${installations[@]}" --release "${HARDWARE_TAG#v}" \
             --public-base-url "https://github.com/OrchardLinux/hardware/releases/download/$HARDWARE_TAG" \
             --output out/launcher
+          # The host must carry this build's firmware recipe, not just its protocol.
+          python - <<'PY'
+          import os, re
+          from pathlib import Path
+          minimum = os.environ['CLI_TAG'].removeprefix('v')
+          for name in ('boot.toml', 'j71b-launcher.boot.toml'):
+              path = Path('out/launcher') / name
+              text, count = re.subn(r'^min_orchard = "[^"]+"$',
+                                   'min_orchard = "' + minimum + '"',
+                                   path.read_text(), flags=re.MULTILINE)
+              assert count == 1, 'Expected one launcher CLI requirement'
+              path.write_text(text)
+          PY
           mkdir -p out/publication
           cp out/launcher/recovery.bin out/launcher/pongo.bin out/launcher/j71b-launcher.boot.toml \
             out/launcher/launch.json out/publication/

@@ -53,8 +53,18 @@ Use the expected repository identity, not just a matching hash. Attestation iden
 Run `.github/workflows/launcher.yml` manually after the image releases exist. Select:
 
 - The hardware and compatible CLI tags.
-- A Minimal Linux tag (supplies its signed Alpine base and compatible root).
-- Optionally an Omarchy A tag, built with the same kernel/modules/runtime.
+- A Minimal Linux tag (supplies its signed Alpine base userspace).
+- Whether to include that Minimal Linux installation (`include_minimal_root`, default true); its root must match the selected kernel/modules/runtime.
+- Optionally an Omarchy A tag, built with the same kernel/modules/runtime. It is required when `include_minimal_root` is false.
+
+For an Omarchy-only hardware update, set `include_minimal_root=false` and supply
+the new Omarchy tag. The existing published Alpine base is reused only for RAM
+userspace; its old installed root is neither downloaded in the public-input
+path nor added to the launch catalogue. No Minimal Linux rebuild is required.
+The producer still verifies the base receipt and every selected installation's
+exact kernel/modules/runtime compatibility. Before checksumming and attesting,
+the workflow sets both launcher manifests' `min_orchard` to the selected CLI
+tag so older host firmware recipes are rejected before hardware preparation.
 
 The producer validates component inventories, quiet-patch receipts, root streams and kernel/runtime compatibility. It refuses incompatible roots rather than advertising unsupported installations.
 
