@@ -7,6 +7,8 @@ import re
 import shutil
 import stat
 
+# Installed as /usr/libexec/orchard-PROFILE; runtime/j71b in the source tree.
+PROFILE = Path(__file__).resolve().parent.name.replace('orchard-', '', 1)
 MARKER = '.orchard-staging.json'
 PATTERN = re.compile(r'\.([A-Za-z0-9][A-Za-z0-9._-]{0,63})\.install-[0-9a-f]{32}')
 
@@ -43,7 +45,7 @@ def identify(path, partition, receipts, firmware_names=(), owner_uid=0):
     if not any(record.get('release') == r['release'] and record.get('root_sha256') == r['sha256'] for r in receipts):
         return None
     if modern:
-        if (record.get('profile') != 'j71b' or record.get('status') != 'incomplete' or
+        if (record.get('profile') != PROFILE or record.get('status') != 'incomplete' or
                 record.get('directory') != match.group(1)):
             return None
     else:

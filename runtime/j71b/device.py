@@ -26,6 +26,12 @@ from image_policy import (verify_privileges, verify_session_access, ready,
                           stop_diagnostics, DIAGNOSTICS_EXECUTABLE)
 
 PROTOCOL = 1
+PROFILE = identity.PROFILE
+RUNTIME = Path(__file__).resolve().parent
+# Kernel evidence that the boot-time storage fence is intact: (parameter, value).
+FENCES = {'j71b': ('/sys/module/nvme/parameters/j71b_ro_failed', 'N')}
+# Private firmware copied into J71b's staged touch activation roles.
+ROLE_FIRMWARE = {'j71b': ('t8010-smartio.bin', 'j71b-fwstart.z2fw')}
 RUN = Path('/run/orchard')
 CONFIG = Path('/etc/orchard/release.json')
 FIRMWARE = Path('/etc/orchard/firmware.json')
@@ -86,7 +92,8 @@ def no_faults():
     text = command('dmesg').decode(errors='replace')
     if re.search(r'apple-dart.*translation fault', text):
         raise ValueError('DART fault; hardware cannot be reused in this recovery boot')
-    if Path('/sys/module/nvme/parameters/j71b_ro_failed').read_text().strip() != 'N':
+    parameter, expected = FENCES[PROFILE]
+    if Path(parameter).read_text().strip() != expected:
         raise ValueError('Storage fence failed')
 
 
@@ -122,7 +129,7 @@ def revoke_ssh(request):
 
 def status(_):
     device = identity.cached()
-    return {'release': config()['release'], 'profile': 'j71b', 'state': state(),
+    return {'release': config()['release'], 'profile': PROFILE, 'state': state(),
             'mode': config().get('mode', 'installer'),
             'ecid': device['ecid'] if device is not None else None,
             'boot_id': ssh_access.BOOT_ID.read_text().strip(),
@@ -287,7 +294,7 @@ def prepare(request):
         records = {m.name: bundle.extractfile(m).read() for m in members}
     metadata = json.loads(records.pop('mixin.json'))
     live_adt = command('/sbin/capture-adt')
-    if metadata['adt_sha256'] != hashlib.sha256(live_adt).hexdigest() or metadata['profile'] != 'j71b':
+    if metadata['adt_sha256'] != hashlib.sha256(live_adt).hexdigest() or metadata['profile'] != PROFILE:
         raise ValueError('Private mixin is not for this recovery boot')
     if set(records) != allowed or set(metadata['files']) != allowed:
         raise ValueError('Private mixin must contain exactly firmware data')
@@ -306,17 +313,18 @@ def prepare(request):
         path.write_bytes(content)
         path.chmod(0o600)
     atomic(RUN / 'mixin.json', metadata)
-    for role in ('touch-start', 'touch-runtime'):
-        directory = Path('/usr/libexec/orchard-j71b') / role
-        for name in ('t8010-smartio.bin', 'j71b-fwstart.z2fw'):
+    names = ROLE_FIRMWARE.get(PROFILE, ())
+    for role in ('touch-start', 'touch-runtime') if names else ():
+        directory = RUNTIME / role
+        for name in names:
             (directory / 'firmware').mkdir(exist_ok=True)
             shutil.copyfile('/lib/firmware/apple/' + name, directory / 'firmware' / name)
         # Public hash list is baked; append only private firmware hashes.
         text = (directory / 'PUBLIC.SHA256SUMS').read_text()
         text += ''.join(sha(directory / 'firmware' / name) + '  firmware/' + name + '\n'
-                        for name in ('t8010-smartio.bin', 'j71b-fwstart.z2fw'))
+                        for name in names)
         (directory / 'SHA256SUMS').write_text(text)
-    process = subprocess.Popen(['/usr/libexec/orchard-j71b/hardware'],
+    process = subprocess.Popen([str(RUNTIME / 'hardware')],
                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     for line in process.stdout:
         emit('progress', message=line.rstrip())
@@ -534,7 +542,7 @@ def install(request):
             or space.f_favail < image.get('members', 65536) + 1024):
         raise ValueError('Insufficient space or free inodes after deletion; replacement cannot be restored')
     temporary.mkdir(mode=0o700)
-    atomic(temporary / staging.MARKER, {'schema': 1, 'profile': 'j71b', 'status': 'incomplete',
+    atomic(temporary / staging.MARKER, {'schema': 1, 'profile': PROFILE, 'status': 'incomplete',
            'partition': partition['id'], 'filesystem_uuid': partition['filesystem_uuid'],
            'directory': name, 'release': release['release'], 'root_sha256': image['sha256']})
     # Archive members cannot overwrite either ownership or operation state.

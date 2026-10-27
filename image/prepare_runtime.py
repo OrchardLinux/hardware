@@ -16,7 +16,8 @@ from .integrity import sha
 from .elf import needed
 
 PROJECT = Path(__file__).resolve().parents[1]
-HERE = PROJECT / 'boot/initramfs/j71b/recovery'
+# Device-independent recovery helpers; init and the USB gadget are per device.
+SHARED = PROJECT / 'boot/initramfs/j71b/recovery'
 
 
 def copy(source, target, mode):
@@ -124,11 +125,16 @@ def main():
     purpose.add_argument('--launcher-catalogue', type=Path)
     parser.add_argument('--launcher-release')
     parser.add_argument('--cleanup-receipt', type=Path, action='append', default=[])
+    parser.add_argument('--device', default='j71b', help='hardware profile (default: j71b)')
     args = parser.parse_args()
+    profile = args.device
+    here = PROJECT / 'boot/initramfs' / profile / 'recovery'
+    if not re.fullmatch(r'[a-z0-9][a-z0-9_-]*', profile) or not (here / 'init').is_file():
+        parser.error('No recovery support for device: ' + profile)
     cleanup_receipts = []
     for receipt in args.cleanup_receipt:
         previous = json.loads(receipt.read_text())
-        if (previous.get('kind') != 'rootfs' or previous.get('profile') != 'j71b' or
+        if (previous.get('kind') != 'rootfs' or previous.get('profile') != profile or
                 previous.get('schema') != 1 or not previous.get('release') or
                 not re.fullmatch('[0-9a-f]{64}', previous.get('sha256', ''))):
             raise ValueError('Invalid compatible cleanup receipt')
@@ -143,7 +149,7 @@ def main():
                          (args.dropbearkey, 'usr/bin/dropbearkey')):
         copy(source, root / name, 0o755)
     stage_runtime(args.base, args.base_receipt, root)
-    kernel_release, public = runtime_files(args.modules_dir, args.policy_dir)
+    kernel_release, public = runtime_files(args.modules_dir, args.policy_dir, profile)
     for name, (data, mode) in public.items():
         path = root / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -152,26 +158,27 @@ def main():
     if args.launcher_catalogue:
         catalogue = json.loads(args.launcher_catalogue.read_text())
         if (not args.launcher_release or catalogue.get('schema') != 1 or
-                catalogue.get('profile') != 'j71b' or not catalogue.get('installations') or
+                catalogue.get('profile') != profile or not catalogue.get('installations') or
                 any(r['kernel_release'] != kernel_release for r in catalogue['installations'])):
             raise ValueError('Invalid launcher catalogue/kernel identity')
         copy(args.launcher_catalogue, root / 'etc/orchard/launch.json', 0o644)
-        configuration = {'protocol':1, 'release':args.launcher_release, 'profile':'j71b',
+        configuration = {'protocol':1, 'release':args.launcher_release, 'profile':profile,
                          'kernel_release':kernel_release, 'mode':'launcher'}
     else:
         spec = json.loads(args.root_receipt.read_text())
         if spec['kernel_release'] != kernel_release:
             raise ValueError('Root/recovery kernel releases differ')
-        configuration = {'protocol': 1, 'release': spec['release'], 'profile': 'j71b',
+        configuration = {'protocol': 1, 'release': spec['release'], 'profile': profile,
                          'kernel_release': kernel_release, 'cleanup_receipts': cleanup_receipts,
                          'root': {k: spec[k] for k in ('sha256', 'bytes', 'expanded_bytes', 'members', 'compression')}}
     (root / 'etc/orchard/release.json').write_text(json.dumps(configuration))
-    copy(firmware_path('j71b'), root / 'etc/orchard/firmware.json', 0o644)
-    for source, name in (('init', 'init'), ('usb-gadget', 'sbin/recovery-usb'),
-                         ('authorize-key', 'sbin/authorize-key'), ('start-ssh', 'sbin/recovery-start-ssh'),
-                         ('capture-adt', 'sbin/capture-adt')):
-        copy(HERE / source, root / name, 0o755)
-    copy(HERE / 'udhcpd.conf', root / 'etc/udhcpd.conf', 0o644)
+    copy(firmware_path(profile), root / 'etc/orchard/firmware.json', 0o644)
+    for directory, source, name in ((here, 'init', 'init'), (here, 'usb-gadget', 'sbin/recovery-usb'),
+                                    (SHARED, 'authorize-key', 'sbin/authorize-key'),
+                                    (SHARED, 'start-ssh', 'sbin/recovery-start-ssh'),
+                                    (SHARED, 'capture-adt', 'sbin/capture-adt')):
+        copy(directory / source, root / name, 0o755)
+    copy(SHARED / 'udhcpd.conf', root / 'etc/udhcpd.conf', 0o644)
     (root / 'etc/passwd').write_text('root:x:0:0:root:/root:/bin/sh\n')
     (root / 'etc/group').write_text('root:x:0:\n')
     (root / 'etc/shadow').write_text('root:!:0:0:99999:7:::\n')

@@ -17,17 +17,17 @@ def receipt(path):
     return {'bytes': path.stat().st_size, 'sha256': digest.hexdigest()}
 
 
-def package(directory, output):
+def package(directory, output, device='j71b'):
     if output.exists():
         raise FileExistsError(output)
     here = Path(__file__).resolve().parents[1]
-    for name in ('kernel/Image.gz', 'kernel/j71b.dtb', 'kernel/kernel.release',
+    for name in ('kernel/Image.gz', 'kernel/' + device + '.dtb', 'kernel/kernel.release',
                  'boot/busybox', 'boot/dropbear', 'boot/dropbearkey',
                  'quiet/m1n1.bin', 'quiet/pongo.bin'):
         receipt(directory / name)
     if not any((directory / 'kernel/lib/modules').rglob('*.ko')):
         raise ValueError('Kernel modules are missing')
-    quiet = {'schema': 1, 'profile': 'j71b', 'presentation': 'black',
+    quiet = {'schema': 1, 'profile': device, 'presentation': 'black',
              'files': {role: receipt(directory / 'quiet' / name)
                        for role, name in (('loader', 'm1n1.bin'), ('pongo', 'pongo.bin'))},
              'patches': {name: receipt(here / 'boot/quiet' / name)['sha256']
@@ -49,5 +49,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--directory', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--device', default='j71b')
     args = parser.parse_args()
-    package(args.directory, args.output)
+    package(args.directory, args.output, args.device)

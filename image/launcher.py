@@ -1,4 +1,4 @@
-"""Build shared J71b launch recovery from verified components and root artifacts.
+"""Build shared device launch recovery from verified components and root artifacts.
 
 Root archives are producer inputs ONLY. Launch clients consume the small boot
 manifest; no root archive or host install history is needed to select a system.
@@ -18,11 +18,11 @@ from .integrity import sha
 from .runtime import files as runtime_files
 
 
-def compatibility(archive, receipt_path, build_path, components):
+def compatibility(archive, receipt_path, build_path, components, profile='j71b'):
     receipt = json.loads(receipt_path.read_text())
     build = json.loads(build_path.read_text())
     if (receipt.get('schema') != 1 or receipt.get('kind') != 'rootfs' or
-            receipt.get('profile') != 'j71b' or archive.is_symlink() or
+            receipt.get('profile') != profile or archive.is_symlink() or
             archive.stat().st_size != receipt['bytes'] or sha(archive) != receipt['sha256']):
         raise ValueError('Installed-root producer receipt differs')
     if build.get('release', build.get('version')) != receipt['release']:
@@ -40,8 +40,8 @@ def compatibility(archive, receipt_path, build_path, components):
     else:
         raise ValueError('Unsupported root compression')
     hashes, links, text = {}, {}, {}
-    wanted = {'etc/orchard/public.SHA256SUMS','etc/orchard/release.json',
-              'usr/libexec/orchard-j71b/image_policy.py'}
+    policy_name = 'usr/libexec/orchard-' + profile + '/image_policy.py'
+    wanted = {'etc/orchard/public.SHA256SUMS','etc/orchard/release.json', policy_name}
     seen = set()
     try:
         with bundle:
@@ -75,7 +75,7 @@ def compatibility(archive, receipt_path, build_path, components):
             if process.poll() is None:
                 process.kill()
                 process.wait()
-    policy = ast.parse(text['usr/libexec/orchard-j71b/image_policy.py'])
+    policy = ast.parse(text[policy_name])
     init = [ast.literal_eval(n.value) for n in policy.body if isinstance(n,ast.Assign) and
             any(isinstance(t,ast.Name) and t.id=='INIT' for t in n.targets)]
     if len(init)!=1 or init[0] not in ('/sbin/init','/usr/lib/systemd/systemd'):
@@ -114,10 +114,10 @@ def compatibility(archive, receipt_path, build_path, components):
             'init_target':init_target,'files':pinned}
 
 
-def verify_quiet_boot(receipt_path, inputs):
+def verify_quiet_boot(receipt_path, inputs, profile='j71b'):
     """Never silently reuse a distro-branded loader in shared discovery."""
     receipt = json.loads(receipt_path.read_text())
-    if (receipt.get('schema') != 1 or receipt.get('profile') != 'j71b' or
+    if (receipt.get('schema') != 1 or receipt.get('profile') != profile or
             receipt.get('presentation') != 'black'):
         raise ValueError('Shared launcher requires black-screen boot components')
     here = Path(__file__).resolve().parents[1] / 'boot/quiet'
@@ -140,7 +140,9 @@ def main():
     parser.add_argument('--release',required=True)
     parser.add_argument('--public-base-url', help='immutable HTTPS release asset directory')
     parser.add_argument('--output',type=Path,required=True)
+    parser.add_argument('--device',default='j71b',help='hardware profile (default: j71b)')
     args=parser.parse_args()
+    profile=args.device
     if args.output.exists(): parser.error('Choose a new output directory')
     if args.public_base_url:
         from urllib.parse import urlsplit
@@ -149,7 +151,7 @@ def main():
                 url.query or url.fragment or '/latest/' in url.path):
             parser.error('--public-base-url must be an immutable HTTPS asset directory')
     inputs=json.loads(args.inputs.read_text())
-    verify_quiet_boot(args.quiet_boot_receipt, inputs)
+    verify_quiet_boot(args.quiet_boot_receipt, inputs, profile)
     for row in inputs['files'].values():
         path=Path(row['path'])
         if path.is_symlink() or path.stat().st_size!=row['bytes'] or sha(path)!=row['sha256']:
@@ -159,8 +161,8 @@ def main():
     if actual!=inputs['modules']['files'] or any(p.is_symlink() for p in modules.rglob('*')):
         raise ValueError('Module tree differs')
     policies=Path(__file__).resolve().parents[1]/'launcher'
-    kernel_release, public=runtime_files(modules,policies)
-    records=[compatibility(*(Path(p) for p in row),inputs) for row in args.installation]
+    kernel_release, public=runtime_files(modules,policies,profile)
+    records=[compatibility(*(Path(p) for p in row),inputs,profile) for row in args.installation]
     identities={(r['release'],r['root_sha256']) for r in records}
     if len(identities)!=len(records): raise ValueError('Duplicate launch compatibility records')
     # Same release string alone is not a kernel/module compatibility guarantee.
@@ -171,7 +173,7 @@ def main():
                 raise ValueError('Installed module compatibility differs: '+name)
     args.output.mkdir(parents=True)
     catalogue=args.output/'launch.json'
-    catalogue.write_text(json.dumps({'schema':1,'profile':'j71b','installations':records},indent=2)+'\n')
+    catalogue.write_text(json.dumps({'schema':1,'profile':profile,'installations':records},indent=2)+'\n')
     files=inputs['files']
     command=[sys.executable,'-m','orchard_hardware.image.recovery']
     for key in ('loader','kernel','dtb','busybox','dropbear','dropbearkey'):
@@ -179,16 +181,17 @@ def main():
     command+=['--base',str(args.base),'--base-receipt',str(args.base_receipt),
               '--modules-dir',str(modules),'--policy-dir',str(policies),
               '--launcher-catalogue',str(catalogue),'--launcher-release',args.release,
-              '--output',str(args.output/'recovery.bin')]
+              '--output',str(args.output/'recovery.bin'),'--device',profile]
     subprocess.run(command,check=True)
     shutil.copyfile(files['pongo']['path'],args.output/'pongo.bin')
     def artifact(name):
         path=args.output/name
         return {'file':name,'bytes':path.stat().st_size,'sha256':sha(path)}
     boot,pongo=artifact('recovery.bin'),artifact('pongo.bin')
-    lines=['schema = 1','kind = "orchard.boot"','device = "j71b"',
+    lines=['schema = 1','kind = "orchard.boot"','device = '+json.dumps(profile),
            'boot_method = "checkm8-pongo"','min_orchard = "0.1.8"','protocol = 1',
-           'name = "J71b installed-system launcher"','version = '+json.dumps(args.release)]
+           'name = '+json.dumps(profile[0].upper()+profile[1:]+' installed-system launcher'),
+           'version = '+json.dumps(args.release)]
     for name,row in (('boot',boot),('pongo',pongo)):
         lines+=['','['+name+']',*[key+' = '+json.dumps(value) for key,value in row.items()]]
     (args.output/'boot.toml').write_text('\n'.join(lines)+'\n')
@@ -196,9 +199,9 @@ def main():
         public_lines = [
             'url = ' + json.dumps(args.public_base_url.rstrip('/') + '/' + json.loads(line[7:]))
             if line.startswith('file = ') else line for line in lines]
-        (args.output/'j71b-launcher.boot.toml').write_text('\n'.join(public_lines)+'\n')
+        (args.output/(profile+'-launcher.boot.toml')).write_text('\n'.join(public_lines)+'\n')
     (args.output/'build-receipt.json').write_text(json.dumps({'schema':1,'release':args.release,
-        'profile':'j71b','mode':'launcher','presentation':'black','inputs':inputs,'boot':boot,'pongo':pongo,
+        'profile':profile,'mode':'launcher','presentation':'black','inputs':inputs,'boot':boot,'pongo':pongo,
         'catalogue_sha256':sha(catalogue),'physical_qualification':'not-performed'},indent=2)+'\n')
     print('Shared launcher:',args.output/'boot.toml')
 

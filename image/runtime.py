@@ -4,15 +4,26 @@ import json
 from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parents[1]
-TOUCH = PROJECT / 'devices/j71b/touch/runtime'
-MODULES = {
-    'touch-start': ('virt-dma', 'apple-sio-core', 'apple-sio-dma', 'j71b_dma_bindings',
-                    'j71b_sio_denied_test', 'j71b_spi_dma_reset', 'j71b_touch_start'),
-    'touch-runtime': ('virt-dma', 'apple-sio-core', 'apple-sio-dma', 'j71b_dma_bindings', 'j71b_z2'),
+# The device API in runtime/j71b is shared; each profile adds its hardware
+# preparation, platform helpers and optional staged touch activation.
+SHARED = PROJECT / 'runtime/j71b'
+PROFILES = {
+    'j71b': {
+        'touch': PROJECT / 'devices/j71b/touch/runtime',
+        'modules': {
+            'touch-start': ('virt-dma', 'apple-sio-core', 'apple-sio-dma', 'j71b_dma_bindings',
+                            'j71b_sio_denied_test', 'j71b_spi_dma_reset', 'j71b_touch_start'),
+            'touch-runtime': ('virt-dma', 'apple-sio-core', 'apple-sio-dma', 'j71b_dma_bindings', 'j71b_z2'),
+        },
+        'helpers': ('j71b-check-platform', 'j71b-charge-lease'),
+    },
 }
 
 
-def files(modules_dir: Path, policy_dir: Path):
+def files(modules_dir: Path, policy_dir: Path, profile='j71b'):
+    if profile not in PROFILES:
+        raise ValueError('No device runtime for profile: ' + str(profile))
+    device = PROFILES[profile]
     releases = [p for p in modules_dir.iterdir() if p.is_dir() and not p.is_symlink()]
     if len(releases) != 1:
         raise ValueError('Expected one kernel module release')
@@ -25,10 +36,10 @@ def files(modules_dir: Path, policy_dir: Path):
             raise ValueError('Public module tree contains a symlink')
         if path.is_file():
             result['usr/lib/modules/' + release + '/' + path.relative_to(releases[0]).as_posix()] = (path.read_bytes(), 0o644)
-    prefix = 'usr/libexec/orchard-j71b/'
-    for role, names in MODULES.items():
+    prefix = 'usr/libexec/orchard-' + profile + '/'
+    for role, names in device['modules'].items():
         entries = {}
-        for path in sorted((TOUCH / role).glob('*.sh')):
+        for path in sorted((device['touch'] / role).glob('*.sh')):
             entries[path.name] = (path.read_bytes().replace(b'@KERNEL_RELEASE@', release.encode()), 0o755)
         for name in names:
             candidates = list(releases[0].rglob(name + '.ko'))
@@ -39,24 +50,24 @@ def files(modules_dir: Path, policy_dir: Path):
                        for name, (data, _) in sorted(entries.items()))
         entries['PUBLIC.SHA256SUMS'] = (sums.encode(), 0o644)
         result.update({prefix + role + '/' + name: value for name, value in entries.items()})
-    result[prefix + 'touch-activate'] = ((TOUCH / 'touch-activate').read_bytes().replace(
-        b'@KERNEL_RELEASE@', release.encode()), 0o755)
-    for source, target in (('phase2-hardware', 'hardware'), ('device.py', 'device.py'),
-                           ('archive.py', 'archive.py'), ('handoff.py', 'handoff.py'),
-                           ('staging.py', 'staging.py'), ('ssh_access.py', 'ssh_access.py'),
-                           ('storage.py', 'storage.py'), ('identity.py', 'identity.py'),
-                           ('launch.py', 'launch.py')):
-        result[prefix + target] = ((PROJECT / 'runtime/j71b' / source).read_bytes(), 0o755)
+    if device['touch']:
+        result[prefix + 'touch-activate'] = ((device['touch'] / 'touch-activate').read_bytes().replace(
+            b'@KERNEL_RELEASE@', release.encode()), 0o755)
+    result[prefix + 'hardware'] = ((PROJECT / 'runtime' / profile / 'phase2-hardware').read_bytes(), 0o755)
+    for name in ('device.py', 'archive.py', 'handoff.py', 'staging.py', 'ssh_access.py',
+                 'storage.py', 'identity.py', 'launch.py'):
+        result[prefix + name] = ((SHARED / name).read_bytes(), 0o755)
     result[prefix + 'adt.py'] = ((PROJECT / 'apple/adt.py').read_bytes(), 0o644)
-    result['usr/bin/orchard-device'] = (b'#!/bin/sh\nexec /usr/bin/python3 /usr/libexec/orchard-j71b/device.py "$@"\n', 0o755)
+    result['usr/bin/orchard-device'] = (('#!/bin/sh\nexec /usr/bin/python3 /' + prefix +
+                                         'device.py "$@"\n').encode(), 0o755)
     if not (policy_dir / 'image_policy.py').is_file():
         raise ValueError('Image must supply its own image_policy.py')
     for path in sorted(policy_dir.glob('*.py')):
         if path.is_symlink() or prefix + path.name in result:
             raise ValueError('Unsafe/colliding image policy file')
         result[prefix + path.name] = (path.read_bytes(), 0o644)
-    for name in ('j71b-check-platform', 'j71b-charge-lease'):
-        result['usr/libexec/' + name] = ((PROJECT / 'runtime/j71b' / name).read_bytes().replace(
+    for name in device['helpers']:
+        result['usr/libexec/' + name] = ((PROJECT / 'runtime' / profile / name).read_bytes().replace(
             b'@KERNEL_RELEASE@', release.encode()), 0o755)
     # cfg80211 needs the public database AND its upstream detached signature
     # in recovery, before Wi-Fi probing. This is not private device firmware.

@@ -6,7 +6,7 @@ from pathlib import Path, PurePosixPath
 from orchard_hardware.image.integrity import sha
 
 
-def prepare(root, output):
+def prepare(root, output, device='j71b'):
     inventory = json.loads((root / 'components.json').read_text())
     if inventory.get('schema') != 1:
         raise ValueError('Unsupported component inventory')
@@ -23,7 +23,7 @@ def prepare(root, output):
         if source.stat().st_size != expected['bytes'] or sha(source) != expected['sha256']:
             raise ValueError('Component differs: ' + name)
     roles = {'loader': 'quiet/m1n1.bin', 'pongo': 'quiet/pongo.bin',
-             'kernel': 'kernel/Image.gz', 'dtb': 'kernel/j71b.dtb',
+             'kernel': 'kernel/Image.gz', 'dtb': 'kernel/' + device + '.dtb',
              'kernel_release': 'kernel/kernel.release', 'busybox': 'boot/busybox',
              'dropbear': 'boot/dropbear', 'dropbearkey': 'boot/dropbearkey'}
     files = {role: {'path': str((root / name).resolve()), **inventory['files'][name]}
@@ -40,5 +40,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--components', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--device', default='j71b')
     args = parser.parse_args()
-    prepare(args.components, args.output)
+    prepare(args.components, args.output, args.device)
