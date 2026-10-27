@@ -1,0 +1,335 @@
+From: Berkay Kösebay <brkosebay@users.noreply.github.com>
+Subject: [PATCH] usb: Expose guarded J71b source monitoring
+
+Keep source identity separate from USB link accounting. Serialize the
+analog callback with DWC2 role transactions; accept only J71b fixed
+peripheral topology, and discard samples across gadget state events.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+---
+diff --git a/drivers/usb/dwc2/core.h b/drivers/usb/dwc2/core.h
+index 767251aa1..8535ff132 100644
+--- a/drivers/usb/dwc2/core.h
++++ b/drivers/usb/dwc2/core.h
+@@ -1055,6 +1055,9 @@ struct dwc2_hregs_backup {
+  *
+  */
+ struct dwc2_hsotg {
++	/* Sleepable role/analog-monitor hardware exclusion. */
++	struct mutex j71b_source_lock;
++	bool j71b_source_stopped;
+ 	struct device *dev;
+ 	void __iomem *regs;
+ 	/** Params detected from hardware */
+diff --git a/drivers/usb/dwc2/core_intr.c b/drivers/usb/dwc2/core_intr.c
+index 9565e6a52..ad62beac2 100644
+--- a/drivers/usb/dwc2/core_intr.c
++++ b/drivers/usb/dwc2/core_intr.c
+@@ -21,6 +21,7 @@
+ #include <linux/usb/hcd.h>
+ #include <linux/usb/ch11.h>
+ 
++#include <linux/usb/j71b-source.h>
+ #include "core.h"
+ #include "hcd.h"
+ 
+@@ -862,6 +863,8 @@ irqreturn_t dwc2_handle_common_intr(int irq, void *dev)
+ 				       & HFNUM_FRNUM_MASK) >> HFNUM_FRNUM_SHIFT;
+ 
+ 	gintsts = dwc2_read_common_intr(hsotg);
++	if (gintsts && dwc2_is_device_mode(hsotg))
++		usb_gadget_j71b_event(&hsotg->gadget, false);
+ 	if (gintsts & ~GINTSTS_PRTINT)
+ 		retval = IRQ_HANDLED;
+ 
+diff --git a/drivers/usb/dwc2/drd.c b/drivers/usb/dwc2/drd.c
+index 1ad8fa3f8..76b4fa236 100644
+--- a/drivers/usb/dwc2/drd.c
++++ b/drivers/usb/dwc2/drd.c
+@@ -83,7 +83,7 @@ static int dwc2_ovr_bvalid(struct dwc2_hsotg *hsotg, bool valid)
+ 	return 0;
+ }
+ 
+-static int dwc2_drd_role_sw_set(struct usb_role_switch *sw, enum usb_role role)
++static int dwc2_drd_role_sw_set_locked(struct usb_role_switch *sw, enum usb_role role)
+ {
+ 	struct dwc2_hsotg *hsotg = usb_role_switch_get_drvdata(sw);
+ 	unsigned long flags;
+@@ -170,6 +170,18 @@ static int dwc2_drd_role_sw_set(struct usb_role_switch *sw, enum usb_role role)
+ 	return 0;
+ }
+ 
++static int dwc2_drd_role_sw_set(struct usb_role_switch *sw, enum usb_role role)
++{
++	struct dwc2_hsotg *hsotg = usb_role_switch_get_drvdata(sw);
++	int ret;
++
++	mutex_lock(&hsotg->j71b_source_lock);
++	ret = hsotg->j71b_source_stopped ? -ESHUTDOWN :
++		dwc2_drd_role_sw_set_locked(sw, role);
++	mutex_unlock(&hsotg->j71b_source_lock);
++	return ret;
++}
++
+ int dwc2_drd_init(struct dwc2_hsotg *hsotg)
+ {
+ 	struct usb_role_switch_desc role_sw_desc = {0};
+diff --git a/drivers/usb/dwc2/gadget.c b/drivers/usb/dwc2/gadget.c
+index 102169b40..22c547a19 100644
+--- a/drivers/usb/dwc2/gadget.c
++++ b/drivers/usb/dwc2/gadget.c
+@@ -29,6 +29,7 @@
+ #include <linux/usb/composite.h>
+ 
+ 
++#include <linux/usb/j71b-source.h>
+ #include "core.h"
+ #include "hw.h"
+ 
+@@ -3202,6 +3203,8 @@ static void dwc2_hsotg_irq_enumdone(struct dwc2_hsotg *hsotg)
+ 	u32 dsts = dwc2_readl(hsotg, DSTS);
+ 	int ep0_mps = 0, ep_mps = 8;
+ 
++	usb_gadget_j71b_event(&hsotg->gadget, true);
++
+ 	/*
+ 	 * This should signal the finish of the enumeration phase
+ 	 * of the USB handshaking, so we should now know what rate
+@@ -3724,6 +3727,9 @@ static irqreturn_t dwc2_hsotg_irq(int irq, void *pw)
+ 		__func__, gintsts, gintsts & gintmsk, gintmsk, retry_count);
+ 
+ 	gintsts &= gintmsk;
++	if (gintsts)
++		usb_gadget_j71b_event(&hsotg->gadget,
++				      !!(gintsts & GINTSTS_RXFLVL));
+ 
+ 	if (gintsts & GINTSTS_RESETDET) {
+ 		dev_dbg(hsotg->dev, "%s: USBRstDet\n", __func__);
+@@ -3761,6 +3767,7 @@ static irqreturn_t dwc2_hsotg_irq(int irq, void *pw)
+ 
+ 		if (usb_status & GOTGCTL_BSESVLD && connected)
+ 			dwc2_hsotg_core_init_disconnected(hsotg, true);
++		usb_gadget_j71b_event(&hsotg->gadget, true);
+ 	}
+ 
+ 	if (gintsts & GINTSTS_ENUMDONE) {
+diff --git a/drivers/usb/dwc2/platform.c b/drivers/usb/dwc2/platform.c
+index ef0d73077..b97d4c855 100644
+--- a/drivers/usb/dwc2/platform.c
++++ b/drivers/usb/dwc2/platform.c
+@@ -20,6 +20,8 @@
+ 
+ #include <linux/usb/of.h>
+ 
++#include <linux/usb/j71b-source.h>
++#include <linux/of_platform.h>
+ #include "core.h"
+ #include "hcd.h"
+ #include "debug.h"
+@@ -290,6 +292,46 @@ static int dwc2_lowlevel_hw_init(struct dwc2_hsotg *hsotg)
+ 	return 0;
+ }
+ 
++/* J71b has a fixed peripheral role. Refuse any future role-switch topology;
++ * such a topology needs a monitor owner covering PHY and external role changes.
++ * The caller must quiesce this callback before system PM (the lease notifier).
++ * Lock order: device -> role hardware -> policy -> UDC -> gadget state.
++ */
++int dwc2_j71b_source_monitor(struct device_node *node,
++			     int (*sample)(void *data), void *data)
++{
++	struct platform_device *pdev;
++	struct dwc2_hsotg *hsotg;
++	int ret = -EOPNOTSUPP;
++
++	if (!of_machine_is_compatible("apple,j71b") ||
++	    !of_device_is_compatible(node, "apple,t8010-dwc2"))
++		return -ENODEV;
++	pdev = of_find_device_by_node(node);
++	if (!pdev)
++		return -ENODEV;
++	device_lock(&pdev->dev);
++	hsotg = platform_get_drvdata(pdev);
++	if (!pdev->dev.driver || !hsotg)
++		goto out;
++	mutex_lock(&hsotg->j71b_source_lock);
++	if (hsotg->j71b_source_stopped) {
++		ret = -ESHUTDOWN;
++	} else if (hsotg->dr_mode == USB_DR_MODE_PERIPHERAL && !hsotg->role_sw &&
++		   !device_property_read_bool(&pdev->dev, "usb-role-switch")) {
++		/* Fixed peripheral mode cannot enter host role. Avoid MMIO reads
++		 * against a controller whose clocks may be gated by USB link PM.
++		 */
++		ret = hsotg->ll_hw_enabled ? sample(data) : -EAGAIN;
++	}
++	mutex_unlock(&hsotg->j71b_source_lock);
++out:
++	device_unlock(&pdev->dev);
++	put_device(&pdev->dev);
++	return ret;
++}
++EXPORT_SYMBOL_GPL(dwc2_j71b_source_monitor);
++
+ /**
+  * dwc2_driver_remove() - Called when the DWC_otg core is unregistered with the
+  * DWC_otg driver
+@@ -307,6 +349,10 @@ static void dwc2_driver_remove(struct platform_device *dev)
+ 	struct dwc2_gregs_backup *gr;
+ 	int ret = 0;
+ 
++	mutex_lock(&hsotg->j71b_source_lock);
++	hsotg->j71b_source_stopped = true;
++	mutex_unlock(&hsotg->j71b_source_lock);
++
+ 	gr = &hsotg->gr_backup;
+ 
+ 	/* Exit Hibernation when driver is removed. */
+@@ -369,6 +415,10 @@ static void dwc2_driver_shutdown(struct platform_device *dev)
+ {
+ 	struct dwc2_hsotg *hsotg = platform_get_drvdata(dev);
+ 
++	mutex_lock(&hsotg->j71b_source_lock);
++	hsotg->j71b_source_stopped = true;
++	mutex_unlock(&hsotg->j71b_source_lock);
++
+ 	if (hsotg->ll_hw_enabled) {
+ 		dwc2_disable_global_interrupts(hsotg);
+ 		synchronize_irq(hsotg->irq);
+@@ -447,6 +497,7 @@ static int dwc2_driver_probe(struct platform_device *dev)
+ 		return -ENOMEM;
+ 
+ 	hsotg->dev = &dev->dev;
++	mutex_init(&hsotg->j71b_source_lock);
+ 
+ 	/*
+ 	 * Use reasonable defaults so platforms don't have to provide these.
+diff --git a/drivers/usb/gadget/udc/core.c b/drivers/usb/gadget/udc/core.c
+index f6da12b55..5cc38cc0e 100644
+--- a/drivers/usb/gadget/udc/core.c
++++ b/drivers/usb/gadget/udc/core.c
+@@ -20,6 +20,8 @@
+ 
+ #include <linux/usb/ch9.h>
+ #include <linux/usb/gadget.h>
++#include <linux/usb/j71b-source.h>
++#include <linux/of.h>
+ #include <linux/usb.h>
+ 
+ #include "trace.h"
+@@ -1137,6 +1139,11 @@ void usb_gadget_set_state(struct usb_gadget *gadget,
+ 
+ 	spin_lock_irqsave(&gadget->state_lock, flags);
+ 	gadget->state = state;
++	gadget->j71b_source_generation++;
++	if (state == USB_STATE_DEFAULT || state == USB_STATE_ADDRESS ||
++	    state == USB_STATE_CONFIGURED)
++		gadget->j71b_source_connected = true;
++
+ 	if (!gadget->teardown)
+ 		schedule_work(&gadget->work);
+ 	spin_unlock_irqrestore(&gadget->state_lock, flags);
+@@ -1144,6 +1151,55 @@ void usb_gadget_set_state(struct usb_gadget *gadget,
+ }
+ EXPORT_SYMBOL_GPL(usb_gadget_set_state);
+ 
++/* DWC2 IRQ activity cancels an in-flight analog measurement. A reset or
++ * enumeration is host evidence; suspend/resume alone cannot invent a host.
++ */
++void usb_gadget_j71b_event(struct usb_gadget *gadget, bool host_seen)
++{
++	unsigned long flags;
++
++	spin_lock_irqsave(&gadget->state_lock, flags);
++	gadget->j71b_source_generation++;
++	if (host_seen)
++		gadget->j71b_source_connected = true;
++	spin_unlock_irqrestore(&gadget->state_lock, flags);
++}
++EXPORT_SYMBOL_GPL(usb_gadget_j71b_event);
++
++/* No endpoint, PHY, or enumeration changes on a measured physical detach. */
++int usb_gadget_j71b_source(struct device_node *node,
++			   struct j71b_usb_source *source, bool detached)
++{
++	struct usb_udc *udc;
++	unsigned long flags;
++	int ret = -ENODEV;
++
++	if (!of_machine_is_compatible("apple,j71b"))
++		return -ENODEV;
++	mutex_lock(&udc_lock);
++	list_for_each_entry(udc, &udc_list, list) {
++		struct usb_gadget *gadget = udc->gadget;
++
++		if (gadget->dev.parent->of_node != node)
++			continue;
++		spin_lock_irqsave(&gadget->state_lock, flags);
++		if (detached) {
++			gadget->j71b_source_connected = false;
++			gadget->j71b_source_generation++;
++		}
++		source->generation = gadget->j71b_source_generation;
++		source->connected = gadget->j71b_source_connected;
++		source->active = gadget->state >= USB_STATE_DEFAULT &&
++				 gadget->state <= USB_STATE_SUSPENDED;
++		spin_unlock_irqrestore(&gadget->state_lock, flags);
++		ret = 0;
++		break;
++	}
++	mutex_unlock(&udc_lock);
++	return ret;
++}
++EXPORT_SYMBOL_GPL(usb_gadget_j71b_source);
++
+ /* ------------------------------------------------------------------------- */
+ 
+ /* Acquire connect_lock before calling this function. */
+diff --git a/include/linux/usb/gadget.h b/include/linux/usb/gadget.h
+index 8285b19a2..33507d94c 100644
+--- a/include/linux/usb/gadget.h
++++ b/include/linux/usb/gadget.h
+@@ -454,6 +454,9 @@ struct usb_gadget {
+ 	enum usb_ssp_rate		max_ssp_rate;
+ 
+ 	enum usb_device_state		state;
++	/* Physical-source evidence, separate from USB link accounting. */
++	unsigned int			j71b_source_generation;
++	bool				j71b_source_connected;
+ 	spinlock_t			state_lock;
+ 	bool				teardown;
+ 	const char			*name;
+diff --git a/include/linux/usb/j71b-source.h b/include/linux/usb/j71b-source.h
+new file mode 100644
+index 000000000..1edc11225
+--- /dev/null
++++ b/include/linux/usb/j71b-source.h
+@@ -0,0 +1,29 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef __LINUX_USB_J71B_SOURCE_H
++#define __LINUX_USB_J71B_SOURCE_H
++
++#include <linux/kconfig.h>
++#include <linux/types.h>
++
++struct usb_gadget;
++
++struct device_node;
++struct j71b_usb_source {
++	unsigned int generation;
++	bool connected;
++	bool active;
++};
++
++#if IS_REACHABLE(CONFIG_USB_GADGET)
++void usb_gadget_j71b_event(struct usb_gadget *gadget, bool host_seen);
++#else
++static inline void usb_gadget_j71b_event(struct usb_gadget *gadget, bool host_seen)
++{
++}
++#endif
++
++int usb_gadget_j71b_source(struct device_node *node,
++			   struct j71b_usb_source *source, bool detached);
++int dwc2_j71b_source_monitor(struct device_node *node,
++			     int (*sample)(void *data), void *data);
++#endif

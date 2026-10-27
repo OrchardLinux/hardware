@@ -37,10 +37,12 @@ python3 -m orchard_hardware.buildenv run \
     dtc -@ -I dts -O dtb -o "$out/bluetooth.dtbo" "$src/bluetooth.dtso"
     fdtoverlay -i "$out/gauge.dtb" -o "$out/bluetooth.dtb" "$out/bluetooth.dtbo"
     dtc -@ -I dts -O dtb -o "$out/gpio-power.dtbo" "$src/gpio-power.dtso"
-    fdtoverlay -i "$out/bluetooth.dtb" -o "$out/j71b.dtb" "$out/gpio-power.dtbo"
+    fdtoverlay -i "$out/bluetooth.dtb" -o "$out/gpio-power.dtb" "$out/gpio-power.dtbo"
+    dtc -@ -I dts -O dtb -o "$out/charging.dtbo" "$src/charging.dtso"
+    fdtoverlay -i "$out/gpio-power.dtb" -o "$out/j71b.dtb" "$out/charging.dtbo"
   '
 actual=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$work/j71b.dtb")
-expected=d05ad7b7c3282f6bd75adf03add7fd676ddedf73a4e19b2f3ae49571309c7faa
+expected=1ac94ad55cbad7b94c14bae3979400ce905f63a4a2187c2e4b011f6b5e2025ef
 [[ "$actual" == "$expected" ]] || { echo "J71b DTB differs: $actual" >&2; exit 1; }
 mkdir -p "$(dirname "$output")"
 cp "$work/j71b.dtb" "$output"

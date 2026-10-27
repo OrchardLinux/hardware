@@ -1,0 +1,23 @@
+// SPDX-License-Identifier: GPL-2.0-only OR MIT
+/* Public J71b ADT: CBTL1610 on I2C0 at 0x1a, usb-input-limit-max = 2400 mA.
+ * No calibration, ADC/VBUS channel, accessory switch, or interrupt is invented.
+ * The module polls; the ADT's GPIO28 interrupt is not needed by this policy.
+ */
+/dts-v1/;
+/plugin/;
+
+&{/soc/i2c@20a110000} {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	charging_source: tristar@1a {
+		compatible = "apple,j71b-cbtl1610-source";
+		reg = <0x1a>;
+		usb-controller = <&usbdev>;
+		/* Linux units: microamps. Board ceiling, not a USB negotiation. */
+		apple,usb-input-limit-max-microamp = <2400000>;
+	};
+};
+
+&{/soc/i2c@20a110000/pmic@3c} {
+	apple,charging-source = <&charging_source>;
+};
