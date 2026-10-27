@@ -1,0 +1,68 @@
+kboot: Wi-Fi calibration for A9/A10, whose wlan node sits under a UART
+
+On A9/A10 (PCIe BCM4355) the ADT has no /arm-io/wlan. The WLAN
+properties, including "wifi-calibration-msf", are on the "wlan"
+(wlan-pcie-uart,bcm4355) node under /arm-io/uart2, and there is no
+"wifi-antenna-sku-info". Fall back to that node, copy the calibration
+into the DT's wifi0 "brcm,cal-blob" as on Apple silicon, and keep the
+DT's own apple,antenna-sku when the ADT has none instead of failing.
+
+The MAC address already comes through dt_set_mac_addresses()
+(/chosen mac-address-wifi0 -> wifi0 local-mac-address).
+
+diff --git a/src/kboot.c b/src/kboot.c
+index 9383c1a..9240ce2 100644
+--- a/src/kboot.c
++++ b/src/kboot.c
+@@ -1041,6 +1041,17 @@ static int dt_set_nvram(void)
+ static int dt_set_wifi(void)
+ {
+     int anode = adt_path_offset(adt, "/arm-io/wlan");
++    bool on_uart = false;
++
++    if (anode < 0) {
++        /*
++         * A9/A10 (PCIe BCM4355): the WLAN properties (calibration,
++         * module-instance) sit on the "wlan" node under the UART it uses,
++         * and there is no wifi-antenna-sku-info.
++         */
++        anode = adt_path_offset(adt, "/arm-io/uart2/wlan");
++        on_uart = anode >= 0;
++    }
+ 
+     if (anode < 0) {
+         /*
+@@ -1052,7 +1063,8 @@ static int dt_set_wifi(void)
+     }
+ 
+     uint8_t info[16];
+-    if (ADT_GETPROP_ARRAY(adt, anode, "wifi-antenna-sku-info", info) < 0)
++    bool have_sku = ADT_GETPROP_ARRAY(adt, anode, "wifi-antenna-sku-info", info) >= 0;
++    if (!have_sku && !on_uart)
+         bail("ADT: Failed to get wifi-antenna-sku-info\n");
+ 
+     const char *path = fdt_get_alias(dt, "wifi0");
+@@ -1063,9 +1075,11 @@ static int dt_set_wifi(void)
+     if (node < 0)
+         return 0;
+ 
+-    char antenna[8];
+-    memcpy(antenna, &info[8], sizeof(antenna));
+-    fdt_setprop_string(dt, node, "apple,antenna-sku", antenna);
++    if (have_sku) {
++        char antenna[8];
++        memcpy(antenna, &info[8], sizeof(antenna));
++        fdt_setprop_string(dt, node, "apple,antenna-sku", antenna);
++    }
+ 
+     u32 len;
+     const u8 *cal_blob = adt_getprop(adt, anode, "wifi-calibration-msf", &len);
+@@ -1076,6 +1090,8 @@ static int dt_set_wifi(void)
+     }
+ 
+     fdt_setprop(dt, node, "brcm,cal-blob", cal_blob, len);
++    if (on_uart)
++        printf("FDT: Wi-Fi calibration (%u bytes) from the uart2 wlan node\n", len);
+ 
+     return 0;
+ }

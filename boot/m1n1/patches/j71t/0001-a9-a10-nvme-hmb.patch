@@ -1,0 +1,74 @@
+kboot: Populate the A9/A10 NVMe HMB region
+
+Copy the runtime /arm-io/nvme-mmu0 "sart-region" (base, size) that
+iBoot sets up for the NVMe host memory buffer into the reserved-memory
+node the DT aliases as "nvme-hmb". Linux's Apple ANS NVMe glue and the
+H8P/H9P PCIe host bridge use it for the NVMMU SART window.
+
+Based on Paul Praschl's T8010 version (Pauli1Go/m1n1 ca0ce2ff43), but
+a missing or zero sart-region only leaves the node empty instead of
+refusing the kernel handoff, and Linux then keeps NVMe off. iBoot fills
+it on J71t (S8003).
+
+diff --git a/src/kboot.c b/src/kboot.c
+index 2840651..9383c1a 100644
+--- a/src/kboot.c
++++ b/src/kboot.c
+@@ -456,6 +456,48 @@ static int dt_set_memory(void)
+     return 0;
+ }
+ 
++static int dt_set_nvme_hmb(void)
++{
++    const void *prop;
++    u64 region[2];
++    u32 len = 0;
++    int adt_node;
++    int fdt_node;
++    fdt64_t reg[2];
++
++    /* Only DTs that ask for it (A9/A10 PCIe NVMe) have the nvme-hmb alias */
++    fdt_node = fdt_path_offset(dt, "nvme-hmb");
++    if (fdt_node < 0)
++        return 0;
++
++    /*
++     * iBoot puts the NVMe host memory buffer it set up in the runtime ADT.
++     * If it is missing, leave the node empty: Linux then keeps the NVMe
++     * controller untouched instead of failing the boot.
++     */
++    adt_node = adt_path_offset(adt, "/arm-io/nvme-mmu0");
++    if (adt_node < 0) {
++        printf("FDT: no /arm-io/nvme-mmu0, NVMe HMB left empty\n");
++        return 0;
++    }
++
++    prop = adt_getprop(adt, adt_node, "sart-region", &len);
++    if (prop && len == sizeof(region))
++        memcpy(region, prop, sizeof(region));
++    if (!prop || len != sizeof(region) || !region[0] || !region[1]) {
++        printf("FDT: unusable nvme-mmu0.sart-region (len %u), NVMe HMB left empty\n", len);
++        return 0;
++    }
++
++    fdt64_st(&reg[0], region[0]);
++    fdt64_st(&reg[1], region[1]);
++    if (fdt_setprop(dt, fdt_node, "reg", reg, sizeof(reg)))
++        bail("FDT: failed to set NVMe HMB region\n");
++
++    printf("FDT: NVMe HMB at 0x%lx size 0x%lx\n", region[0], region[1]);
++    return 0;
++}
++
+ static int dt_set_serial_number(void)
+ {
+ 
+@@ -2976,6 +3018,8 @@ int kboot_prepare_dt(void *fdt)
+         return -1;
+     if (dt_set_pcie_tunables())
+         return -1;
++    if (dt_set_nvme_hmb())
++        return -1;
+     if (dt_set_display())
+         return -1;
+     if (dt_set_gpu(dt))
