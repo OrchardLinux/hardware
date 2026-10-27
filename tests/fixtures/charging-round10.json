@@ -1,0 +1,61 @@
+{
+  "hardware": "iPad 5 J71t; source evidence only, not a J71b hardware test",
+  "row_counts": {
+    "charge8": 226,
+    "charge9": 255,
+    "charge10": 322
+  },
+  "sources_sha256": {
+    "docs/periph/logs/charge8-20261027/charge8-watch.tsv": "b7bd7ebce88024f33052759c78f3e31250f66cd3cc504624571041ab737721cd",
+    "docs/periph/logs/charge8-20261027/dmesg-and-state.txt": "6c41ff17fa866a6316afeab80456d86f41eeeb226ca589ebcf08ce239f77b8ce",
+    "docs/periph/logs/charge8-20261027/RESULT.md": "1b7a161ec9a9e875f8215904c64f4a993b7e471d956f605a815ca6dc6fe789ba",
+    "docs/periph/logs/charge9-20261027/charge9-watch.tsv": "135daf9555ee8694830d454711497150922d75615f37d3842b06906b15bf0694",
+    "docs/periph/logs/charge9-20261027/dmesg-and-state.txt": "febe40e2d9df534f61604dae9281167d547ac5972a29735f365a67a1ef81a4b9",
+    "docs/periph/logs/charge9-20261027/RESULT.md": "093db1c28d234452b0f10bb430e0c550830916f1031c94b7eeee3e84195d909a",
+    "docs/periph/logs/charge10-20261027/charge10-watch.tsv": "ab853d94aa4c4db2b4ad68be6fac161dbeb7e218939b096b6bcd353370109c42",
+    "docs/periph/logs/charge10-20261027/RESULT.md": "b7fa851446208ef88a60eb3144f6a53eb7904186c16f46616ec89d2db90f00ba"
+  },
+  "host_bc_then_enumeration": {
+    "dp_mv": 39,
+    "dm_mv": 39,
+    "bc_primary_mv": 594,
+    "bc_secondary_mv": 39,
+    "cc_mv": -61
+  },
+  "wall_bc_then_cc": {
+    "dp_mv": 263,
+    "dm_mv": 79,
+    "bc_primary_mv": 667,
+    "bc_secondary_mv": 668,
+    "cc_mv": 1624
+  },
+  "attach_reset": {
+    "delay_ms": 26,
+    "input_code": 2
+  },
+  "fast_swap": {
+    "observed_vbus_absent": false,
+    "phase": "other -> device",
+    "old_id": [
+      16,
+      12,
+      0,
+      0,
+      0,
+      0
+    ],
+    "new_id": [
+      16,
+      9,
+      8,
+      0,
+      0,
+      0
+    ]
+  },
+  "expected": {
+    "host_policy_ua": 2400000,
+    "wall_cc_ua": 3000000,
+    "wall_policy_ua": 2400000
+  }
+}

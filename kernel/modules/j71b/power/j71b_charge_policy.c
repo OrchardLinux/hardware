@@ -59,12 +59,15 @@ static unsigned int old_charge;
 static unsigned int old_suspend;
 static unsigned int expected_charge;
 static unsigned int expected_input = HANDOFF_LIMIT;
-static unsigned int adaptive_input = 0xff;
+static unsigned long attach_until;
+static unsigned int attach_resets;
 static unsigned int tristar_revision;
 static int source_error;
 static int policy_error;
 static u8 input_codes[4];
 static int restore_route(void);
+static int update_source_locked(void);
+static int source_new_epoch_locked(const char *reason);
 
 module_param(source_aware, bool, 0444);
 MODULE_PARM_DESC(source_aware,
@@ -233,13 +236,41 @@ bad:
 	return ret ?: -ERANGE;
 }
 
-/* A failed read/USB reset is not a measured removal. A single observed empty
- * VBUS interval is, even if reattach happens between two policy ticks.
- */
+/* Only physical/identity evidence revokes a source, never idle USB events. */
+static int source_new_epoch_locked(const char *reason)
+{
+	source.epoch++;
+	source.epoch_reason = reason;
+	source.computer = false;
+	source.pm_blocked = false;
+	source.sampled = false;
+	source.id_valid = false;
+	source.phase = SOURCE_DEVICE;
+	source.bc_allowance = 0;
+	source.bc_type = "unknown";
+	source.allowance = 0;
+	source.type = "unknown";
+	source.forget_pending = true;
+	source.detect_after = jiffies + msecs_to_jiffies(300);
+	source.id_after = source.detect_after;
+	source.failures = 0;
+	source.attempts = 0;
+	source.log_after = 0;
+	source.error = 0;
+	adaptive_ua = 0;
+	adaptive_after = 0;
+	step_after = 0;
+	backoffs = 0;
+	attach_resets = 0;
+	attach_until = jiffies + LEASE_SECONDS * HZ;
+	/* No lease replay. Root must authorize the new source after handoff. */
+	return restore_locked();
+}
+
 static int update_source_locked(void)
 {
 	struct j71b_usb_source usb;
-	int ret, vbus;
+	int ret, vbus, previous = source.status;
 
 	ret = tristar_read(0x0f);
 	if (ret != 0x8a)
@@ -247,23 +278,18 @@ static int update_source_locked(void)
 	vbus = tristar_read(0x0c);
 	if (vbus < 0)
 		return vbus;
+	source.status = vbus;
 	if (source.present && !(vbus & 3)) {
 		source.present = false;
-		source.epoch++;
-		source.computer = false;
-		source.pm_blocked = false;
-		source.sampled = false;
-		source.allowance = 0;
-		source.type = "unknown";
-		source.forget_pending = true;
-		source.detect_after = jiffies + HZ;
-		adaptive_ua = 0;
-		adaptive_input = 0xff;
-		adaptive_after = 0;
-		step_after = 0;
-		backoffs = 0;
-		/* A new root renewal is required; work cannot replay the lease. */
-		ret = restore_locked();
+		ret = source_new_epoch_locked("vbus-detach");
+		if (!(vbus & (SOURCE_PRESENT | 3)))
+			source.phase = SOURCE_EMPTY;
+		if (ret)
+			return ret;
+	} else if (source.present && source.phase == SOURCE_IDENTIFIED && previous >= 0 &&
+		   ((previous ^ vbus) & (SOURCE_PRESENT | SOURCE_ORIENTATION))) {
+		/* Identified/device -> device/empty edge, even with VBUS high. */
+		ret = source_new_epoch_locked("connector-phase");
 		if (ret)
 			return ret;
 	}
@@ -276,13 +302,17 @@ static int update_source_locked(void)
 	if ((vbus & 3) != 3)
 		return -ENOLINK;
 	source.present = true;
+	if (source.phase == SOURCE_EMPTY)
+		source.phase = SOURCE_DEVICE;
 	ret = usb_gadget_j71b_source(source.usb, &usb, false);
 	if (ret)
-		return ret;
-	/* BC sources retain their proven classification when a link appears. */
-	if (usb.connected && (!source.allowance ||
-			      !strcmp(source.type, "apple-divider"))) {
+		return source.computer ? 0 : ret;
+	source.usb_events = usb.events;
+	source.usb_idle = usb.idle_events;
+	/* A real USB session supersedes every earlier divider, BC or CC item. */
+	if (usb.connected || usb.active) {
 		source.computer = true;
+		source.phase = SOURCE_IDENTIFIED;
 		source.pm_blocked = false;
 		source.allowance = platform_ua;
 		source.type = "computer";
@@ -331,7 +361,13 @@ static int policy_tick_locked(void)
 {
 	unsigned int input, target, code = SAFE_USB_LIMIT, charge = 0;
 	int ret, index, previous;
+	bool attach_reset = false;
 
+	if (source_ready && calibrated) {
+		ret = update_source_locked();
+		if (ret || !lease_active)
+			return ret ?: -ENOLINK;
+	}
 	ret = check_battery();
 	if (ret)
 		return ret;
@@ -353,12 +389,15 @@ static int policy_tick_locked(void)
 			return ret;
 		if (input > expected_input)
 			return -EUCLEAN;
-		if (input < expected_input) {
+		if (input == HANDOFF_LIMIT && input < expected_input &&
+		    time_before(jiffies, attach_until)) {
+			/* D2365 attach default, observed 26 ms after setting a rung. */
+			attach_reset = true;
+		} else if (input < expected_input) {
 			index = max(source_step(nominal_ua) - 1, 0);
 			while (index > 0 && input_codes[index] > input)
 				index--;
 			adaptive_ua = source_steps[index];
-			adaptive_input = min_t(unsigned int, input_codes[index], input);
 			adaptive_after = jiffies + 60 * HZ;
 			backoffs++;
 			pr_warn_ratelimited("j71b charge: observed PMIC reduction to 0x%x; hold 60s, cause unknown\n",
@@ -368,18 +407,12 @@ static int policy_tick_locked(void)
 		return -EUCLEAN;
 	}
 	target = 425000;
-	if (source_ready && calibrated) {
-		ret = update_source_locked();
-		if (ret || !lease_active)
-			return ret ?: -ENOLINK;
-		if (source.allowance && role_safe)
-			target = min_t(unsigned int, source.allowance, platform_ua);
-	}
+	if (source_ready && calibrated && source.allowance && role_safe)
+		target = min_t(unsigned int, source.allowance, platform_ua);
 	if (adaptive_ua && time_after_eq(jiffies, adaptive_after)) {
 		index = source_step(adaptive_ua);
 		if (index + 1 < ARRAY_SIZE(source_steps))
 			adaptive_ua = source_steps[index + 1];
-		adaptive_input = 0xff;
 		adaptive_after = jiffies + 60 * HZ;
 	}
 	if (adaptive_ua)
@@ -397,8 +430,11 @@ static int policy_tick_locked(void)
 	}
 	if (index >= 0) {
 		target = source_steps[index];
-		code = min_t(unsigned int, input_codes[index], adaptive_input);
+		code = input_codes[index];
 		charge = index ? 50 : 8; /* <=2500 mA, cap 0xf4[5:0] = 2600 mA */
+		/* First ownership has its own bounded attach-settling window. */
+		if (!charge_saved)
+			attach_until = jiffies + LEASE_SECONDS * HZ;
 		/* Save recovery intent before any write. Handoff was read at load. */
 		charge_saved = true;
 		/* iOS order for nonzero budget changes. No 0xa00 transaction lock. */
@@ -418,6 +454,8 @@ static int policy_tick_locked(void)
 			return ret;
 	}
 	expected_input = code;
+	if (attach_reset)
+		attach_resets++;
 	if (target != nominal_ua) {
 		step_after = jiffies + HZ;
 		pr_info("j71b charge: %s, nominal %u mA, input 0x%x verified\n",
@@ -571,7 +609,9 @@ static int policy_pm(struct notifier_block *nb, unsigned long event, void *unuse
 		if (!ret)
 			ret = verify_handoff_locked();
 		ret = ret ?: route_ret;
-		restore_failed = !!ret;
+		/* A successful PM retry must not clear an explicit-zero fault. */
+		if (ret)
+			restore_failed = true;
 		if (source_ready) {
 			struct j71b_usb_source usb;
 
@@ -580,6 +620,9 @@ static int policy_pm(struct notifier_block *nb, unsigned long event, void *unuse
 			 */
 			source.computer = false;
 			source.sampled = false;
+			source.id_valid = false;
+			source.bc_allowance = 0;
+			source.bc_type = "unknown";
 			source.allowance = 0;
 			source.type = "unknown";
 			source.pm_blocked = true;
@@ -639,6 +682,15 @@ static int source_state_get(char *buf, const struct kernel_param *kp)
 		backoffs ? "pmic-input-reduced" : "none", source_error,
 		policy_error, ret, lease_active, source.route_pending,
 		source.dcp_pending, source.adc_poisoned, role_safe, source.pm_blocked);
+	len += scnprintf(buf + len, PAGE_SIZE - len,
+			 "epoch_reason=%s phase=%d tristar_status=0x%x bc_ua=%d bc_type=%s primary_mv=%d secondary_mv=%d cc_mv=%d cc_first_mv=%d detect_stage=%s detect_pin=%s detect_error=%d attempts=%u failures=%u id_valid=%u id=%*ph id_error=%d id_poisoned=%u usb_events=%u usb_idle_events=%u attach_resets=%u\n",
+			 source.epoch_reason, source.phase, source.status,
+			 source.bc_allowance, source.bc_type,
+			 source.primary_mv, source.secondary_mv, source.cc_mv,
+			 source.cc_first_mv, source.stage, source.pin, source.error,
+			 source.attempts, source.failures, source.id_valid,
+			 (int)sizeof(source.id), source.id, source.id_error,
+			 source.id_poisoned, source.usb_events, source.usb_idle, attach_resets);
 	mutex_unlock(&policy_lock);
 	return len;
 }
@@ -688,7 +740,7 @@ static int init_source(void)
 	if (ret || platform_ua < 500000 || platform_ua > 2400000)
 		return -EINVAL;
 	if (!i2c_check_functionality(source.client->adapter,
-				     I2C_FUNC_SMBUS_BYTE | I2C_FUNC_SMBUS_BYTE_DATA))
+				     I2C_FUNC_I2C | I2C_FUNC_SMBUS_BYTE | I2C_FUNC_SMBUS_BYTE_DATA))
 		return -EOPNOTSUPP;
 	ret = tristar_read(0x0f);
 	if (ret < 0)

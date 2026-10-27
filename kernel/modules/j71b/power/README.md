@@ -1,51 +1,54 @@
 # J71b charging lease
 
-The default is the existing root-only 15-second lease, with input code `0x1c`
-(425 mA), the original battery windows, and verified `0x02` (100 mA) handoff.
-Module load performs no register writes. `j71b-input/online` keeps its existing
-read-only physical-presence semantics. The runtime renewer still renews every
-5 seconds and writes zero on exit. A source worker never renews that deadline.
+The default remains the root-only 15-second lease at input code `0x1c` (425 mA),
+with the original battery guards and checked `0x02` (100 mA) handoff. Loading
+makes no register write. Default operation makes no Tristar or ADC write.
+`j71b-input/online` and the runtime paths are unchanged. The renewer runs every
+five seconds; source work cannot renew the lease.
 
 ## Experimental source-aware mode
 
-**Not tested on J71b hardware.** linux-a9 round 7, from which this is adapted,
-also has no device validation at preparation time. Keep the default for release.
-Use the matching patched kernel, module and final DTB together. After qualifying
-the particular unit's Tristar revision and privately staging its calibration,
-opt in with a root-owned modprobe configuration:
+**J71b hardware is untested.** The source design is linux-a9 charge10, which
+passed iPad 5 device tests for USB-A/USB-C computers and USB-C wall charging.
+That is J71t evidence, not J71b qualification. Keep the default for release
+until the [maintainer test plan](test-plan.md) passes on J71b.
+
+Use the matching patched kernel, external module and final DTB. Opt in before
+a fresh boot with a root-owned modprobe configuration:
 
 ```text
 options j71b_charge_policy source_aware=1
 ```
 
-The setting is read-only after load. In the normal image, place that line in
-`/etc/modprobe.d/j71b-source-aware.conf` before a fresh boot. The module is
-normally loaded by `phase2-hardware`; changing modprobe configuration after it
-has loaded does not switch modes. The service/helper paths remain unchanged.
-No userspace source guessing or extra charging service is needed.
+The setting is read-only after load. The normal image loads the module from
+`phase2-hardware`; changing modprobe configuration afterwards does not switch
+modes. No extra service or userspace source guessing is needed.
 
-The calibration file is `/lib/firmware/apple/j71b-CBAT.bin`: the **24-byte
-`usb-input-limit-calibration` property from this J71b unit**, read from its
-existing iOS IORegistry, not a whole raw syscfg partition. It contains five
-little-endian signed Q16 values and version 1. The driver validates the record,
-its slopes, each computed ceiling, and strictly increasing input codes. No
-J71t record or guessed code table is accepted as board evidence. Do not commit
-or distribute per-unit files. This change does not add a private-data fetcher.
+Source mode requires `/lib/firmware/apple/j71b-CBAT.bin`, the **24-byte
+`usb-input-limit-calibration` property from this J71b unit**, obtained by a
+read-only iOS IORegistry export. This is not a whole syscfg partition. The
+record contains five signed little-endian Q16 values and version 1; slopes,
+computed limits and increasing calibrated codes are validated. Do not use
+J71t's calibration, and never commit or distribute per-unit records.
 
-Missing/invalid calibration, missing DT wiring, an occupied I2C child, an
-unsupported topology or a revision other than `0x8a` keeps the 425 mA lease.
-Only `0x8a` is presently protocol-qualified by linux-a9's reference. J71b's
-public ADT proves CBTL1610, **not its live revision**, so a different revision
-needs separate reverse engineering; there is no revision-bypass parameter.
+Missing/invalid calibration, missing wiring, an occupied I2C child, an
+unsupported topology or a revision other than `0x8a` retains the 425 mA lease.
+J71b's public ADT proves CBTL1610, **not its live revision**. Only reference
+revision `0x8a` is supported; a different revision needs separate qualification.
 
-Computers identified by a DWC2 reset/enumeration use the public board ceiling
-(`apple,usb-input-limit-max-microamp`, 2400000 on J71b). This is an opt-in
-reproduction of Apple's board policy, **not a claim that a USB host negotiated
-or can supply 2.4 A**. Enumeration accounting, descriptors and recovery USB
-identity are unchanged. A proven BC1.2 DCP/CDP retains its classification when
-USB traffic appears. An Apple divider can be superseded by computer evidence.
+## Sources and lifetime
 
-The divider table, row-major by D+ then D− bands, is:
+A genuine DWC2 enumeration/gadget data session establishes a computer,
+**superseding every earlier BC1.2, divider or CC result**. The source policy
+then uses the public `usb-input-limit-max` board ceiling (2400000 µA on J71b),
+independently of descriptor current accounting. This is Apple's opt-in board
+policy, **not negotiated proof that an arbitrary PC/hub can supply 2.4 A**.
+USB identity, descriptors, endpoints and gadget current accounting are unchanged.
+A short real session is latched until its source epoch ends. Idle state,
+line/ID events and suspend notifications alone neither invent a computer nor
+cancel pin sampling; the end of a real session still cancels an in-flight sample.
+
+The Apple divider table, row-major by D+ then D− voltage bands, is:
 
 | D+ / D− | 1500–2199 mV | 2200–2879 mV | 2880–4000 mV |
 | --- | ---: | ---: | ---: |
@@ -53,93 +56,130 @@ The divider table, row-major by D+ then D− bands, is:
 | 2200–2879 mV | 2100 mA | 2400 mA | 3000 mA |
 | 2880–4000 mV | 1000 mA | 1000 mA | 1000 mA |
 
-Every allowance is capped by the board maximum. The calibrated ladder is
-500/1000/2100/2400 mA, at most one upward rung per second; BC1.2's 1500 mA
-allowance consequently selects 1000 mA. Unknown sources retain 425 mA.
-Printed brick wattage does not override the sampled signature. The nominal
-500 mA rung uses a 400 mA battery-current cap; higher rungs cap battery current
-at 2500 mA, below the required `0xf4` hardware cap's 2600 mA low six bits.
-Actual pack current also depends on system load, state of charge and the PMIC.
+BC primary D− 326–899 mV requests secondary detection. **Secondary D+ below
+326 mV means CDP; 326 mV or above means DCP.** Both give a 1500 mA allowance.
+The old round-7 labels were reversed; J71b's own iOS name table confirms this
+correction. Passive D+/D− readings are different from the primary/secondary
+measurements and are exposed separately.
 
-## Ownership and safety boundary
+The supported Apple USB-C→Lightning ID `10 09 08 00 00 00` qualifies a CC
+measurement, not a fixed current grant. CC is D+ on the **opposite Lightning
+lane pair**, never a VBUS measurement. At most three samples, at least 20 ms
+apart, must produce two equal advertisements: ≤659 mV gives 0, 660–1229 gives
+1500 mA, ≥1230 gives 3000 mA. A 3 A advertisement requires separately verified
+DCP/CDP evidence; otherwise it is capped at 1.5 A. CC is refreshed every five
+seconds while idle. A failed CC refresh removes its elevation and retains the
+proven BC baseline. No USB-PD negotiation or currents added together are implied.
 
-- Renewals and worker changes retain the original battery requirements:
-  present, SOC 15–95%, 5–40 °C, 3.2–4.35 V, current within ±3 A, and successful
-  property reads. Timeout, invalid PMIC state and changed full cap byte refuse
-  charging. Source mode also refuses termination when it has a source budget.
-- `0xa03` is never adopted from an unexplained elevated handoff. Before source
-  mode starts, `0xa08` and `0xa00[1]` are snapshotted at module load; later
-  unexplained changes refuse ownership. Source mode requires input enabled.
-  Charging writes are **only `0xa08` and `0xa03`**. This implementation never
-  writes `0xa00`, and never uses input suspend to bracket a nonzero change.
-  Nonzero transitions use battery-setting then input-setting order. Handoff
-  reduces input to `0x02` before restoring/verifying the saved `0xa08` byte.
-- The **one non-charging PMIC write** is `0x4000 = 1` to start the pin ADC,
-  only inside the opted-in, calibrated policy during an active lease. The
-  J71b 21H461 iPad7,5_6 kernelcache confirms the gated ADC at
-  `fffffff006b7c3f4`, trigger at `fffffff006b85e0c`, and two-byte result at
-  `fffffff006b85e40`. The analog monitor is `fffffff00615d57c`. The public
-  ADT's `adcV(1, 0x10000)` selects this pin-monitor path, not a VBUS channel.
-- Analog work holds the DWC2 role hardware mutex, then the policy mutex.
-  Only J71b's fixed peripheral topology is accepted; a role-switch topology
-  is refused. There is no USB host/accessory/ID-bus support in this port.
-  Gadget events are checked before/after samples, and activity invalidates
-  the whole sweep. Tristar `0x03` is cleared before `0x01` is restored and
-  both are checked. ADC uncertainty remains poisoned until module teardown;
-  a replug cannot make an uncertain conversion fresh. Use a fresh boot after
-  an ADC timeout rather than treating module reload as hardware recovery.
-- Physical epoch advances only after a successful Tristar `0x0c` read with
-  neither VBUS bit set. Detach restores handoff, revokes the old lease, clears
-  source/ramp/back-off state and requires a fresh root renewal. USB reset,
-  suspend and transport failures do not advance it. There is no user override
-  that can exceed the source allowance. A short pulse missed by every 250 ms
-  poll can still escape detection.
-- An observed lower owned `0xa03`, with battery setting and input-enable bit
-  unchanged, caps the policy at the next lower supported rung (or below).
-  It never immediately raises an observed setting below the calibrated floor.
-  Hold is 60 seconds, then at most one upward rung per minute. **J71b's D2365
-  iOS backend reports no input limiting** (`fffffff006b85348`, constant false;
-  measured input current at `fffffff006b85230` is unsupported). **This is not
-  voltage-triggered AICL:** no verified VBUS voltage, droop threshold or input
-  current is available. A weak port may shut down without lowering `0xa03`;
-  a complete collapse/replug can restart the ramp. Qualification is required.
-- Zero, expiry, guard failure, PM prepare and exit restore owned fields.
-  Readbacks and three bounded retries establish handoff. Failed restoration
-  latches `restore_failed`; only explicit zero after checked handoff/route
-  repair clears it. PM parks/cancels both workers outside the mutex, repairs
-  Tristar routing and aborts suspend on any unverified handoff. PM post writes
-  nothing and replays no lease. Suspend can hide a complete source swap, so
-  old identity is discarded; analog stays blocked until a measured empty VBUS
-  interval or fresh USB evidence. Replug visibly if a brick stays at 425 mA
-  after resume. Module unload cannot report failure to its caller and is not
-  a recovery procedure for a restoration fault.
+Every allowance is capped by the board ceiling. The calibrated ladder is
+500/1000/2100/2400 mA, at most one upward rung per second. A 1500 mA source
+uses the 1000 mA rung. Unknown sources retain 425 mA. The 500 mA rung caps pack
+current at 400 mA; higher rungs use 2500 mA, below the required cap byte's
+2600 mA low six bits. Actual pack current also depends on load, SOC and the PMIC.
 
-`/sys/module/j71b_charge_policy/parameters/source_state` exposes the opt-in and
-calibration status, revision, epoch, source allowance, board ceiling, nominal
-rung, live input/battery codes, analog-sample validity, adaptive cap/back-off
-reason, errors, lease state, route restoration flags, ADC poison and PM gate.
-`vbus_mv=unavailable` is deliberate. `sleep_parked` and `restore_failed` retain
-their existing paths. Codes are programmed limits, not measured charge rate.
+A new source epoch follows an observed empty VBUS interval, a changed **fresh,
+CRC-checked** digital ID, or an identified→device/empty connector edge (plug or
+orientation change), even with VBUS continuously high. It restores handoff,
+revokes the old lease and clears source/adaptive state. A first ID refines the
+same epoch and retains BC evidence; it does not duplicate the connector-edge
+epoch. Root must renew for the new source. Polling can still miss a same-ID
+swap with no observed VBUS, plug or orientation edge.
 
-## Offline validation
+Only bounded GetID is added, under the same role/policy locks as sampling.
+It writes volatile Tristar TX/engine registers `0x5d..0x61` with request `0x74`
+and HOSTID `0x0002`, checks TX readback before GO, and accepts only a fresh
+8-byte `0x75` response with CRC. It never writes the RX window, resets or
+reorients the cable, changes the AID switch, sends power requests, enters host
+mode, or requests OTP/ESN data. A reset hold refuses GetID. An uncertain GO or
+timeout poisons further ID requests until teardown; use a fresh boot rather
+than treating replug/reload as proof that the hardware is idle.
 
-Run the normal Python unit suite from an installed/development package:
+## Ownership and PM
+
+The original battery windows remain: present, SOC **15–95%**, **5–40 °C**,
+**3.2–4.35 V**, current within **±3 A**, with successful reads. Timeout, invalid
+PMIC state and a changed full `0xf4` cap byte refuse the lease. Source mode
+also refuses termination with a source budget. The iPad 5 device captures at
+100% do not relax J71b's SOC guard; replays use captured source measurements
+with safe synthetic battery telemetry.
+
+Source mode snapshots the handoff `0xa08` and `0xa00[1]` at load and refuses
+later unexplained ownership changes. Charging writes are **only `0xa08` and
+`0xa03`**, both checked. This port never writes `0xa00`. Nonzero changes use
+battery-setting then input-setting order, without an input-suspend ritual.
+Handoff reduces input to `0x02`, then restores/verifies the saved battery byte.
+
+An owned `0x02` input setting, with battery setting and input-enable matching,
+is an attach-default reset during the **15-second** settling window after an
+epoch/first ownership. The worker repairs the current calibrated step without
+false back-off, including while its next ramp step is pending. Other lower
+owned settings can lower the adaptive rung, hold 60 seconds and retry at most
+one rung/minute. The driver writes that rung's calibrated code, rather than
+leaving a nominal 500 mA step programmed at 100 mA. Repairs occur at worker
+execution; failed I/O or battery/source guards can prevent a successful write.
+
+**This is not voltage-triggered AICL.** J71b iOS D2365's input-limiting callback
+is constant false (`fffffff006b85348`), and measured input current is unsupported
+(`fffffff006b85230`). An input-setting change has unknown electrical cause. A
+weak source can sag/shut down without changing `0xa03`, or collapse/reconnect
+and restart the ramp. No voltage/droop guarantee follows from this policy.
+
+The **one non-charging PMIC write** is the owner-approved `0x4000=1` ADC trigger,
+only in the opted-in, calibrated, active lease. Source work holds DWC2's role
+hardware lock, then `policy_lock`; only a fixed peripheral topology is accepted.
+Known active USB excludes routing; real session generations, strict VBUS and
+orientation are checked around samples. Zero mux is valid in either orientation.
+Tristar `0x03` is cleared before saved `0x01` routing is restored and checked.
+ADC poison survives replug; uncertain completion cannot become a fresh sample.
+
+Zero, expiry, guard failure, PM prepare and exit restore owned fields. Checked
+retries establish handoff; failed restoration latches `restore_failed`, cleared
+only by explicit zero after verified recovery. PM parks and cancels both
+workers outside the policy mutex. It also serializes zero's cancellation/repair
+window with `renewal_lock`, repairs routing, verifies handoff, and vetoes suspend
+on uncertainty. PM post performs no register write or lease replay. Sleep can
+hide a complete swap, so old identity is discarded; analog waits for a visible
+unplug or fresh host evidence. A brick can need replug after resume. Module
+unload cannot report restoration failure and is not a recovery procedure.
+
+`source_state` is read-only: source/epoch/reason/phase, input and battery codes,
+BC/CC voltages, board/nominal/adaptive ceilings, attach-reset and USB-idle/data
+counters, detector stage/error, fresh-ID state, route/ADC/PM gates. It explicitly
+reports `vbus_mv=unavailable`. Existing `sleep_parked` and `restore_failed` paths
+are retained. Programmed limits are not measured source or battery current.
+
+## Evidence and offline checks
+
+J71b **21H461 iPad7,5_6** unslid iOS addresses independently confirm:
+
+| Path | Address |
+| --- | --- |
+| Type-C sampling / qualification clamp | `fffffff005ebbc80` |
+| Type-C voltage thresholds | `fffffff005e69690` |
+| Gated pin wrapper / selector map | `fffffff005ef713c` / `fffffff00614c2d8`, table `fffffff005531990` |
+| Opposite DX lane monitor, accepting zero mux | `fffffff00615da44` |
+| BC secondary / enum name serializer and table | `fffffff005e68c48` / `fffffff005e68de8`, table `fffffff006dc3750` |
+| Bounded ID command TX/readback/GO engine | `fffffff006155f70` |
+| ADC gate / trigger / result | `fffffff006b7c3f4` / `fffffff006b85e0c` / `fffffff006b85e40` |
+
+Kernelcache SHA-256:
+`5c0822a78a10191b56edd468f100b331b0e86bcafa3fdcc5d974dadc427dbec9`.
+No decompilation, Apple firmware or private calibration is distributed.
+
+Run the normal suite from an installed/development package:
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v
 ```
 
-`tests/test_j71b_charging.py` compiles and executes the actual policy/detector
-functions with scripted regmap, I2C, gadget events, battery and PM calls under
-ASan/UBSan, including real pthread ADC-vs-PM and zero-vs-PM interleavings.
-PM also serializes zero's unlocked cancellation/route-repair window, so a
-racing zero cannot perform I2C operations after the PM notifier has finished.
-The harness uses a synthetic calibration record and never accesses a device.
-Hardware qualification and rollback instructions are in
-[`test-plan.md`](test-plan.md).
+The actual-C ASan/UBSan harness includes the kernel event helper, scripted
+regmap/I2C/ADC, synthetic calibration, captured source sequences, fault/restore
+cases and real pthread ADC-vs-PM/zero-vs-PM interleavings. The fixture records
+hashes of 226/255/322 iPad 5 capture rows from rounds 8/9/10. It tests BC→ID→USB,
+wall BC→CC, the 26 ms attach reset, and high-VBUS fast swaps without claiming
+that J71b hardware has run them.
 
-The detector, calibration and adaptive policy are adapted from Berkay
-Kösebay's linux-a9 charge7 (`a8aa6fea363394f3d21f2eef7525998884b4cf3f`),
-reconstructed from Apple's iOS charging paths. Kernel/platform groundwork:
-Pauli1Go/HoolockLinux; port ownership, lease/runtime and J71b reference:
-OrchardLinux's existing J71b implementation. See the repository `NOTICE`.
+Adapted from Berkay Kösebay's linux-a9 charge7–10, final source design
+`a18b0e2ee18def3a2d6090e9dc8edd73beb3abd8`. Kernel/platform groundwork:
+Pauli1Go/HoolockLinux; J71b port, lease, runtime and PM reference: OrchardLinux.
+See `NOTICE` and the [maintainer test plan](test-plan.md).

@@ -13,7 +13,7 @@ Original copyright notices and per-file licenses remain applicable. This is
 selective reuse and adaptation, not a replacement of the pinned base kernel.
 
 The opt-in J71b source-aware charging policy adapts Berkay Kösebay's linux-a9
-charge7 (kernel a8aa6fea363394f3d21f2eef7525998884b4cf3f), reconstructed from
+charge7–10 (kernel a18b0e2ee18def3a2d6090e9dc8edd73beb3abd8), reconstructed from
 Apple's iOS D2365/CBTL1610 charging paths. It retains OrchardLinux's J71b lease
 ownership, battery guards, runtime and PM-safe handoff, on the HoolockLinux /
 Pauli1Go platform groundwork credited above. No Apple firmware, decompilation
