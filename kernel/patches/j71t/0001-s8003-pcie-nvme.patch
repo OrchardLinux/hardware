@@ -1,6 +1,57 @@
-S8003 PCIe host, ANS NVMe and the boot-time write window
+From 9c088fd89c872a5205b84f4da6ffa4d19c9b471b Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Tue, 27 Oct 2026 15:47:02 +0000
+Subject: [PATCH 01/12] PCI/NVMe: apple: add S8003 PCIe host, ANS NVMe and a
+ boot-time write window
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
 
-Generated from linux-a9 a9/release 9dbc8612b3b0 by scripts/orchard/j71t-series.py.
+S8003 (A9) support for the H9P PCIe host, the ANS NVMe controller, its
+DART and PMGR power states, and the watchdog. NVMe stays read-only
+except for the range named by nvme.write_window=NSID:FIRST-LAST at
+boot; only Write commands inside it reach the controller, and
+namespaces 2-7 stay read-only. NVME_APPLE_ANS_EARLY_USB optionally
+holds the host until userspace releases it.
+
+Builds on the T8010 (A10) PCIe/ANS support by Paul Praschl in
+HoolockLinux, which includes code by Corellium LLC.
+
+From the release 2 kernel of the iPad 5 port
+(https://github.com/brkosebay/omarchy-ipad5), filtered for OrchardLinux.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../devicetree/bindings/iommu/apple,dart.yaml |   30 +
+ .../bindings/pci/apple,t8010-pcie.yaml        |  343 ++
+ .../bindings/power/apple,pmgr-pwrstate.yaml   |    8 +
+ drivers/iommu/apple-dart.c                    |  365 +-
+ drivers/iommu/io-pgtable-dart.c               |   21 +-
+ drivers/nvme/host/Kconfig                     |   46 +
+ drivers/nvme/host/Makefile                    |    2 +-
+ drivers/nvme/host/core.c                      |    5 +-
+ drivers/nvme/host/nvme.h                      |    3 +
+ drivers/nvme/host/pci-apple-ans.c             | 1244 ++++++
+ drivers/nvme/host/pci-internal.h              |  220 +
+ drivers/nvme/host/pci.c                       | 1061 ++++-
+ drivers/pci/controller/Kconfig                |   12 +
+ drivers/pci/controller/Makefile               |    1 +
+ drivers/pci/controller/pcie-apple-h9p.c       | 3898 +++++++++++++++++
+ drivers/pmdomain/apple/pmgr-pwrstate.c        |  423 +-
+ drivers/watchdog/apple_wdt.c                  |   17 +
+ include/linux/apple-ans.h                     |  116 +
+ include/linux/io-pgtable.h                    |    6 +
+ include/linux/soc/apple/pmgr-observe.h        |   27 +
+ include/linux/soc/apple/s8003-power.h         |   38 +
+ 21 files changed, 7660 insertions(+), 226 deletions(-)
+ create mode 100644 Documentation/devicetree/bindings/pci/apple,t8010-pcie.yaml
+ create mode 100644 drivers/nvme/host/pci-apple-ans.c
+ create mode 100644 drivers/nvme/host/pci-internal.h
+ create mode 100644 drivers/pci/controller/pcie-apple-h9p.c
+ create mode 100644 include/linux/apple-ans.h
+ create mode 100644 include/linux/soc/apple/pmgr-observe.h
+ create mode 100644 include/linux/soc/apple/s8003-power.h
 
 diff --git a/Documentation/devicetree/bindings/iommu/apple,dart.yaml b/Documentation/devicetree/bindings/iommu/apple,dart.yaml
 index de2ce3dd46b00202138a02ebb09a19a884410d92..881c4ef313f304abd61be3c72cb994275a97f462 100644
@@ -1024,7 +1075,7 @@ index cbc5d6aa2daa23fd11e8e19be697500cd775c7cd..29a6f3f48c4bcc3a5cbdeb50f7b507c0
  	/*
  	 * Ensure the table itself is visible before its PTE can be.
 diff --git a/drivers/nvme/host/Kconfig b/drivers/nvme/host/Kconfig
-index 31974c7dd20c9174961eac91e3823e939d325daa..4d6057dd3e53efe07f0a648e0b621068c7ee9735 100644
+index 31974c7dd20c9174961eac91e3823e939d325daa..7812ca9389fcc87ccbc22cb83b054ff5a25e7beb 100644
 --- a/drivers/nvme/host/Kconfig
 +++ b/drivers/nvme/host/Kconfig
 @@ -14,6 +14,52 @@ config BLK_DEV_NVME
@@ -1040,7 +1091,7 @@ index 31974c7dd20c9174961eac91e3823e939d325daa..4d6057dd3e53efe07f0a648e0b621068
 +	  set both parameters to true and reprobe the platform PCIe host,
 +	  then any deferred ANS endpoint. This allows /init to run even when
 +	  the PCIe link fails before endpoint enumeration. Other boards are
-+	  unchanged. Requires the linux-a9 boot initramfs.
++	  unchanged. Requires such an initramfs.
 +
 +config NVME_PCI_READ_ONLY
 +	bool "Refuse writes to NVMe PCI devices"
@@ -4026,7 +4077,7 @@ index da93b505d2394a5e1add5af042ed5d900a2d9efe..6efcfadf50059c8b7dc98ba3d854c2d6
  	nvme_put_ctrl(&dev->ctrl);
  	flush_work(&dev->ctrl.scan_work);
  	return 0;
-@@ -3953,6 +4658,32 @@ static int nvme_resume(struct device *dev)
+@@ -3953,6 +4658,32 @@ reset:
  	return nvme_try_sched_reset(ctrl);
  }
  
@@ -8517,7 +8568,7 @@ index 82c33cf727a825d2536644d2fe09c0282acd1ef8..75bf0a0d79bbcffcd1219fe945f7154f
  	return 0;
  err_remove:
  	of_genpd_del_provider(node);
-@@ -305,6 +583,87 @@ static int apple_pmgr_ps_probe(struct platform_device *pdev)
+@@ -305,6 +583,87 @@ err_remove:
  	return ret;
  }
  

@@ -26,14 +26,15 @@ hardware-proven.
 ./kernel/build j71t --output out/kernel/j71t
 ```
 
-`patches/j71t/` is one plain diff per feature (S8003 PCIe/ANS NVMe, Wi-Fi and
-Bluetooth, SmartIO/SPI, N1 touch, audio, power, USB, sensors/backlight, device
-trees). It is exported from the linux-a9 `a9/release` integration kernel
-([brkosebay/linux](https://github.com/brkosebay/linux), based on the same
-`hoolock` revision) by linux-a9's `scripts/orchard/j71t-series.py`.
-It leaves out the GPU and video-decoder research code, SEP, AOP and
-diagnostics-only drivers. Each patch header names the source commit; the series
-applies in order to the pinned revision and reproduces the exported tree.
+`patches/j71t/` is one patch per feature (S8003 PCIe/ANS NVMe, Wi-Fi and
+Bluetooth, SmartIO/SPI, N1 touch, audio, power, USB, sensors/backlight, native
+display, H.264 decoder, device trees, MAINTAINERS) in `git format-patch` form.
+Each patch is one commit of
+[brkosebay/linux `a9/orchard-j71t`](https://github.com/brkosebay/linux/tree/a9/orchard-j71t), which is based on
+the same `hoolock` revision and taken from the release 2 kernel of the
+[omarchy-ipad5](https://github.com/brkosebay/omarchy-ipad5) port. It leaves out the GPU research
+code, SEP and the Touch ID sensor, AOP and diagnostics-only drivers. The series
+applies in order to the pinned revision and reproduces that branch's tree.
 
 The J71t NVMe driver is built in and read-only by default. Only NVMe Write
 commands inside the boot argument `nvme.write_window=NSID:FIRST-LAST` reach the

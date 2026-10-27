@@ -10,5 +10,5 @@ m1n1 fills in memory, the framebuffer, the NVMe host-memory-buffer region
 (`nvme-hmb`), the Wi-Fi MAC and Wi-Fi calibration from the live ADT at boot
 (`../../../boot/m1n1/patches/j71t/`). The DTB itself carries no per-device data.
 
-The tree still describes blocks this port does not drive (GPU, video decoder,
-SEP, AOP); their drivers are not part of the J71t patches.
+The tree still describes blocks this port does not drive (GPU, SEP, AOP);
+their drivers are not part of the J71t patches.

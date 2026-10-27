@@ -1,6 +1,41 @@
-S8000 SmartIO, SIO DMA and SPI
+From 1ada4ff1a93d9ccf58e1a525f7f40f705c922394 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Tue, 27 Oct 2026 15:47:02 +0000
+Subject: [PATCH 03/12] soc: apple: add S8000 SmartIO, SIO DMA and SPI
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
 
-Generated from linux-a9 a9/release 9dbc8612b3b0 by scripts/orchard/j71t-series.py.
+The SmartIO coprocessor driver (its firmware comes from the iPadOS
+kernelcache at runtime), the SIO DMA engine it exposes, and the
+S8000 SPI controller.
+
+Builds on the SmartIO and SIO DMA drivers by Paul Praschl in
+HoolockLinux.
+
+From the release 2 kernel of the iPad 5 port
+(https://github.com/brkosebay/omarchy-ipad5), filtered for OrchardLinux.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../devicetree/bindings/dma/apple,sio.yaml    |  107 ++
+ drivers/dma/Kconfig                           |   11 +
+ drivers/dma/Makefile                          |    1 +
+ drivers/dma/apple-sio-dma.c                   |  866 +++++++++++++
+ drivers/soc/apple/Kconfig                     |   13 +
+ drivers/soc/apple/Makefile                    |    2 +
+ drivers/soc/apple/apple-sio-core.c            | 1074 +++++++++++++++++
+ drivers/spi/Kconfig                           |    7 +
+ drivers/spi/Makefile                          |    1 +
+ drivers/spi/spi-apple-s8000.c                 |  360 ++++++
+ include/linux/soc/apple/sio.h                 |   71 ++
+ 11 files changed, 2513 insertions(+)
+ create mode 100644 Documentation/devicetree/bindings/dma/apple,sio.yaml
+ create mode 100644 drivers/dma/apple-sio-dma.c
+ create mode 100644 drivers/soc/apple/apple-sio-core.c
+ create mode 100644 drivers/spi/spi-apple-s8000.c
+ create mode 100644 include/linux/soc/apple/sio.h
 
 diff --git a/Documentation/devicetree/bindings/dma/apple,sio.yaml b/Documentation/devicetree/bindings/dma/apple,sio.yaml
 new file mode 100644
@@ -151,7 +186,7 @@ index 14aa086629d5c779ed9f79d6312b47457e167458..1d4c09964d310bd9f40052c5cda4ebc0
  obj-$(CONFIG_AT_XDMAC) += at_xdmac.o
 diff --git a/drivers/dma/apple-sio-dma.c b/drivers/dma/apple-sio-dma.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..6e64257c3069404ab9f60ededbb10f7c15e14539
+index 0000000000000000000000000000000000000000..b60f799581c7e3a1b3a2d527f6f2d42cd37b9f85
 --- /dev/null
 +++ b/drivers/dma/apple-sio-dma.c
 @@ -0,0 +1,866 @@
@@ -160,7 +195,7 @@ index 0000000000000000000000000000000000000000..6e64257c3069404ab9f60ededbb10f7c
 + * Apple SmartIO DMA controller (S8000/T8010)
 + *
 + * Copyright (C) 2026 Paul Praschl
-+ * Multiple endpoints, cyclic transfers and stop handling: linux-a9
++ * Multiple endpoints, cyclic transfers and stop handling: Berkay Kösebay
 + *
 + * Every DMA channel is a SmartIO firmware endpoint (0x1a SPI3 TX, 0x28 MCA0
 + * TX, ...). The protocol, as iOS 16.7.10's AppleSmartIODMA drives it:

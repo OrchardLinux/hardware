@@ -1,10 +1,37 @@
-CS42L81 codec and S8000 MCA audio
+From 3e47c1c2a3d75643d9fbf283192608745c363be1 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Tue, 27 Oct 2026 15:47:02 +0000
+Subject: [PATCH 05/12] ASoC: add the CS42L81 codec and S8000 MCA audio
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
 
-Generated from linux-a9 a9/release 9dbc8612b3b0 by scripts/orchard/j71t-series.py.
+Speakers, headphone routing, jack detection and microphone capture
+through the S8000 MCA and the Cirrus CS42L81 codec.
+
+From the release 2 kernel of the iPad 5 port
+(https://github.com/brkosebay/omarchy-ipad5), filtered for OrchardLinux.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../bindings/sound/apple,s8000-mca.yaml       |  106 ++
+ .../bindings/sound/cirrus,cs42l81.yaml        |   85 +
+ sound/soc/apple/Kconfig                       |   11 +
+ sound/soc/apple/Makefile                      |    2 +
+ sound/soc/apple/s8000-mca.c                   | 1262 +++++++++++++
+ sound/soc/codecs/Kconfig                      |    8 +
+ sound/soc/codecs/Makefile                     |    2 +
+ sound/soc/codecs/cs42l81.c                    | 1613 +++++++++++++++++
+ 8 files changed, 3089 insertions(+)
+ create mode 100644 Documentation/devicetree/bindings/sound/apple,s8000-mca.yaml
+ create mode 100644 Documentation/devicetree/bindings/sound/cirrus,cs42l81.yaml
+ create mode 100644 sound/soc/apple/s8000-mca.c
+ create mode 100644 sound/soc/codecs/cs42l81.c
 
 diff --git a/Documentation/devicetree/bindings/sound/apple,s8000-mca.yaml b/Documentation/devicetree/bindings/sound/apple,s8000-mca.yaml
 new file mode 100644
-index 0000000000000000000000000000000000000000..ad2e3a6f38d7fe8ca8371ea4d4b8721beced1799
+index 0000000000000000000000000000000000000000..1026f82730b9c0ae52639ae6cdf310bc7f211fa6
 --- /dev/null
 +++ b/Documentation/devicetree/bindings/sound/apple,s8000-mca.yaml
 @@ -0,0 +1,106 @@
@@ -17,7 +44,7 @@ index 0000000000000000000000000000000000000000..ad2e3a6f38d7fe8ca8371ea4d4b8721b
 +title: Apple S8000 (A9) MCA I2S controller
 +
 +maintainers:
-+  - linux-a9 <linux-a9@localhost>
++  - Berkay Kösebay <brkosebay@users.noreply.github.com>
 +
 +description:
 +  The A9 "mca-version 4" serializer. Besides its register window it owns a
@@ -116,7 +143,7 @@ index 0000000000000000000000000000000000000000..ad2e3a6f38d7fe8ca8371ea4d4b8721b
 +unevaluatedProperties: false
 diff --git a/Documentation/devicetree/bindings/sound/cirrus,cs42l81.yaml b/Documentation/devicetree/bindings/sound/cirrus,cs42l81.yaml
 new file mode 100644
-index 0000000000000000000000000000000000000000..47c1fd4f7df86a0d6f5f7f38099647f6bdb90747
+index 0000000000000000000000000000000000000000..1d056d8b0e8cac3782115fed02b8ef0edb99579b
 --- /dev/null
 +++ b/Documentation/devicetree/bindings/sound/cirrus,cs42l81.yaml
 @@ -0,0 +1,85 @@
@@ -129,7 +156,7 @@ index 0000000000000000000000000000000000000000..47c1fd4f7df86a0d6f5f7f38099647f6
 +title: Cirrus Logic CS42L81 audio codec (Apple)
 +
 +maintainers:
-+  - linux-a9 <linux-a9@localhost>
++  - Berkay Kösebay <brkosebay@users.noreply.github.com>
 +
 +description:
 +  Apple-specific Cirrus Logic codec with integrated speaker drivers, a
@@ -238,7 +265,7 @@ index 252ba5fc18cb9046f6b2912c32de596d6f9dfdb6..0058680040a380b4011c3a96ca9fcaeb
 +obj-$(CONFIG_SND_SOC_APPLE_S8000_MCA)	+= snd-soc-apple-s8000-mca.o
 diff --git a/sound/soc/apple/s8000-mca.c b/sound/soc/apple/s8000-mca.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..bc5553bd83d274f8b07f346faa5909650cae0c73
+index 0000000000000000000000000000000000000000..6d942e5e88826a66a70230ff5919bc1871502c52
 --- /dev/null
 +++ b/sound/soc/apple/s8000-mca.c
 @@ -0,0 +1,1262 @@
@@ -248,7 +275,7 @@ index 0000000000000000000000000000000000000000..bc5553bd83d274f8b07f346faa590965
 + *
 + * Register layout and the programming sequence follow iOS 16.7.10's
 + * AppleAE2MCA::_setIISConfig_v4 (see docs/audio/playback-path.md in
-+ * linux-a9). Also handles the two neighbours iOS drives from the MCA
++ * omarchy-ipad5). Also handles the two neighbours iOS drives from the MCA
 + * driver: the per-MCA MCLK control word (exported as a clock, the codec's
 + * MCLK) and the i2s-switch route (a syscon; route register values from DT).
 + *
@@ -1545,7 +1572,7 @@ index 3d122ace75adee2d9b4584e2357e49ed2a30037d..a23e9144d051a6e7636c149b28140dfc
  obj-$(CONFIG_SND_SOC_CS4234)	+= snd-soc-cs4234.o
 diff --git a/sound/soc/codecs/cs42l81.c b/sound/soc/codecs/cs42l81.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..f5f840b40a7f2bc77d35be9ff990e9a891635eba
+index 0000000000000000000000000000000000000000..22ecfd104a62562a7c738bfae7188427b260088f
 --- /dev/null
 +++ b/sound/soc/codecs/cs42l81.c
 @@ -0,0 +1,1613 @@
@@ -1558,7 +1585,7 @@ index 0000000000000000000000000000000000000000..f5f840b40a7f2bc77d35be9ff990e9a8
 + * drivers, used on the A9 iPad 5 (J71t). There is no public datasheet; the
 + * register sequences below were reconstructed from iOS 16.7.10's
 + * AppleCS42L81Audio driver (see docs/audio/playback-path.md and
-+ * docs/audio/ds-capture-and-jack.md in linux-a9). Register names are
++ * docs/audio/ds-capture-and-jack.md in omarchy-ipad5). Register names are
 + * descriptive guesses.
 + *
 + * Control port: SPI, 16-bit register address (page << 8 | reg), 8-bit

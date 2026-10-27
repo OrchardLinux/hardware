@@ -1,6 +1,39 @@
-BCM4355 Wi-Fi and Bluetooth for J71t
+From 57ff1534a2bee127d03788ff0030cd3c96b3bbfb Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Tue, 27 Oct 2026 15:47:02 +0000
+Subject: [PATCH 02/12] wifi/Bluetooth: add BCM4355 Wi-Fi and Bluetooth for
+ J71t
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
 
-Generated from linux-a9 a9/release 9dbc8612b3b0 by scripts/orchard/j71t-series.py.
+brcmfmac PCIe support for the J71t BCM4355 C0 (Apple board fallback
+names, calibration from the device tree), and Bluetooth over the
+Samsung UART with serdev: patchram loading and the J71t device
+address.
+
+From the release 2 kernel of the iPad 5 port
+(https://github.com/brkosebay/omarchy-ipad5), filtered for OrchardLinux.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../net/bluetooth/brcm,bluetooth.yaml         |   5 +
+ .../bindings/serial/samsung_uart.yaml         |   6 +-
+ drivers/bluetooth/btbcm.c                     | 110 +++++++++++++++++-
+ drivers/bluetooth/btbcm.h                     |   6 +
+ drivers/bluetooth/hci_bcm.c                   |  92 +++++++++++++++
+ .../broadcom/brcm80211/brcmfmac/feature.c     |  28 +++++
+ .../wireless/broadcom/brcm80211/brcmfmac/of.c |  16 ++-
+ .../broadcom/brcm80211/brcmfmac/pcie.c        |  10 ++
+ drivers/tty/serdev/core.c                     |  12 ++
+ drivers/tty/serdev/serdev-ttyport.c           |  28 +++++
+ drivers/tty/serial/samsung_tty.c              |  92 ++++++++++++++-
+ include/linux/serdev.h                        |  10 ++
+ include/net/bluetooth/hci.h                   |  11 ++
+ net/bluetooth/hci_event.c                     |   8 +-
+ net/bluetooth/hci_sync.c                      |  16 ++-
+ 15 files changed, 433 insertions(+), 17 deletions(-)
 
 diff --git a/Documentation/devicetree/bindings/net/bluetooth/brcm,bluetooth.yaml b/Documentation/devicetree/bindings/net/bluetooth/brcm,bluetooth.yaml
 index 95501e858e6f824030f304d283eeb3e3be0e4294..0a2bf4fb37dc528b04331e8be0ba90ed695e711d 100644

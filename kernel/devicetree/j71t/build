@@ -17,7 +17,7 @@ if [[ ! -f "$base" || ! -d "$headers" || -z "$output" || -e "$output" ]]; then
   exit 2
 fi
 actual=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$base")
-expected=4431de33114dc1678fc96560a7cfb205a83430a30b9d6cffe4cf72d3735f3b31
+expected=9d97816c8d41579e25aac71a50e44a1aa7910accf40f234d4d29a104b20dcd1c
 [[ "$actual" == "$expected" ]] || { echo "J71t DTB differs: $actual" >&2; exit 1; }
 mkdir -p "$(dirname "$output")"
 cp "$base" "$output"

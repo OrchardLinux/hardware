@@ -1,6 +1,41 @@
-USB gadget, Lightning camera-adapter host role and PHY
+From 7dcb77b9834c613ebac360f833f5edb8dfb86fb5 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Tue, 27 Oct 2026 15:47:02 +0000
+Subject: [PATCH 07/12] usb: add the J71t gadget, Lightning host role and PHY
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
 
-Generated from linux-a9 a9/release 9dbc8612b3b0 by scripts/orchard/j71t-series.py.
+DWC2 gadget support, the Lightning camera-adapter host role switch
+and the S8000 USB PHY.
+
+From the release 2 kernel of the iPad 5 port
+(https://github.com/brkosebay/omarchy-ipad5), filtered for OrchardLinux.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../bindings/phy/apple,ausb-phy.yaml          |    7 +
+ .../usb/apple,s8000-usb-role-switch.yaml      |  129 ++
+ .../devicetree/bindings/usb/dwc2.yaml         |    6 +
+ drivers/phy/apple/ausb.c                      |  123 +-
+ drivers/usb/dwc2/core.h                       |    3 +
+ drivers/usb/dwc2/gadget.c                     |    4 +-
+ drivers/usb/dwc2/platform.c                   |   36 +
+ drivers/usb/gadget/composite.c                |   24 +
+ drivers/usb/gadget/function/f_ecm.c           |    5 +
+ drivers/usb/gadget/udc/core.c                 |  250 +++
+ drivers/usb/host/ehci-platform.c              |   14 +
+ drivers/usb/host/ohci-platform.c              |   14 +
+ drivers/usb/roles/Kconfig                     |   14 +
+ drivers/usb/roles/Makefile                    |    1 +
+ drivers/usb/roles/apple-s8000-usb-role.c      | 1452 +++++++++++++++++
+ include/linux/usb/apple-s8000-role.h          |   42 +
+ include/linux/usb/gadget.h                    |   64 +
+ 17 files changed, 2167 insertions(+), 21 deletions(-)
+ create mode 100644 Documentation/devicetree/bindings/usb/apple,s8000-usb-role-switch.yaml
+ create mode 100644 drivers/usb/roles/apple-s8000-usb-role.c
+ create mode 100644 include/linux/usb/apple-s8000-role.h
 
 diff --git a/Documentation/devicetree/bindings/phy/apple,ausb-phy.yaml b/Documentation/devicetree/bindings/phy/apple,ausb-phy.yaml
 index 9c51d1d0fb42bcd5e7c56e149d2d92a68ec42598..7bd912367bb442828ef4fd9f6462b58495d49d4a 100644
@@ -22,7 +57,7 @@ index 9c51d1d0fb42bcd5e7c56e149d2d92a68ec42598..7bd912367bb442828ef4fd9f6462b584
      description:
 diff --git a/Documentation/devicetree/bindings/usb/apple,s8000-usb-role-switch.yaml b/Documentation/devicetree/bindings/usb/apple,s8000-usb-role-switch.yaml
 new file mode 100644
-index 0000000000000000000000000000000000000000..4aa0aed8d0bec046342bc2182cfb43cfe6240cef
+index 0000000000000000000000000000000000000000..23effbd62c255b428858df2bc564496769793fba
 --- /dev/null
 +++ b/Documentation/devicetree/bindings/usb/apple,s8000-usb-role-switch.yaml
 @@ -0,0 +1,129 @@
@@ -35,7 +70,7 @@ index 0000000000000000000000000000000000000000..4aa0aed8d0bec046342bc2182cfb43cf
 +title: Apple S8000 USB role switch
 +
 +maintainers:
-+  - linux-a9 <linux-a9@localhost>
++  - Berkay Kösebay <brkosebay@users.noreply.github.com>
 +
 +description: |
 +  The Apple A9 (S8000/S8003) USB complex pairs a device-only DWC2 controller
@@ -443,7 +478,7 @@ index ef0d7307703473ee0d17085fdfe361898c8aedcd..57b86ec14f8e1cffdc4a579500b8da02
  
  #include <linux/usb/of.h>
  
-@@ -646,6 +647,33 @@ static int dwc2_driver_probe(struct platform_device *dev)
+@@ -646,6 +647,33 @@ error:
  	return retval;
  }
  
@@ -537,7 +572,7 @@ index df39e3487c1f3b03c7105f8933a7faf201bd6069..8cd83d6fa1b904b319df92966cf5dc6c
  	if (w_length > USB_COMP_EP0_BUFSIZ) {
  		if (ctrl->bRequestType & USB_DIR_IN) {
  			/* Cast away the const, we are going to overwrite on purpose. */
-@@ -2271,6 +2291,8 @@ composite_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
+@@ -2271,6 +2291,8 @@ check_value:
  		value = composite_ep0_queue(cdev, req, GFP_ATOMIC);
  		if (value < 0) {
  			DBG(cdev, "ep_queue --> %d\n", value);
@@ -593,7 +628,7 @@ index e495bac4efeb5a39107a09d06b69ba86eaab1926..1f57c6bfbef4a19e7d00add4ef132fd9
  
  static int ecm_get_status(struct usb_function *f)
 diff --git a/drivers/usb/gadget/udc/core.c b/drivers/usb/gadget/udc/core.c
-index f6da12b553a0eee8faeaddb90aacd33e7a6f4ac0..ea40ab612d7f9f4f3459c7ffc773c39745b795b5 100644
+index f6da12b553a0eee8faeaddb90aacd33e7a6f4ac0..7d6d0e1661263cf627cc3bd30cfbf9e59b9e6572 100644
 --- a/drivers/usb/gadget/udc/core.c
 +++ b/drivers/usb/gadget/udc/core.c
 @@ -17,6 +17,8 @@
@@ -605,7 +640,7 @@ index f6da12b553a0eee8faeaddb90aacd33e7a6f4ac0..ea40ab612d7f9f4f3459c7ffc773c397
  
  #include <linux/usb/ch9.h>
  #include <linux/usb/gadget.h>
-@@ -70,6 +72,192 @@ static LIST_HEAD(udc_list);
+@@ -70,6 +72,225 @@ static LIST_HEAD(udc_list);
  /* Protects udc_list, udc->driver, driver->is_bound, and related calls */
  static DEFINE_MUTEX(udc_lock);
  
@@ -700,6 +735,39 @@ index f6da12b553a0eee8faeaddb90aacd33e7a6f4ac0..ea40ab612d7f9f4f3459c7ffc773c397
 +	return ret;
 +}
 +EXPORT_SYMBOL_GPL(usb_gadget_get_current_budget);
++
++/**
++ * usb_gadget_current_source_detached - forget accounting on measured VBUS loss
++ * @node: supplying controller node
++ *
++ * Sleepable; called only for a physical detach, never for USB link PM/reset.
++ * Does not disconnect or unbind the gadget and performs no controller I/O.
++ */
++void usb_gadget_current_source_detached(const struct device_node *node)
++{
++	struct usb_udc *udc;
++	unsigned long flags;
++
++	mutex_lock(&udc_lock);
++	list_for_each_entry(udc, &udc_list, list) {
++		struct usb_gadget *gadget = udc->gadget;
++
++		if (!gadget->current_budget_enabled ||
++		    dev_of_node(gadget->dev.parent) != node)
++			continue;
++		spin_lock_irqsave(&gadget->state_lock, flags);
++		gadget->current_extra_ma = 0;
++		gadget->current_host_grant = false;
++		gadget->current_base_ma = 0;
++		gadget->current_configured = false;
++		gadget->current_bus_connected = false;
++		gadget->current_suspended = false;
++		spin_unlock_irqrestore(&gadget->state_lock, flags);
++		gadget_current_notify(gadget);
++	}
++	mutex_unlock(&udc_lock);
++}
++EXPORT_SYMBOL_GPL(usb_gadget_current_source_detached);
 +
 +static void gadget_current_set_base(struct usb_gadget *gadget, unsigned int ma)
 +{
@@ -798,7 +866,7 @@ index f6da12b553a0eee8faeaddb90aacd33e7a6f4ac0..ea40ab612d7f9f4f3459c7ffc773c397
  /* ------------------------------------------------------------------------- */
  
  /**
-@@ -669,6 +857,8 @@ int usb_gadget_vbus_draw(struct usb_gadget *gadget, unsigned mA)
+@@ -669,6 +890,8 @@ int usb_gadget_vbus_draw(struct usb_gadget *gadget, unsigned mA)
  		gadget->mA = mA;
  
  out:
@@ -807,7 +875,7 @@ index f6da12b553a0eee8faeaddb90aacd33e7a6f4ac0..ea40ab612d7f9f4f3459c7ffc773c397
  	trace_usb_gadget_vbus_draw(gadget, ret);
  
  	return ret;
-@@ -1137,10 +1327,28 @@ void usb_gadget_set_state(struct usb_gadget *gadget,
+@@ -1137,10 +1360,28 @@ void usb_gadget_set_state(struct usb_gadget *gadget,
  
  	spin_lock_irqsave(&gadget->state_lock, flags);
  	gadget->state = state;
@@ -836,7 +904,7 @@ index f6da12b553a0eee8faeaddb90aacd33e7a6f4ac0..ea40ab612d7f9f4f3459c7ffc773c397
  }
  EXPORT_SYMBOL_GPL(usb_gadget_set_state);
  
-@@ -1389,6 +1597,14 @@ void usb_initialize_gadget(struct device *parent, struct usb_gadget *gadget,
+@@ -1389,6 +1630,14 @@ void usb_initialize_gadget(struct device *parent, struct usb_gadget *gadget,
  	gadget->teardown = false;
  	INIT_WORK(&gadget->work, usb_gadget_state_work);
  	gadget->dev.parent = parent;
@@ -851,7 +919,7 @@ index f6da12b553a0eee8faeaddb90aacd33e7a6f4ac0..ea40ab612d7f9f4f3459c7ffc773c397
  
  	if (release)
  		gadget->dev.release = release;
-@@ -1581,6 +1797,7 @@ void usb_del_gadget(struct usb_gadget *gadget)
+@@ -1581,6 +1830,7 @@ void usb_del_gadget(struct usb_gadget *gadget)
  		return;
  
  	dev_vdbg(gadget->dev.parent, "unregistering gadget\n");
@@ -957,10 +1025,10 @@ index 757a7d2797eb6a416d27a5d51ee481ddf37c9619..0b0b0968c2ef6f49402261b885c351fb
 +obj-$(CONFIG_USB_ROLES_APPLE_S8000)	+= apple-s8000-usb-role.o
 diff --git a/drivers/usb/roles/apple-s8000-usb-role.c b/drivers/usb/roles/apple-s8000-usb-role.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..4f58cea88733751f65732ab4b723c255b6b70866
+index 0000000000000000000000000000000000000000..1cb31b3cbbba05d8018f06a57f87f955c1cdbd57
 --- /dev/null
 +++ b/drivers/usb/roles/apple-s8000-usb-role.c
-@@ -0,0 +1,1414 @@
+@@ -0,0 +1,1452 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Apple S8000 (A9) Lightning port USB role switch.
@@ -1142,6 +1210,7 @@ index 0000000000000000000000000000000000000000..4f58cea88733751f65732ab4b723c255
 +	/* The current host role is the accessory policy's: no revert */
 +	bool accessory;
 +	bool dying;
++	bool monitor_fault;
 +	/* USB_CTL+0 readbacks at each step of the last host entry */
 +	const char *ctl_trace_what[USB_CTL_TRACE_MAX];
 +	u32 ctl_trace[USB_CTL_TRACE_MAX];
@@ -1556,6 +1625,8 @@ index 0000000000000000000000000000000000000000..4f58cea88733751f65732ab4b723c255
 +	mutex_lock(&ur->lock);
 +	if (ur->dying) {
 +		ret = -ESHUTDOWN;
++	} else if (role == USB_ROLE_HOST && ur->monitor_fault) {
++		ret = -EUCLEAN;
 +	} else if (role == ur->role) {
 +		if (role == USB_ROLE_HOST && ur->accessory_claim) {
 +			/* The accessory takes over a manual host role. */
@@ -1655,6 +1726,41 @@ index 0000000000000000000000000000000000000000..4f58cea88733751f65732ab4b723c255
 +	return ret;
 +}
 +EXPORT_SYMBOL_GPL(apple_s8000_usb_role_accessory);
++
++/**
++ * apple_s8000_usb_role_monitor - serialize an analog monitor with role changes
++ * @sw: the Lightning role switch
++ * @sample: sleepable callback; must not query or change the USB role
++ * @data: callback argument
++ *
++ * Lock order: instance, role hardware, consumer, gadget budget. The callback
++ * must restore DX_CONTROL before returning. EUCLEAN inhibits host entry until
++ * a subsequent callback repairs the route. No role transition can overlap it.
++ *
++ * Return: callback result, or an error without calling it outside device role.
++ */
++int apple_s8000_usb_role_monitor(struct usb_role_switch *sw,
++				 int (*sample)(void *data), void *data)
++{
++	struct apple_usb_role *ur;
++	int ret = -ENODEV;
++
++	mutex_lock(&apple_usb_role_instance_lock);
++	ur = apple_usb_role_from_switch(sw);
++	if (ur) {
++		mutex_lock(&ur->lock);
++		if (ur->dying || ur->role != USB_ROLE_DEVICE) {
++			ret = -EBUSY;
++		} else {
++			ret = sample(data);
++			ur->monitor_fault = ret == -EUCLEAN;
++		}
++		mutex_unlock(&ur->lock);
++	}
++	mutex_unlock(&apple_usb_role_instance_lock);
++	return ret;
++}
++EXPORT_SYMBOL_GPL(apple_s8000_usb_role_monitor);
 +
 +static enum usb_role apple_usb_role_get(struct usb_role_switch *sw)
 +{
@@ -2377,10 +2483,10 @@ index 0000000000000000000000000000000000000000..4f58cea88733751f65732ab4b723c255
 +MODULE_LICENSE("GPL");
 diff --git a/include/linux/usb/apple-s8000-role.h b/include/linux/usb/apple-s8000-role.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..de3035e04a9e594f9e235dee0a17a277c5aa86bb
+index 0000000000000000000000000000000000000000..7b6ebf193f5c716f97b3fc1903cb2217d2d346d6
 --- /dev/null
 +++ b/include/linux/usb/apple-s8000-role.h
-@@ -0,0 +1,34 @@
+@@ -0,0 +1,42 @@
 +/* SPDX-License-Identifier: GPL-2.0-only */
 +/*
 + * Apple S8000 (A9) Lightning role switch: host role owned by an accessory.
@@ -2400,9 +2506,17 @@ index 0000000000000000000000000000000000000000..de3035e04a9e594f9e235dee0a17a277
 +struct usb_role_switch;
 +
 +#if IS_REACHABLE(CONFIG_USB_ROLES_APPLE_S8000)
++int apple_s8000_usb_role_monitor(struct usb_role_switch *sw,
++				 int (*sample)(void *data), void *data);
 +int apple_s8000_usb_role_claim(struct usb_role_switch *sw, bool claim);
 +bool apple_s8000_usb_role_accessory(struct usb_role_switch *sw);
 +#else
++static inline int apple_s8000_usb_role_monitor(struct usb_role_switch *sw,
++					       int (*sample)(void *data), void *data)
++{
++	return -EOPNOTSUPP;
++}
++
 +static inline int apple_s8000_usb_role_claim(struct usb_role_switch *sw, bool claim)
 +{
 +	return -EOPNOTSUPP;
@@ -2416,7 +2530,7 @@ index 0000000000000000000000000000000000000000..de3035e04a9e594f9e235dee0a17a277
 +
 +#endif /* __LINUX_USB_APPLE_S8000_ROLE_H */
 diff --git a/include/linux/usb/gadget.h b/include/linux/usb/gadget.h
-index 8285b19a25e02cce4d21aef9b46fb5aeb2b0999a..2f1f036857316c0834dadd1293160ebe949b8489 100644
+index 8285b19a25e02cce4d21aef9b46fb5aeb2b0999a..9878fd7326afc14a94d55f94ed7e40dfbc061323 100644
 --- a/include/linux/usb/gadget.h
 +++ b/include/linux/usb/gadget.h
 @@ -360,6 +360,27 @@ struct usb_gadget_ops {
@@ -2476,12 +2590,13 @@ index 8285b19a25e02cce4d21aef9b46fb5aeb2b0999a..2f1f036857316c0834dadd1293160ebe
  	struct usb_otg_caps		*otg_caps;
  
  	unsigned			sg_supported:1;
-@@ -637,6 +673,16 @@ static inline int gadget_is_otg(struct usb_gadget *g)
+@@ -637,6 +673,17 @@ static inline int gadget_is_otg(struct usb_gadget *g)
  /*-------------------------------------------------------------------------*/
  
  #if IS_ENABLED(CONFIG_USB_GADGET)
 +
 +int usb_gadget_register_current_notifier(struct notifier_block *nb);
++void usb_gadget_current_source_detached(const struct device_node *node);
 +int usb_gadget_unregister_current_notifier(struct notifier_block *nb);
 +int usb_gadget_get_current_budget(const struct device_node *node,
 +				  struct usb_gadget_current_budget *budget);
@@ -2493,7 +2608,7 @@ index 8285b19a25e02cce4d21aef9b46fb5aeb2b0999a..2f1f036857316c0834dadd1293160ebe
  int usb_gadget_frame_number(struct usb_gadget *gadget);
  int usb_gadget_wakeup(struct usb_gadget *gadget);
  int usb_gadget_set_remote_wakeup(struct usb_gadget *gadget, int set);
-@@ -651,6 +697,21 @@ int usb_gadget_deactivate(struct usb_gadget *gadget);
+@@ -651,6 +698,23 @@ int usb_gadget_deactivate(struct usb_gadget *gadget);
  int usb_gadget_activate(struct usb_gadget *gadget);
  int usb_gadget_check_config(struct usb_gadget *gadget);
  #else
@@ -2502,6 +2617,8 @@ index 8285b19a25e02cce4d21aef9b46fb5aeb2b0999a..2f1f036857316c0834dadd1293160ebe
 +{ return -ENODEV; }
 +static inline int usb_gadget_unregister_current_notifier(struct notifier_block *nb)
 +{ return 0; }
++static inline void usb_gadget_current_source_detached(const struct device_node *node)
++{ }
 +static inline int usb_gadget_get_current_budget(const struct device_node *node,
 +						struct usb_gadget_current_budget *budget)
 +{ return -ENODEV; }

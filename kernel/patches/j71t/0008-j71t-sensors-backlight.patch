@@ -1,6 +1,33 @@
-CT819 ambient light sensor, pinctrl and backlight
+From e846959b24f0062b7583d6c16838fcf59a532872 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Tue, 27 Oct 2026 15:47:02 +0000
+Subject: [PATCH 08/12] iio/backlight: add the CT819 light sensor, pinctrl and
+ backlight
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
 
-Generated from linux-a9 a9/release 9dbc8612b3b0 by scripts/orchard/j71t-series.py.
+The CT819 (TSL2583-compatible) ambient light sensor with per-unit
+calibration, GPIO pin control and the DWI panel backlight.
+
+From the release 2 kernel of the iPad 5 port
+(https://github.com/brkosebay/omarchy-ipad5), filtered for OrchardLinux.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../bindings/iio/light/tsl2583.yaml           |  60 +-
+ .../bindings/leds/backlight/apple,dwi-bl.yaml |   4 +
+ drivers/iio/light/Kconfig                     |  10 +
+ drivers/iio/light/Makefile                    |   1 +
+ drivers/iio/light/tsl2583-test.c              | 234 ++++++
+ drivers/iio/light/tsl2583.c                   | 779 ++++++++++++++++--
+ drivers/iio/light/tsl2583.h                   | 176 ++++
+ drivers/pinctrl/pinctrl-apple-gpio.c          | 100 ++-
+ drivers/video/backlight/apple_dwi_bl.c        |  89 +-
+ 9 files changed, 1373 insertions(+), 80 deletions(-)
+ create mode 100644 drivers/iio/light/tsl2583-test.c
+ create mode 100644 drivers/iio/light/tsl2583.h
 
 diff --git a/Documentation/devicetree/bindings/iio/light/tsl2583.yaml b/Documentation/devicetree/bindings/iio/light/tsl2583.yaml
 index 7b92ba8cbb9fbdd5b73ffa976036f2a0aa159289..91f454010a996e0be18ec2beb0ef1b4da3719f05 100644
@@ -881,7 +908,7 @@ index 53fd423aa7aef67652bca7faa81f94d6880b40d8..9d710101d6e2a7d04cbc1c89c0d77bad
  
  		/* note: lux is 31 bit max at this point */
  		if (ch1lux > ch0lux) {
-@@ -300,6 +637,16 @@ static int tsl2583_get_lux(struct iio_dev *indio_dev)
+@@ -300,6 +637,16 @@ done:
  	return ret;
  }
  
@@ -1154,7 +1181,7 @@ index 53fd423aa7aef67652bca7faa81f94d6880b40d8..9d710101d6e2a7d04cbc1c89c0d77bad
  
  	return offset;
  }
-@@ -594,6 +1106,12 @@ static ssize_t in_illuminance_lux_table_store(struct device *dev,
+@@ -594,6 +1106,12 @@ done:
  }
  
  static IIO_CONST_ATTR(in_illuminance_calibscale_available, "1 8 16 111");
@@ -1267,7 +1294,7 @@ index 53fd423aa7aef67652bca7faa81f94d6880b40d8..9d710101d6e2a7d04cbc1c89c0d77bad
  			ret = IIO_VAL_INT_PLUS_MICRO;
  		}
  		break;
-@@ -710,16 +1279,16 @@ static int tsl2583_read_raw(struct iio_dev *indio_dev,
+@@ -710,16 +1279,16 @@ read_done:
  	mutex_unlock(&chip->als_mutex);
  
  	if (ret < 0) {

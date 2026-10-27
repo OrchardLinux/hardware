@@ -1,6 +1,21 @@
-MAINTAINERS entries for the S8003 PCIe/ANS port
+From 4dfc90dd91f4e902e9e9405ad7db92a8ee069011 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Tue, 27 Oct 2026 15:47:02 +0000
+Subject: [PATCH 12/12] MAINTAINERS: add the T8010/S8003 PCIe and ANS files
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
 
-Generated from linux-a9 a9/release 9dbc8612b3b0 by scripts/orchard/j71t-series.py.
+List the Apple PCIe host and ANS NVMe files.
+
+From the release 2 kernel of the iPad 5 port
+(https://github.com/brkosebay/omarchy-ipad5), filtered for OrchardLinux.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ MAINTAINERS | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
 
 diff --git a/MAINTAINERS b/MAINTAINERS
 index 7cb94e3bd9b15b3ced63fa1f5b0320e67c713808..ade85b570526e5fc0d7b3dcdcdda7e1cc2d3618f 100644

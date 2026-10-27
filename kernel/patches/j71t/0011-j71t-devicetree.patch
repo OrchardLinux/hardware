@@ -1,12 +1,48 @@
-S8003 and J71t device trees
+From e40d2403f8aac5858f58030d2c013381c186c4c2 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Tue, 27 Oct 2026 15:47:02 +0000
+Subject: [PATCH 11/12] arm64: dts: apple: add S8003 and J71t device trees
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
 
-Generated from linux-a9 a9/release 9dbc8612b3b0 by scripts/orchard/j71t-series.py.
+S8003 SoC and iPad 5 (J71t) board device trees for the drivers in this
+series. Nodes for blocks without a driver here (GPU, SEP, AOP) stay
+described but are not used.
+
+From the release 2 kernel of the iPad 5 port
+(https://github.com/brkosebay/omarchy-ipad5), filtered for OrchardLinux.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/arm64/boot/dts/apple/s800-0-3-pmgr.dtsi  |    5 +
+ arch/arm64/boot/dts/apple/s800-0-3.dtsi       |   53 +-
+ .../boot/dts/apple/s8003-j71t-audio.dtsi      |  161 ++
+ .../boot/dts/apple/s8003-j71t-display.dtsi    |   47 +
+ .../boot/dts/apple/s8003-j71t-periph.dtsi     |  180 ++
+ .../boot/dts/apple/s8003-j71t-touch.dtsi      |   80 +
+ .../boot/dts/apple/s8003-j71t-usbhost.dtsi    |   56 +
+ arch/arm64/boot/dts/apple/s8003-j71t.dts      |  142 ++
+ arch/arm64/boot/dts/apple/s8003-j72t.dts      |   32 +
+ arch/arm64/boot/dts/apple/s8003-thermal.dtsi  |  107 ++
+ arch/arm64/boot/dts/apple/s8003.dtsi          | 1513 ++++++++++++++++-
+ arch/arm64/boot/dts/apple/s800x-ipad5.dtsi    |   47 +
+ arch/arm64/boot/dts/apple/t8010-common.dtsi   |   14 +-
+ arch/arm64/boot/dts/apple/t8010.dtsi          |   72 +
+ 14 files changed, 2501 insertions(+), 8 deletions(-)
+ create mode 100644 arch/arm64/boot/dts/apple/s8003-j71t-audio.dtsi
+ create mode 100644 arch/arm64/boot/dts/apple/s8003-j71t-display.dtsi
+ create mode 100644 arch/arm64/boot/dts/apple/s8003-j71t-periph.dtsi
+ create mode 100644 arch/arm64/boot/dts/apple/s8003-j71t-touch.dtsi
+ create mode 100644 arch/arm64/boot/dts/apple/s8003-j71t-usbhost.dtsi
+ create mode 100644 arch/arm64/boot/dts/apple/s8003-thermal.dtsi
 
 diff --git a/arch/arm64/boot/dts/apple/s800-0-3-pmgr.dtsi b/arch/arm64/boot/dts/apple/s800-0-3-pmgr.dtsi
 index 196b8e745a957c3735ea68bd2d035c0fb891b9fa..bdae99a4e2839a5caa7fa76ef90327be2ecfac5d 100644
 --- a/arch/arm64/boot/dts/apple/s800-0-3-pmgr.dtsi
 +++ b/arch/arm64/boot/dts/apple/s800-0-3-pmgr.dtsi
-@@ -82,6 +82,11 @@ ps_gpio: power-controller@80118 {
+@@ -82,6 +82,11 @@
  		#power-domain-cells = <0>;
  		#reset-cells = <0>;
  		label = "gpio";
@@ -22,7 +58,7 @@ diff --git a/arch/arm64/boot/dts/apple/s800-0-3.dtsi b/arch/arm64/boot/dts/apple
 index fc7dc7c5ba3a4ff53b104b7f1b87d5a4766d8c9f..21fe566414f5eca806ebdc0cf26339c51704b136 100644
 --- a/arch/arm64/boot/dts/apple/s800-0-3.dtsi
 +++ b/arch/arm64/boot/dts/apple/s800-0-3.dtsi
-@@ -76,6 +76,21 @@ cpufreq: performance-controller@202220000 {
+@@ -76,6 +76,21 @@
  			#performance-domain-cells = <0>;
  		};
  
@@ -44,7 +80,7 @@ index fc7dc7c5ba3a4ff53b104b7f1b87d5a4766d8c9f..21fe566414f5eca806ebdc0cf26339c5
  		serial0: serial@20a0c0000 {
  			compatible = "apple,s5l-uart";
  			reg = <0x2 0x0a0c0000 0x0 0x4000>;
-@@ -209,9 +224,9 @@ aic: interrupt-controller@20e100000 {
+@@ -209,9 +224,9 @@
  			power-domains = <&ps_aic>;
  		};
  
@@ -56,7 +92,7 @@ index fc7dc7c5ba3a4ff53b104b7f1b87d5a4766d8c9f..21fe566414f5eca806ebdc0cf26339c5
  			power-domains = <&ps_dwi>;
  			status = "disabled";
  		};
-@@ -290,6 +305,40 @@ wdt: watchdog@2102b0000 {
+@@ -290,6 +305,40 @@
  			interrupt-parent = <&aic>;
  			interrupts = <AIC_IRQ 4 IRQ_TYPE_LEVEL_HIGH>;
  		};
@@ -99,7 +135,7 @@ index fc7dc7c5ba3a4ff53b104b7f1b87d5a4766d8c9f..21fe566414f5eca806ebdc0cf26339c5
  	timer {
 diff --git a/arch/arm64/boot/dts/apple/s8003-j71t-audio.dtsi b/arch/arm64/boot/dts/apple/s8003-j71t-audio.dtsi
 new file mode 100644
-index 0000000000000000000000000000000000000000..ad463056f73d7baa8a83f3e037ce375e984e707b
+index 0000000000000000000000000000000000000000..1a101a4211ae9341eab446aa4e8a8437332e39b3
 --- /dev/null
 +++ b/arch/arm64/boot/dts/apple/s8003-j71t-audio.dtsi
 @@ -0,0 +1,161 @@
@@ -108,7 +144,7 @@ index 0000000000000000000000000000000000000000..ad463056f73d7baa8a83f3e037ce375e
 + * J71t audio: CS42L81 on SPI1 (control) + MCA0 (data). Built-in speakers,
 + * 3.5 mm headphones and the two built-in DMICs (capture over MCA0 RX).
 + * Values: Apple's J71t ADT and iOS 16.7.10's AppleCS42L81Audio/AppleAE2MCA
-+ * (linux-a9 docs/audio/playback-path.md, ds-capture-and-jack.md). Items
++ * (omarchy-ipad5 docs/audio/playback-path.md, ds-capture-and-jack.md). Items
 + * marked "inferred" are unverified on hardware.
 + */
 +
@@ -319,10 +355,10 @@ index 0000000000000000000000000000000000000000..690ac1368f9664e73ae9d055b3d6eafc
 +};
 diff --git a/arch/arm64/boot/dts/apple/s8003-j71t-periph.dtsi b/arch/arm64/boot/dts/apple/s8003-j71t-periph.dtsi
 new file mode 100644
-index 0000000000000000000000000000000000000000..5c6580c860862a951fe3c6c34d0c51314c2c2759
+index 0000000000000000000000000000000000000000..e3266d36431105070f4091d9b9724bdc90a10640
 --- /dev/null
 +++ b/arch/arm64/boot/dts/apple/s8003-j71t-periph.dtsi
-@@ -0,0 +1,182 @@
+@@ -0,0 +1,180 @@
 +// SPDX-License-Identifier: GPL-2.0+ OR MIT
 +/* Round 1 J71t peripherals. Hardware values: Apple's J71t ADT. */
 +
@@ -476,8 +512,6 @@ index 0000000000000000000000000000000000000000..5c6580c860862a951fe3c6c34d0c5131
 +		reg = <0x180>, <0xa00>;
 +		reg-names = "status", "control";
 +		power-supplies = <&periph_tristar>;
-+		apple,usb-input-limit-max-microamp = <2400000>;
-+		apple,owner-input-limit-microamp = <2400000>;
 +	};
 +};
 +
@@ -507,7 +541,7 @@ index 0000000000000000000000000000000000000000..5c6580c860862a951fe3c6c34d0c5131
 +};
 diff --git a/arch/arm64/boot/dts/apple/s8003-j71t-touch.dtsi b/arch/arm64/boot/dts/apple/s8003-j71t-touch.dtsi
 new file mode 100644
-index 0000000000000000000000000000000000000000..9645a33f2afb6d0771cc37d0377ec495874027c6
+index 0000000000000000000000000000000000000000..efdc12e5ec53347b23a8d8a4bfa35cdd55e72ae4
 --- /dev/null
 +++ b/arch/arm64/boot/dts/apple/s8003-j71t-touch.dtsi
 @@ -0,0 +1,80 @@
@@ -569,7 +603,7 @@ index 0000000000000000000000000000000000000000..9645a33f2afb6d0771cc37d0377ec495
 +		touchscreen@0 {
 +			compatible = "apple,j71t-n1";
 +			reg = <0>;
-+			/* Owner-confirmed corner taps: X agrees, raw Y grows upward. */
++			/* Hardware-confirmed corner taps: X agrees, raw Y grows upward. */
 +			touchscreen-inverted-y;
 +			/* N1 selects 83 ns; controller rounds up to divider 6. */
 +			spi-max-frequency = <12048192>;
@@ -981,7 +1015,7 @@ index 79df5c7832600beb994952222fdf15bca93c2cb8..696f5a028c228f8aea2b9dabedcc1c01
  / {
  	twister_opp: opp-table {
  		compatible = "operating-points-v2";
-@@ -48,15 +52,1496 @@ opp07 {
+@@ -48,15 +52,1496 @@
  			opp-level = <7>;
  			clock-latency-ns = <38000>;
  		};
@@ -2483,7 +2517,7 @@ index 79df5c7832600beb994952222fdf15bca93c2cb8..696f5a028c228f8aea2b9dabedcc1c01
  	};
  };
  
-@@ -66,3 +1551,21 @@ opp08 {
+@@ -66,3 +1551,21 @@
   * the S8003 (APL1022) on 16nm. There are some minor differences
   * such as timing in cpufreq state transistions.
   */
@@ -2506,7 +2540,7 @@ index 79df5c7832600beb994952222fdf15bca93c2cb8..696f5a028c228f8aea2b9dabedcc1c01
 +
 +#include "s8003-thermal.dtsi"
 diff --git a/arch/arm64/boot/dts/apple/s800x-ipad5.dtsi b/arch/arm64/boot/dts/apple/s800x-ipad5.dtsi
-index 972d84d6c0109e2f47bd6766ad13056237eeacac..2a8601059d484da20552b8067b2656e285f52491 100644
+index 972d84d6c0109e2f47bd6766ad13056237eeacac..b96193537e5ac9536147bb7bb6a0d69a52a7d195 100644
 --- a/arch/arm64/boot/dts/apple/s800x-ipad5.dtsi
 +++ b/arch/arm64/boot/dts/apple/s800x-ipad5.dtsi
 @@ -7,10 +7,26 @@
@@ -2536,7 +2570,7 @@ index 972d84d6c0109e2f47bd6766ad13056237eeacac..2a8601059d484da20552b8067b2656e2
  	gpio-keys {
  		compatible = "gpio-keys";
  
-@@ -46,6 +62,21 @@ &framebuffer0 {
+@@ -46,6 +62,21 @@
  	power-domains = <&ps_disp0 &ps_dp>;
  };
  
@@ -2558,7 +2592,7 @@ index 972d84d6c0109e2f47bd6766ad13056237eeacac..2a8601059d484da20552b8067b2656e2
  &i2c0 {
  	status = "okay";
  
-@@ -55,6 +86,15 @@ pmic@3c {
+@@ -55,6 +86,22 @@
  		#address-cells = <1>;
  		#size-cells = <1>;
  
@@ -2570,6 +2604,13 @@ index 972d84d6c0109e2f47bd6766ad13056237eeacac..2a8601059d484da20552b8067b2656e2
 +		/* Child event specifiers need a PMIC irqchip before use. */
 +		interrupt-controller;
 +		#interrupt-cells = <1>;
++
++		/* ADT j71s/j71t/j72s/j72t: usb-input-limit-max = 0x960 mA. */
++		charger@180 {
++			reg = <0x180 0x1e>, <0xa00 0x0d>;
++			reg-names = "status", "control";
++			apple,usb-input-limit-max-microamp = <2400000>;
++		};
 +
  		rtc@500 {
  			compatible = "apple,angel-pmic-rtc", "apple,antigua-pmic-rtc";
@@ -2586,7 +2627,7 @@ index 7426147af3ea9dfb3e3e7f11d1806052f64f6d33..e583b1c57659b7cc0521e523dd42e747
  		serial0 = &serial0;
  	};
  
-@@ -40,7 +41,10 @@ reserved-memory {
+@@ -40,7 +41,10 @@
  		#size-cells = <2>;
  		ranges;
  
@@ -2598,7 +2639,7 @@ index 7426147af3ea9dfb3e3e7f11d1806052f64f6d33..e583b1c57659b7cc0521e523dd42e747
  	};
  };
  
-@@ -48,6 +52,14 @@ &dwi_bl {
+@@ -48,6 +52,14 @@
  	status = "okay";
  };
  
@@ -2617,7 +2658,7 @@ diff --git a/arch/arm64/boot/dts/apple/t8010.dtsi b/arch/arm64/boot/dts/apple/t8
 index 72ec543d7c8b426c2a8ba47e303e8da96e5630cb..e77f5d28ad06f82f4ca35a136944db89ae8d9079 100644
 --- a/arch/arm64/boot/dts/apple/t8010.dtsi
 +++ b/arch/arm64/boot/dts/apple/t8010.dtsi
-@@ -276,6 +276,78 @@ ehci1: usb-ehci@20c400000 {
+@@ -276,6 +276,78 @@
  #endif
  		};
  

@@ -7,11 +7,11 @@ kernel. It is a version-controlled build input despite its Kconfig-generated
 ## Origin
 
 The starting point is the 16K-page HoolockLinux configuration (`config_16k`,
-as for J71b) plus the linux-a9 workstream fragments for PCIe/NVMe, Wi-Fi,
-Bluetooth, touch, audio, sensors, power and USB, as merged for the linux-a9
-`a9/release` integration kernel. Options for code that is not part of
-`../../patches/j71t/` (GPU, video decoder, SEP, AOP and diagnostics) no
-longer exist and dropped out on resolution.
+as for J71b) plus the omarchy-ipad5 port's fragments for PCIe/NVMe, Wi-Fi,
+Bluetooth, touch, audio, sensors, power, USB, display and video decoding, as
+used by its release 2 kernel. Options for code that is not part of
+`../../patches/j71t/` (GPU, SEP, AOP and diagnostics) no longer exist and
+dropped out on resolution.
 
 It was resolved for the patched kernel with Debian Clang/LLVM 19.1.7 (the
 toolchain in `../../Containerfile`), after these Orchard-specific changes:
@@ -45,8 +45,15 @@ toolchain in `../../Containerfile`), after these Orchard-specific changes:
   `phase2-hardware` releases them.
 - `CONFIG_BRCMFMAC=y`: Wi-Fi is built in. It probes only after the PCIe host
   is released, when the firmware mixin is already present.
-- `CONFIG_DRM_SIMPLEDRM=y`: the display is the framebuffer m1n1 hands over;
-  there is no GPU or native display-controller driver.
+- `CONFIG_DRM_APPLE_ADBE=y`: native KMS on the display pipe iBoot leaves
+  running. It takes over m1n1's framebuffer from simpledrm during boot and
+  names the internal panel `eDP-1`; it never programs timings, clocks or the
+  eDP link. `CONFIG_DRM_SIMPLEDRM=y` stays as the fallback:
+  `apple_adbe_drm.enable=0` keeps simpledrm. There is no GPU driver.
+- `CONFIG_VIDEO_APPLE_VXD=y`: the H.264 decoder is built in, as in omarchy-ipad5
+  (the driver calls `pr_flush`, which modules cannot use). It probes without
+  firmware and reads the DEVA firmware (`apple/vxd-deva.bin`, from the mixin)
+  only when it is booted through debugfs (`apple-vxd/boot`).
 
 ## How the file is generated
 

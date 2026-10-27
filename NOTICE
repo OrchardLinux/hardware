@@ -13,10 +13,12 @@ Original copyright notices and per-file licenses remain applicable. This is
 selective reuse and adaptation, not a replacement of the pinned base kernel.
 
 The J71t (iPad 5 Wi-Fi, S8003) kernel patches, configuration and m1n1 patches
-come from the linux-a9 iPad 5 port (https://github.com/brkosebay/linux, branch
-a9/release), which builds on the same HoolockLinux base and adapts Paul
-Praschl's (Pauli1Go) T8010 PCIe/ANS, SmartIO, Wi-Fi and Bluetooth work to A9.
-Original copyright notices and per-file licenses remain applicable.
+come from the omarchy-ipad5 iPad 5 port (https://github.com/brkosebay/omarchy-ipad5;
+kernel source https://github.com/brkosebay/linux/tree/a9/orchard-j71t), which builds on the same HoolockLinux base and adapts
+Paul Praschl's (Pauli1Go) T8010 PCIe/ANS, SmartIO, Wi-Fi and Bluetooth work to
+A9. The video decoder's CAVLC table is generated from GPL-2.0 Imagination
+Technologies/Texas Instruments source, whose notices are kept. Original
+copyright notices and per-file licenses remain applicable.
 
 m1n1: Asahi Linux Contributors, MIT (LICENSES/m1n1.txt).
 Wireless regulatory database: LICENSES/wireless-regdb.txt.
