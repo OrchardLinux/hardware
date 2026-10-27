@@ -1,0 +1,2014 @@
+CT819 ambient light sensor, pinctrl and backlight
+
+Generated from linux-a9 a9/release 9dbc8612b3b0 by scripts/orchard/j71t-series.py.
+
+diff --git a/Documentation/devicetree/bindings/iio/light/tsl2583.yaml b/Documentation/devicetree/bindings/iio/light/tsl2583.yaml
+index 7b92ba8cbb9fbdd5b73ffa976036f2a0aa159289..91f454010a996e0be18ec2beb0ef1b4da3719f05 100644
+--- a/Documentation/devicetree/bindings/iio/light/tsl2583.yaml
++++ b/Documentation/devicetree/bindings/iio/light/tsl2583.yaml
+@@ -10,14 +10,23 @@ maintainers:
+   - Brian Masney <masneyb@onstation.org>
+ 
+ description: |
+-  Ambient light sensing with an i2c interface.
++  Ambient light sensing with an i2c interface. The Apple CT819 and CT821
++  factory calibration is stored in SysCfg. On systems where the SysCfg NVMEM
++  provider is created by boot firmware, the static board tree omits the
++  NVMEM link and firmware adds both NVMEM properties before kernel handoff.
+ 
+ properties:
+   compatible:
+-    enum:
+-      - amstaos,tsl2580
+-      - amstaos,tsl2581
+-      - amstaos,tsl2583
++    oneOf:
++      - enum:
++          - amstaos,tsl2580
++          - amstaos,tsl2581
++          - amstaos,tsl2583
++      - items:
++          - enum:
++              - apple,ct819
++              - apple,ct821
++          - const: amstaos,tsl2581
+ 
+   reg:
+     maxItems: 1
+@@ -28,10 +37,45 @@ properties:
+   vcc-supply:
+     description: Regulator that provides power to the sensor
+ 
++  firmware-name:
++    description: Private LSCI record from this device, when NVMEM is unavailable.
++    maxItems: 1
++
++  nvmem-cells:
++    description:
++      Apple factory LSCI ambient-light calibration data. Boot firmware must
++      populate this together with nvmem-cell-names when the provider is not
++      statically representable.
++    maxItems: 1
++
++  nvmem-cell-names:
++    items:
++      - const: calibration
++
+ required:
+   - compatible
+   - reg
+ 
++allOf:
++  - if:
++      properties:
++        compatible:
++          contains:
++            enum:
++              - apple,ct819
++              - apple,ct821
++    then:
++      dependentRequired:
++        nvmem-cells:
++          - nvmem-cell-names
++        nvmem-cell-names:
++          - nvmem-cells
++    else:
++      properties:
++        firmware-name: false
++        nvmem-cells: false
++        nvmem-cell-names: false
++
+ additionalProperties: false
+ 
+ examples:
+@@ -41,8 +85,10 @@ examples:
+         #size-cells = <0>;
+ 
+         light-sensor@29 {
+-                compatible = "amstaos,tsl2581";
+-                reg = <0x29>;
++            compatible = "apple,ct821", "amstaos,tsl2581";
++            reg = <0x29>;
++            nvmem-cells = <&als_calibration>;
++            nvmem-cell-names = "calibration";
+         };
+     };
+ ...
+diff --git a/Documentation/devicetree/bindings/leds/backlight/apple,dwi-bl.yaml b/Documentation/devicetree/bindings/leds/backlight/apple,dwi-bl.yaml
+index 29caeb356e6f02d8945ab1b1f5f7572ff8592ead..3f443e10e9da0e68373e2ac6b86b5253d6dc7599 100644
+--- a/Documentation/devicetree/bindings/leds/backlight/apple,dwi-bl.yaml
++++ b/Documentation/devicetree/bindings/leds/backlight/apple,dwi-bl.yaml
+@@ -32,6 +32,10 @@ properties:
+       - const: apple,dwi-bl
+ 
+   reg:
++    description: |
++      WLED channel registers on legacy systems. On S8000/S8003, map the
++      complete 16 KiB DWI block, including the configuration registers
++      at offsets 0x00, 0x04 and 0xd0 and the WLED channel at 0x80.
+     maxItems: 1
+ 
+   power-domains:
+diff --git a/drivers/iio/light/Kconfig b/drivers/iio/light/Kconfig
+index f23bbce12c72c7333897b5e640cd9e29c3f16b57..c8d8084a3a0f0a3f762965cf8d84846c43cc38a9 100644
+--- a/drivers/iio/light/Kconfig
++++ b/drivers/iio/light/Kconfig
+@@ -638,6 +638,16 @@ config TSL2583
+ 	  Provides support for the TAOS tsl2580, tsl2581 and tsl2583 devices.
+ 	  Access ALS data via iio, sysfs.
+ 
++config TSL2583_KUNIT_TEST
++	tristate "KUnit tests for TSL2583" if !KUNIT_ALL_TESTS
++	depends on KUNIT
++	default KUNIT_ALL_TESTS
++	help
++	  Build tests for the Apple CT819 and CT821 factory-calibration
++	  gain-factor parser, including rejection of zero and overflowing gain
++	  factors from LSCI. These tests do not require hardware. If built as a
++	  module, it will be called tsl2583-test.
++
+ config TSL2591
+         tristate "TAOS TSL2591 ambient light sensor"
+         depends on I2C
+diff --git a/drivers/iio/light/Makefile b/drivers/iio/light/Makefile
+index 64e354c49ed8d7f4291b39137ba3a16848ebb70c..fdbef07f8faa1fafb21b25510080d5885b061dd8 100644
+--- a/drivers/iio/light/Makefile
++++ b/drivers/iio/light/Makefile
+@@ -59,6 +59,7 @@ obj-$(CONFIG_TCS3414)		+= tcs3414.o
+ obj-$(CONFIG_TCS3472)		+= tcs3472.o
+ obj-$(CONFIG_SENSORS_TSL2563)	+= tsl2563.o
+ obj-$(CONFIG_TSL2583)		+= tsl2583.o
++obj-$(CONFIG_TSL2583_KUNIT_TEST)	+= tsl2583-test.o
+ obj-$(CONFIG_TSL2591)		+= tsl2591.o
+ obj-$(CONFIG_TSL2772)		+= tsl2772.o
+ obj-$(CONFIG_TSL4531)		+= tsl4531.o
+diff --git a/drivers/iio/light/tsl2583-test.c b/drivers/iio/light/tsl2583-test.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..703ca131dc75304a85632ae8b5acc4e4d78ccb96
+--- /dev/null
++++ b/drivers/iio/light/tsl2583-test.c
+@@ -0,0 +1,234 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#include <kunit/test.h>
++#include <linux/module.h>
++
++#include "tsl2583.h"
++
++static void ct821_gain_factor_valid_test(struct kunit *test)
++{
++	u32 factor;
++
++	KUNIT_ASSERT_EQ(test, 0,
++			apple_als_calculate_gain_factor(65536, 510,
++							CT821_CAL_RATIO_SCALE,
++							&factor));
++	KUNIT_EXPECT_EQ(test, 131072U, factor);
++}
++
++static void ct821_gain_factor_zero_test(struct kunit *test)
++{
++	u32 factor = 1;
++
++	KUNIT_EXPECT_EQ(test, -EINVAL,
++			apple_als_calculate_gain_factor(65536, 0,
++							CT821_CAL_RATIO_SCALE,
++							&factor));
++	KUNIT_EXPECT_EQ(test, -EINVAL,
++			apple_als_calculate_gain_factor(0, 255,
++							CT821_CAL_RATIO_SCALE,
++							&factor));
++	KUNIT_EXPECT_EQ(test, 1U, factor);
++}
++
++static void ct821_gain_factor_overflow_test(struct kunit *test)
++{
++	u32 factor;
++
++	KUNIT_ASSERT_EQ(test, 0,
++			apple_als_calculate_gain_factor(65536, 0xff00,
++							CT821_CAL_RATIO_SCALE,
++							&factor));
++	KUNIT_ASSERT_EQ(test, 1U << 24, factor);
++	KUNIT_EXPECT_EQ(test, -ERANGE,
++			apple_als_calculate_gain_factor(factor, 0xff00,
++							CT821_CAL_RATIO_SCALE,
++							&factor));
++}
++
++static void ct819_gain_factor_valid_test(struct kunit *test)
++{
++	u32 factor;
++
++	/*
++	 * The gain ratios of the factory record of an iPad 7 fold into the
++	 * nominal 8x, 16x and 128x gain steps of the part.
++	 */
++	KUNIT_ASSERT_EQ(test, 0,
++			apple_als_calculate_gain_factor(65536, 2010,
++							CT819_CAL_RATIO_SCALE,
++							&factor));
++	KUNIT_EXPECT_EQ(test, 514560U, factor);
++	KUNIT_ASSERT_EQ(test, 0,
++			apple_als_calculate_gain_factor(factor, 521,
++							CT819_CAL_RATIO_SCALE,
++							&factor));
++	KUNIT_EXPECT_EQ(test, 1047210U, factor);
++	KUNIT_ASSERT_EQ(test, 0,
++			apple_als_calculate_gain_factor(factor, 1862,
++							CT819_CAL_RATIO_SCALE,
++							&factor));
++	KUNIT_EXPECT_EQ(test, 7616816U, factor);
++}
++
++/*
++ * A calibration with round numbers: 8x gain and 400 ms (148 cycles of
++ * 2.7 ms) as the reference, a1/b1 = 1/2 up to a ch1/ch0 ratio of 0.4, a2/b2 =
++ * 0.8/1.2 above it, fudge 204/255 = 0.8, and the iPad 7 gain ratios as above.
++ */
++static const struct apple_als_calibration ct819_test_cal = {
++	.lux_fudge = 204,
++	.integration_time = 400,
++	.gain = 1,
++	.a_coeff1 = 65536,
++	.b_coeff1 = 131072,
++	.upper_range = 26214,
++	.a_coeff2 = 52429,
++	.b_coeff2 = 78643,
++	.gain_factor = {
++		{ 65536, 65536 },
++		{ 514560, 514560 },
++		{ 1047210, 1047210 },
++		{ 7616816, 7616816 },
++	},
++};
++
++#define CT819_TEST_CYCLE_US	2700
++#define CT819_TEST_REF_CYCLES	148
++#define CT819_TEST_UNITY_TRIM	1000
++
++static int ct819_test_lux(u32 cycles, unsigned int gain, u32 lux_max,
++			  u16 ch0, u16 ch1)
++{
++	return apple_als_calc_lux(&ct819_test_cal, gain, cycles,
++				  CT819_TEST_CYCLE_US, CT819_COUNTS_PER_CYCLE,
++				  CT819_TEST_UNITY_TRIM, lux_max, ch0, ch1);
++}
++
++static void ct819_lux_curve_test(struct kunit *test)
++{
++	/* ch1/ch0 = 0.1 uses the first segment: (1000 * 1 - 100 * 2) * 0.8 */
++	KUNIT_EXPECT_EQ(test, 640,
++			ct819_test_lux(CT819_TEST_REF_CYCLES, 1, 5000, 1000, 100));
++	/* ch1/ch0 = 0.5 is past the limit: (1000 * 0.8 - 500 * 1.2) * 0.8 */
++	KUNIT_EXPECT_EQ(test, 160,
++			ct819_test_lux(CT819_TEST_REF_CYCLES, 1, 5000, 1000, 500));
++	/* Mostly infrared light cannot go negative */
++	KUNIT_EXPECT_EQ(test, 0,
++			ct819_test_lux(CT819_TEST_REF_CYCLES, 1, 5000, 100, 1000));
++	KUNIT_EXPECT_EQ(test, 0,
++			ct819_test_lux(CT819_TEST_REF_CYCLES, 1, 5000, 0, 0));
++}
++
++static void ct819_lux_integration_time_test(struct kunit *test)
++{
++	/* The same light in 50 ms (18 cycles) gives 18/148 of the counts */
++	KUNIT_EXPECT_EQ(test, 947,
++			ct819_test_lux(CT819_TEST_REF_CYCLES, 1, 5000, 1480, 148));
++	KUNIT_EXPECT_EQ(test, 947,
++			ct819_test_lux(18, 1, 5000, 180, 18));
++}
++
++static void ct819_lux_gain_test(struct kunit *test)
++{
++	/* 16x sees 1047210 / 514560 times the counts of 8x */
++	KUNIT_EXPECT_EQ(test, 640,
++			ct819_test_lux(CT819_TEST_REF_CYCLES, 2, 5000, 2035, 204));
++}
++
++static void ct819_lux_saturation_test(struct kunit *test)
++{
++	/* 1024 counts per cycle, 16 bits at most */
++	KUNIT_EXPECT_EQ(test, 5000,
++			ct819_test_lux(CT819_TEST_REF_CYCLES, 1, 5000, 65535, 100));
++	KUNIT_EXPECT_EQ(test, 5000,
++			ct819_test_lux(CT819_TEST_REF_CYCLES, 1, 5000, 1000, 65535));
++	KUNIT_EXPECT_EQ(test, 1000000, ct819_test_lux(18, 1, 1000000, 18431, 0));
++	KUNIT_EXPECT_NE(test, 1000000, ct819_test_lux(18, 1, 1000000, 18430, 0));
++	/* One count short of the limit still computes, then clamps */
++	KUNIT_EXPECT_EQ(test, 48000,
++			ct819_test_lux(CT819_TEST_REF_CYCLES, 1, 65535, 60000, 0));
++	KUNIT_EXPECT_EQ(test, 5000,
++			ct819_test_lux(CT819_TEST_REF_CYCLES, 1, 5000, 60000, 0));
++}
++
++static void apple_lux_16bit_limit_test(struct kunit *test)
++{
++	/* Without a per-cycle limit only the 16 bit range clips (the CT821) */
++	KUNIT_EXPECT_EQ(test, 65535,
++			apple_als_calc_lux(&ct819_test_cal, 1, 18, CT819_TEST_CYCLE_US,
++					   0, CT819_TEST_UNITY_TRIM, 65535, 18431, 0));
++	KUNIT_EXPECT_NE(test, 1000000,
++			apple_als_calc_lux(&ct819_test_cal, 1, 18, CT819_TEST_CYCLE_US,
++					   0, CT819_TEST_UNITY_TRIM, 1000000, 18431, 0));
++}
++
++static void ct819_lux_invalid_test(struct kunit *test)
++{
++	KUNIT_EXPECT_EQ(test, -EINVAL, ct819_test_lux(0, 1, 5000, 100, 10));
++	KUNIT_EXPECT_EQ(test, -EINVAL,
++			ct819_test_lux(CT819_TEST_REF_CYCLES, 8, 5000, 100, 10));
++}
++
++static void ct819_lux_dark_counts_test(struct kunit *test)
++{
++	struct apple_als_calibration cal = ct819_test_cal;
++
++	cal.ch0_dark_counts = 4;
++	cal.ch1_dark_counts = 2;
++	/* (1004 - 4) and (102 - 2) are the counts of the first test */
++	KUNIT_EXPECT_EQ(test, 640,
++			apple_als_calc_lux(&cal, 1, CT819_TEST_REF_CYCLES,
++					   CT819_TEST_CYCLE_US, CT819_COUNTS_PER_CYCLE,
++					   1000, 5000, 1004, 102));
++	/* The dark counts of an unlit sensor leave nothing to report */
++	KUNIT_EXPECT_EQ(test, 0,
++			apple_als_calc_lux(&cal, 1, CT819_TEST_REF_CYCLES,
++					   CT819_TEST_CYCLE_US, CT819_COUNTS_PER_CYCLE,
++					   1000, 5000, 3, 2));
++}
++
++static struct kunit_case ct819_gain_factor_test_cases[] = {
++	KUNIT_CASE(ct819_gain_factor_valid_test),
++	{}
++};
++
++static struct kunit_suite ct819_gain_factor_test_suite = {
++	.name = "ct819-gain-factor",
++	.test_cases = ct819_gain_factor_test_cases,
++};
++
++static struct kunit_case ct819_lux_test_cases[] = {
++	KUNIT_CASE(ct819_lux_curve_test),
++	KUNIT_CASE(ct819_lux_integration_time_test),
++	KUNIT_CASE(ct819_lux_gain_test),
++	KUNIT_CASE(ct819_lux_saturation_test),
++	KUNIT_CASE(apple_lux_16bit_limit_test),
++	KUNIT_CASE(ct819_lux_invalid_test),
++	KUNIT_CASE(ct819_lux_dark_counts_test),
++	{}
++};
++
++static struct kunit_suite ct819_lux_test_suite = {
++	.name = "ct819-lux",
++	.test_cases = ct819_lux_test_cases,
++};
++
++static struct kunit_case ct821_gain_factor_test_cases[] = {
++	KUNIT_CASE(ct821_gain_factor_valid_test),
++	KUNIT_CASE(ct821_gain_factor_zero_test),
++	KUNIT_CASE(ct821_gain_factor_overflow_test),
++	{}
++};
++
++static struct kunit_suite ct821_gain_factor_test_suite = {
++	.name = "ct821-gain-factor",
++	.test_cases = ct821_gain_factor_test_cases,
++};
++
++kunit_test_suites(&ct819_gain_factor_test_suite,
++		  &ct819_lux_test_suite,
++		  &ct821_gain_factor_test_suite);
++
++MODULE_DESCRIPTION("KUnit tests for the Apple ALS calibration gain factors and lux computation");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/iio/light/tsl2583.c b/drivers/iio/light/tsl2583.c
+index 53fd423aa7aef67652bca7faa81f94d6880b40d8..9d710101d6e2a7d04cbc1c89c0d77bad77ab4b54 100644
+--- a/drivers/iio/light/tsl2583.c
++++ b/drivers/iio/light/tsl2583.c
+@@ -9,6 +9,8 @@
+ 
+ #include <linux/kernel.h>
+ #include <linux/i2c.h>
++#include <linux/firmware.h>
++#include <linux/property.h>
+ #include <linux/errno.h>
+ #include <linux/delay.h>
+ #include <linux/string.h>
+@@ -16,15 +18,22 @@
+ #include <linux/unistd.h>
+ #include <linux/slab.h>
+ #include <linux/module.h>
++#include <linux/nvmem-consumer.h>
++#include <linux/overflow.h>
+ #include <linux/iio/iio.h>
+ #include <linux/iio/sysfs.h>
+ #include <linux/pm_runtime.h>
++#include <linux/unaligned.h>
++
++#include "tsl2583.h"
+ 
+ /* Device Registers and Masks */
+ #define TSL2583_CNTRL			0x00
+ #define TSL2583_ALS_TIME		0X01
+ #define TSL2583_INTERRUPT		0x02
+ #define TSL2583_GAIN			0x07
++#define CT821_ALS_CONFIG		0x0c
++#define CT821_GAIN			0x0f
+ #define TSL2583_REVID			0x11
+ #define TSL2583_CHIPID			0x12
+ #define TSL2583_ALS_CHAN0LO		0x14
+@@ -38,18 +47,19 @@
+ #define TSL2583_CMD_REG			0x80
+ #define TSL2583_CMD_SPL_FN		0x60
+ #define TSL2583_CMD_ALS_INT_CLR		0x01
++#define CT821_CMD_ALS_INT_CLR		0xc1
+ 
+ /* tsl2583 cntrl reg masks */
+ #define TSL2583_CNTL_ADC_ENBL		0x02
+ #define TSL2583_CNTL_PWR_OFF		0x00
+ #define TSL2583_CNTL_PWR_ON		0x01
++#define CT821_CNTL_ENABLE		0x10
+ 
+-/* tsl2583 status reg masks */
+-#define TSL2583_STA_ADC_VALID		0x01
+-#define TSL2583_STA_ADC_INTR		0x10
++#define CT821_ALS_CONFIG_ENABLE		0x40
+ 
+-/* Lux calculation constants */
+-#define TSL2583_LUX_CALC_OVER_FLOW	65535
++/* tsl2583 status reg masks */
++#define TSL2583_STA_ADC_VALID		0x10
++#define TSL2583_STA_ADC_INTR		0x20
+ 
+ #define TSL2583_INTERRUPT_DISABLED	0x00
+ 
+@@ -58,6 +68,25 @@
+ 
+ #define TSL2583_POWER_OFF_DELAY_MS	2000
+ 
++/* Nominal length of one ADC integration cycle on the generic TSL258x parts */
++#define TSL2583_INTEGRATION_CYCLE_US	2700
++
++/* The LSCI record layout is versioned; see tsl2583.h for what they share. */
++#define APPLE_ALS_CAL_HEADER_SIZE	8
++
++#define CT819_CAL_RECORD_SIZE_V2	0x40
++#define CT819_CAL_GAIN_COUNT		4
++#define CT819_CAL_RATIO_OFF		0x30
++/* AppleEmbeddedLightSensor publishes ALSSensorMax = 5000 for the CT819. */
++#define CT819_LUX_MAX			5000
++
++#define CT821_CAL_RECORD_SIZE_V3	0x54
++#define CT821_CAL_RECORD_DATA_SIZE_V3	0x52
++#define CT821_CAL_GAIN_COUNT		8
++#define CT821_CAL_GAIN_COUNT_OFF	0x30
++#define CT821_CAL_RATIO_OFF		0x36
++#define CT821_INTEGRATION_CYCLE_US	2780
++
+ /* Per-device data */
+ struct tsl2583_als_info {
+ 	u16 als_ch0;
+@@ -102,6 +131,10 @@ struct tsl2583_chip {
+ 	struct tsl2583_settings als_settings;
+ 	int als_time_scale;
+ 	int als_saturation;
++	const struct tsl2583_chip_info *info;
++	struct apple_als_calibration cal;
++	u16 integration_cycles;
++	bool needs_reinit;
+ };
+ 
+ struct gainadj {
+@@ -110,14 +143,276 @@ struct gainadj {
+ 	s16 mean;
+ };
+ 
+-/* Index = (0 - 3) Used to validate the gain selection index */
+-static const struct gainadj gainadj[] = {
++/*
++ * Describes one supported part. @gainadj is indexed by the gain selection
++ * index programmed into @gain_reg.
++ *
++ * The Apple variants are TSL258x compatible parts with a factory LSCI
++ * calibration record in SysCfg. They select a different lux computation and
++ * therefore also different chip-specific register handling:
++ *
++ * @gain_reg:		register holding the gain selection index
++ * @int_clr_data_cmd:	if non-zero, the ALS interrupt is cleared by a byte
++ *			write to this command instead of the TSL258x
++ *			special function
++ * @cntl_enable:	extra CNTRL bits the part needs while measuring
++ * @als_config:		part needs its analog frontend programmed explicitly
++ *			while the core is powered down
++ * @cal_record_size:	size of the supported LSCI calibration record
++ * @cal_record_len:	record length field of the supported record
++ * @cal_gain_count:	number of gain steps described by that record
++ * @cal_gain_count_off:	offset of the gain-count byte, zero if the record has
++ *			none
++ * @cal_ratio_off:	offset of the gain ratio pair of the second gain step
++ * @cal_ratio_scale:	fixed-point scale of the recorded gain ratios
++ * @integration_cycle_us: length of one ADC integration cycle
++ * @counts_per_cycle:	ADC counts per integration cycle, zero if only the 16 bit
++ *			range limits them
++ * @lux_max:		largest lux value the calibrated computation reports
++ */
++struct tsl2583_chip_info {
++	const struct gainadj *gainadj;
++	unsigned int num_gainadj;
++	const struct iio_info *iio_info;
++	int default_als_time;
++	int default_als_gain;
++	bool apple;
++	u8 gain_reg;
++	u8 int_clr_data_cmd;
++	u8 cntl_enable;
++	bool als_config;
++	u8 cal_version;
++	u8 cal_record_size;
++	u8 cal_record_len;
++	unsigned int cal_gain_count;
++	unsigned int cal_gain_count_off;
++	unsigned int cal_ratio_off;
++	unsigned int cal_ratio_scale;
++	unsigned int integration_cycle_us;
++	unsigned int counts_per_cycle;
++	unsigned int lux_max;
++};
++
++static const struct gainadj tsl2583_gainadj[] = {
+ 	{ 1, 1, 1 },
+ 	{ 8, 8, 8 },
+ 	{ 16, 16, 16 },
+ 	{ 107, 115, 111 }
+ };
+ 
++/*
++ * The CT819 uses the TSL2581 gain register and its four gain steps. The
++ * nominal factors below only select the step; the exact per-device gain comes
++ * from the LSCI calibration record.
++ */
++static const struct gainadj ct819_gainadj[] = {
++	{ 1, 1, 1 },
++	{ 8, 8, 8 },
++	{ 16, 16, 16 },
++	{ 128, 128, 128 },
++};
++
++static const struct gainadj ct821_gainadj[] = {
++	{ 1, 1, 1 },
++	{ 2, 2, 2 },
++	{ 4, 4, 4 },
++	{ 8, 8, 8 },
++	{ 16, 16, 16 },
++	{ 32, 32, 32 },
++	{ 64, 64, 64 },
++	{ 140, 140, 140 },
++};
++
++/*
++ * Two things about the CT819 are not settled by the static analysis of the iOS
++ * driver (docs/periph/ds-als-hall.md, A1 and A2). Both can be flipped on a
++ * running system through /sys/module/tsl2583/parameters/ (or tsl2583.<name>=
++ * on the kernel command line) while the answer is measured.
++ *
++ * apple_no_pwr_bit: iOS writes CONTROL = 0x02 (ADC enable only); Linux writes
++ *	POWER | ADC_ENABLE = 0x03. Set this to write what iOS writes. The next
++ *	power-up (autosuspend, or a write to integration_time) applies it.
++ * apple_int_clear: how the ALS interrupt status is cleared after a sample.
++ *	0 the TSL258x special function (command 0xe1), the default
++ *	1 a write of 0x40 to command 0x8c, as a sibling iOS class does
++ *	2 do not clear at all
++ */
++static bool apple_no_pwr_bit;
++module_param(apple_no_pwr_bit, bool, 0644);
++MODULE_PARM_DESC(apple_no_pwr_bit, "Apple ALS: write CONTROL = ADC enable only, as iOS does");
++
++static int apple_int_clear;
++module_param(apple_int_clear, int, 0644);
++MODULE_PARM_DESC(apple_int_clear, "Apple ALS interrupt clear: 0 special function, 1 write 0x40 to 0x8c, 2 none");
++
++#define APPLE_ALS_INT_CLR_SPL_FN	0
++#define APPLE_ALS_INT_CLR_REG_0C	1
++#define APPLE_ALS_INT_CLR_NONE		2
++#define APPLE_ALS_INT_CLR_REG		(TSL2583_CMD_REG | 0x0c)
++#define APPLE_ALS_INT_CLR_REG_VALUE	0x40
++
++static int apple_als_get_lux(struct tsl2583_chip *chip, u16 ch0, u16 ch1);
++
++static int apple_als_gain_to_index(const struct tsl2583_chip_info *info, u8 gain)
++{
++	unsigned int i;
++
++	for (i = 0; i < info->num_gainadj; i++)
++		if (info->gainadj[i].mean == gain)
++			return i;
++
++	return -EINVAL;
++}
++
++/*
++ * The recorded gain ratios are relative to the previous gain step, so the
++ * first step has no entry of its own.
++ */
++static unsigned int apple_als_ratio_offset(const struct tsl2583_chip_info *info,
++					   unsigned int gain)
++{
++	return info->cal_ratio_off + (gain - 1) * 4;
++}
++
++static bool apple_als_record_is_supported(const struct tsl2583_chip_info *info,
++					  const u8 *record)
++{
++	if (record[0] || record[3] != info->cal_record_len || record[4] != 1)
++		return false;
++
++	if (info->cal_gain_count_off &&
++	    record[info->cal_gain_count_off] != info->cal_gain_count)
++		return false;
++
++	return true;
++}
++
++static int apple_als_load_calibration(struct tsl2583_chip *chip)
++{
++	const struct tsl2583_chip_info *info = chip->info;
++	struct device *dev = &chip->client->dev;
++	struct apple_als_calibration *cal = &chip->cal;
++	struct nvmem_cell *cell;
++	const struct firmware *fw;
++	const char *fw_name;
++	const u8 *record;
++	size_t len;
++	u32 checksum = 0;
++	u8 *data;
++	int gain_index;
++	int ret;
++	int i;
++
++	if (!device_property_present(dev, "nvmem-cells") &&
++	    !device_property_read_string(dev, "firmware-name", &fw_name)) {
++		/* Missing calibration must not wait for a userspace helper. */
++		ret = request_firmware_direct(&fw, fw_name, dev);
++		if (ret)
++			return dev_err_probe(dev, ret, "failed to load LSCI file\n");
++		len = fw->size;
++		data = kmemdup(fw->data, len, GFP_KERNEL);
++		release_firmware(fw);
++		if (!data)
++			return -ENOMEM;
++	} else {
++		cell = devm_nvmem_cell_get(dev, "calibration");
++		if (IS_ERR(cell))
++			return dev_err_probe(dev, PTR_ERR(cell),
++					     "failed to get LSCI calibration\n");
++		data = nvmem_cell_read(cell, &len);
++		if (IS_ERR(data))
++			return dev_err_probe(dev, PTR_ERR(data),
++					     "failed to read LSCI calibration\n");
++	}
++
++	if (len < APPLE_ALS_CAL_HEADER_SIZE + info->cal_record_size ||
++	    len & 1 || data[1] != info->cal_version || data[2] != 1 ||
++	    data[3] != APPLE_ALS_CAL_HEADER_SIZE ||
++	    get_unaligned_le16(data + 4) != len) {
++		dev_err(dev, "invalid LSCI v%u calibration header\n",
++			info->cal_version);
++		goto invalid;
++	}
++
++	for (i = 0; i < len; i += 2)
++		checksum += get_unaligned_le16(data + i);
++	if ((u16)checksum != U16_MAX) {
++		dev_err(dev, "invalid LSCI calibration checksum\n");
++		goto invalid;
++	}
++
++	record = data + data[3];
++	if (!apple_als_record_is_supported(info, record)) {
++		dev_err(dev, "unsupported LSCI v%u calibration record\n",
++			info->cal_version);
++		goto invalid;
++	}
++	if (memchr_inv(record + 0x2a, 0, 6)) {
++		dev_err(dev, "unsupported LSCI backlight-leakage calibration\n");
++		goto invalid;
++	}
++
++	cal->lux_fudge = get_unaligned_le16(record + 0x08);
++	cal->integration_time = get_unaligned_le16(record + 0x0a);
++	gain_index = apple_als_gain_to_index(info, record[0x10]);
++	cal->a_coeff1 = get_unaligned_le32(record + 0x14);
++	cal->b_coeff1 = get_unaligned_le32(record + 0x18);
++	cal->upper_range = get_unaligned_le32(record + 0x1c);
++	cal->a_coeff2 = get_unaligned_le32(record + 0x20);
++	cal->b_coeff2 = get_unaligned_le32(record + 0x24);
++	cal->ch0_dark_counts = record[0x28];
++	cal->ch1_dark_counts = record[0x29];
++
++	if (!cal->lux_fudge || cal->integration_time < 50 ||
++	    cal->integration_time > 650 || gain_index < 0 ||
++	    cal->a_coeff1 <= 0 || cal->b_coeff1 <= 0 ||
++	    cal->upper_range <= 0 || cal->a_coeff2 <= 0 ||
++	    cal->b_coeff2 <= 0) {
++		dev_err(dev, "invalid LSCI calibration values\n");
++		goto invalid;
++	}
++	cal->gain = gain_index;
++
++	cal->gain_factor[0][0] = APPLE_ALS_CAL_SCALE;
++	cal->gain_factor[0][1] = APPLE_ALS_CAL_SCALE;
++	for (i = 1; i < info->cal_gain_count; i++) {
++		const u8 *ratios = record + apple_als_ratio_offset(info, i);
++		u16 ch0 = get_unaligned_le16(ratios);
++		u16 ch1 = get_unaligned_le16(ratios + 2);
++		u32 previous;
++		u32 *factor;
++
++		previous = cal->gain_factor[i - 1][0];
++		factor = &cal->gain_factor[i][0];
++		ret = apple_als_calculate_gain_factor(previous, ch0,
++						      info->cal_ratio_scale,
++						      factor);
++		if (!ret) {
++			previous = cal->gain_factor[i - 1][1];
++			factor = &cal->gain_factor[i][1];
++			ret = apple_als_calculate_gain_factor(previous, ch1,
++							      info->cal_ratio_scale,
++							      factor);
++		}
++		if (ret) {
++			dev_err(dev, "invalid LSCI gain factors\n");
++			goto invalid;
++		}
++	}
++
++	chip->als_settings.als_time = cal->integration_time;
++	chip->als_settings.als_gain = cal->gain;
++	dev_info(dev, "loaded LSCI v%u ambient-light calibration\n",
++		 info->cal_version);
++	kfree(data);
++
++	return 0;
++
++invalid:
++	kfree(data);
++	return -EINVAL;
++}
++
+ /*
+  * Provides initial operational parameter defaults.
+  * These defaults may be changed through the device's sysfs files.
+@@ -126,15 +421,15 @@ static void tsl2583_defaults(struct tsl2583_chip *chip)
+ {
+ 	/*
+ 	 * The integration time must be a multiple of 50ms and within the
+-	 * range [50, 600] ms.
++	 * range [50, 650] ms.
+ 	 */
+-	chip->als_settings.als_time = 100;
++	chip->als_settings.als_time = chip->info->default_als_time;
+ 
+ 	/*
+ 	 * This is an index into the gainadj table. Assume clear glass as the
+ 	 * default.
+ 	 */
+-	chip->als_settings.als_gain = 0;
++	chip->als_settings.als_gain = chip->info->default_als_gain;
+ 
+ 	/* Default gain trim to account for aperture effects */
+ 	chip->als_settings.als_gain_trim = 1000;
+@@ -147,6 +442,34 @@ static void tsl2583_defaults(struct tsl2583_chip *chip)
+ 	       sizeof(tsl2583_default_lux));
+ }
+ 
++/* The Apple part that is a plain TSL2581 apart from its calibration. */
++static bool tsl2583_is_ct819(const struct tsl2583_chip *chip)
++{
++	return chip->info->apple && !chip->info->als_config;
++}
++
++static int tsl2583_clear_interrupt(struct tsl2583_chip *chip)
++{
++	if (chip->info->int_clr_data_cmd)
++		return i2c_smbus_write_byte_data(chip->client,
++						 chip->info->int_clr_data_cmd, 0);
++
++	if (tsl2583_is_ct819(chip)) {
++		switch (READ_ONCE(apple_int_clear)) {
++		case APPLE_ALS_INT_CLR_REG_0C:
++			return i2c_smbus_write_byte_data(chip->client,
++							 APPLE_ALS_INT_CLR_REG,
++							 APPLE_ALS_INT_CLR_REG_VALUE);
++		case APPLE_ALS_INT_CLR_NONE:
++			return 0;
++		}
++	}
++
++	return i2c_smbus_write_byte(chip->client,
++				    TSL2583_CMD_REG | TSL2583_CMD_SPL_FN |
++				    TSL2583_CMD_ALS_INT_CLR);
++}
++
+ /*
+  * Reads and calculates current lux value.
+  * The raw ch0 and ch1 values of the ambient light sensed in the last
+@@ -179,8 +502,8 @@ static int tsl2583_get_lux(struct iio_dev *indio_dev)
+ 	}
+ 
+ 	/* is data new & valid */
+-	if (!(ret & TSL2583_STA_ADC_INTR)) {
+-		dev_err(&chip->client->dev, "%s: data not valid; returning last value\n",
++	if (!(ret & TSL2583_STA_ADC_VALID)) {
++		dev_dbg(&chip->client->dev, "%s: data not valid; returning last value\n",
+ 			__func__);
+ 		ret = chip->als_cur_info.lux; /* return LAST VALUE */
+ 		goto done;
+@@ -203,13 +526,21 @@ static int tsl2583_get_lux(struct iio_dev *indio_dev)
+ 	 * integration cycle to start. This has to be done even though this
+ 	 * driver currently does not support interrupts.
+ 	 */
+-	ret = i2c_smbus_write_byte(chip->client,
+-				   (TSL2583_CMD_REG | TSL2583_CMD_SPL_FN |
+-				    TSL2583_CMD_ALS_INT_CLR));
++	ret = tsl2583_clear_interrupt(chip);
+ 	if (ret < 0) {
+-		dev_err(&chip->client->dev, "%s: failed to clear the interrupt bit\n",
+-			__func__);
+-		goto done; /* have no data, so return failure */
++		/*
++		 * The CT819's clear is a guess (A2 in ds-als-hall.md): the counts
++		 * are already in hand, so keep them and say so once.
++		 */
++		if (tsl2583_is_ct819(chip)) {
++			dev_warn_once(&chip->client->dev,
++				      "%s: failed to clear the interrupt bit (%d)\n",
++				      __func__, ret);
++		} else {
++			dev_err(&chip->client->dev,
++				"%s: failed to clear the interrupt bit\n", __func__);
++			goto done; /* have no data, so return failure */
++		}
+ 	}
+ 
+ 	/* extract ALS/lux data */
+@@ -218,6 +549,12 @@ static int tsl2583_get_lux(struct iio_dev *indio_dev)
+ 
+ 	chip->als_cur_info.als_ch0 = ch0;
+ 	chip->als_cur_info.als_ch1 = ch1;
++	if (chip->info->apple) {
++		ret = apple_als_get_lux(chip, ch0, ch1);
++		if (ret >= 0)
++			chip->als_cur_info.lux = ret;
++		goto done;
++	}
+ 
+ 	if ((ch0 >= chip->als_saturation) || (ch1 >= chip->als_saturation))
+ 		goto return_max;
+@@ -247,11 +584,11 @@ static int tsl2583_get_lux(struct iio_dev *indio_dev)
+ 		u32 ch0lux, ch1lux;
+ 
+ 		ch0lux = ((ch0 * p->ch0) +
+-			  (gainadj[chip->als_settings.als_gain].ch0 >> 1))
+-			 / gainadj[chip->als_settings.als_gain].ch0;
++			  (chip->info->gainadj[chip->als_settings.als_gain].ch0 >> 1))
++			 / chip->info->gainadj[chip->als_settings.als_gain].ch0;
+ 		ch1lux = ((ch1 * p->ch1) +
+-			  (gainadj[chip->als_settings.als_gain].ch1 >> 1))
+-			 / gainadj[chip->als_settings.als_gain].ch1;
++			  (chip->info->gainadj[chip->als_settings.als_gain].ch1 >> 1))
++			 / chip->info->gainadj[chip->als_settings.als_gain].ch1;
+ 
+ 		/* note: lux is 31 bit max at this point */
+ 		if (ch1lux > ch0lux) {
+@@ -300,6 +637,16 @@ static int tsl2583_get_lux(struct iio_dev *indio_dev)
+ 	return ret;
+ }
+ 
++static int apple_als_get_lux(struct tsl2583_chip *chip, u16 ch0, u16 ch1)
++{
++	return apple_als_calc_lux(&chip->cal, chip->als_settings.als_gain,
++				  chip->integration_cycles,
++				  chip->info->integration_cycle_us,
++				  chip->info->counts_per_cycle,
++				  chip->als_settings.als_gain_trim,
++				  chip->info->lux_max, ch0, ch1);
++}
++
+ /*
+  * Obtain single reading and calculate the als_gain_trim (later used
+  * to derive actual lux).
+@@ -369,7 +716,12 @@ static int tsl2583_set_als_time(struct tsl2583_chip *chip)
+ 	u8 val;
+ 
+ 	/* determine als integration register */
+-	als_count = DIV_ROUND_CLOSEST(chip->als_settings.als_time * 100, 270);
++	if (chip->info->apple)
++		als_count = chip->als_settings.als_time * USEC_PER_MSEC /
++			    chip->info->integration_cycle_us;
++	else
++		als_count = DIV_ROUND_CLOSEST(chip->als_settings.als_time * 100,
++					      270);
+ 	if (!als_count)
+ 		als_count = 1; /* ensure at least one cycle */
+ 
+@@ -389,6 +741,8 @@ static int tsl2583_set_als_time(struct tsl2583_chip *chip)
+ 	/* set chip struct re scaling and saturation */
+ 	chip->als_saturation = als_count * 922; /* 90% of full scale */
+ 	chip->als_time_scale = DIV_ROUND_CLOSEST(als_time, 50);
++	if (chip->info->apple)
++		chip->integration_cycles = als_count;
+ 
+ 	return ret;
+ }
+@@ -399,7 +753,7 @@ static int tsl2583_set_als_gain(struct tsl2583_chip *chip)
+ 
+ 	/* Set the gain based on als_settings struct */
+ 	ret = i2c_smbus_write_byte_data(chip->client,
+-					TSL2583_CMD_REG | TSL2583_GAIN,
++					TSL2583_CMD_REG | chip->info->gain_reg,
+ 					chip->als_settings.als_gain);
+ 	if (ret < 0)
+ 		dev_err(&chip->client->dev,
+@@ -423,6 +777,41 @@ static int tsl2583_set_power_state(struct tsl2583_chip *chip, u8 state)
+ 	return ret;
+ }
+ 
++/*
++ * iOS never sets the POWER bit of CONTROL on the CT819, so whether the part
++ * keeps it is not known (docs/periph/ds-als-hall.md, A1). Read CONTROL back:
++ * the ADC enable must stick, the power bit is allowed not to, and what the
++ * part answered is logged once.
++ */
++static int apple_als_check_control(struct tsl2583_chip *chip, u8 written)
++{
++	const u8 mask = TSL2583_CNTL_ADC_ENBL | TSL2583_CNTL_PWR_ON;
++	int ret;
++
++	ret = i2c_smbus_read_byte_data(chip->client,
++				       TSL2583_CMD_REG | TSL2583_CNTRL);
++	if (ret < 0) {
++		dev_err(&chip->client->dev, "failed to read CONTROL back\n");
++		return ret;
++	}
++
++	if (!(ret & TSL2583_CNTL_ADC_ENBL)) {
++		dev_err(&chip->client->dev,
++			"ADC enable did not stick: CONTROL 0x%02x after writing 0x%02x\n",
++			ret, written);
++		return -EIO;
++	}
++
++	if ((ret & mask) != (written & mask))
++		dev_info_once(&chip->client->dev,
++			      "CONTROL reads 0x%02x after writing 0x%02x (power bit not kept)\n",
++			      ret, written);
++	else
++		dev_dbg(&chip->client->dev, "CONTROL 0x%02x\n", ret);
++
++	return 0;
++}
++
+ /*
+  * Turn the device on.
+  * Configuration must be set before calling this function.
+@@ -430,13 +819,33 @@ static int tsl2583_set_power_state(struct tsl2583_chip *chip, u8 state)
+ static int tsl2583_chip_init_and_power_on(struct iio_dev *indio_dev)
+ {
+ 	struct tsl2583_chip *chip = iio_priv(indio_dev);
++	u8 cntl;
+ 	int ret;
+ 
++	if (chip->info->apple)
++		chip->needs_reinit = true;
++
+ 	/* Power on the device; ADC off. */
+-	ret = tsl2583_set_power_state(chip, TSL2583_CNTL_PWR_ON);
++	ret = tsl2583_set_power_state(chip, chip->info->als_config ?
++				      TSL2583_CNTL_PWR_OFF : TSL2583_CNTL_PWR_ON);
+ 	if (ret < 0)
+ 		return ret;
+ 
++	if (chip->info->als_config) {
++		/* CT821 requires its analog frontend to be enabled before ADC use. */
++		ret = i2c_smbus_write_byte_data(chip->client,
++						TSL2583_CMD_REG | CT821_ALS_CONFIG,
++						CT821_ALS_CONFIG_ENABLE);
++		if (ret < 0)
++			return ret;
++
++		ret = i2c_smbus_write_byte_data(chip->client,
++						TSL2583_CMD_REG | CT821_ALS_CONFIG,
++						CT821_ALS_CONFIG_ENABLE);
++		if (ret < 0)
++			return ret;
++	}
++
+ 	ret = i2c_smbus_write_byte_data(chip->client,
+ 					TSL2583_CMD_REG | TSL2583_INTERRUPT,
+ 					TSL2583_INTERRUPT_DISABLED);
+@@ -456,8 +865,111 @@ static int tsl2583_chip_init_and_power_on(struct iio_dev *indio_dev)
+ 
+ 	usleep_range(3000, 3500);
+ 
+-	return tsl2583_set_power_state(chip,
+-				       TSL2583_CNTL_PWR_ON | TSL2583_CNTL_ADC_ENBL);
++	cntl = TSL2583_CNTL_ADC_ENBL | chip->info->cntl_enable;
++	if (!tsl2583_is_ct819(chip) || !READ_ONCE(apple_no_pwr_bit))
++		cntl |= TSL2583_CNTL_PWR_ON;
++	ret = tsl2583_set_power_state(chip, cntl);
++	if (ret < 0)
++		return ret;
++
++	if (tsl2583_is_ct819(chip)) {
++		ret = apple_als_check_control(chip, cntl);
++		if (ret < 0)
++			return ret;
++	}
++
++	if (chip->info->als_config) {
++		ret = tsl2583_set_als_time(chip);
++		if (ret < 0)
++			return ret;
++
++		ret = i2c_smbus_write_byte_data(chip->client,
++						TSL2583_CMD_REG | CT821_ALS_CONFIG,
++						CT821_ALS_CONFIG_ENABLE);
++		if (ret < 0)
++			return ret;
++	}
++
++	/* Account for the 2.7 ms integration-time granularity. */
++	msleep(chip->als_settings.als_time + 3);
++	chip->needs_reinit = false;
++
++	return ret;
++}
++
++static int apple_als_reconfigure(struct iio_dev *indio_dev, int als_time,
++				 int als_gain, bool *force_suspend)
++{
++	struct tsl2583_chip *chip = iio_priv(indio_dev);
++	int old_time = chip->als_settings.als_time;
++	int old_gain = chip->als_settings.als_gain;
++	int power_ret;
++	int restore_ret;
++	int ret;
++
++	chip->als_settings.als_time = als_time;
++	chip->als_settings.als_gain = als_gain;
++	ret = tsl2583_chip_init_and_power_on(indio_dev);
++	if (!ret)
++		return 0;
++
++	chip->als_settings.als_time = old_time;
++	chip->als_settings.als_gain = old_gain;
++	restore_ret = tsl2583_chip_init_and_power_on(indio_dev);
++	if (restore_ret) {
++		dev_err(&chip->client->dev,
++			"failed to restore configuration: %d\n", restore_ret);
++		power_ret = tsl2583_set_power_state(chip, TSL2583_CNTL_PWR_OFF);
++		if (power_ret)
++			dev_err(&chip->client->dev,
++				"failed to power off after restore failure: %d\n",
++				power_ret);
++		*force_suspend = true;
++	}
++
++	return ret;
++}
++
++static int tsl2583_reconfigure_gain(struct iio_dev *indio_dev, int gain,
++				    bool *force_suspend)
++{
++	struct tsl2583_chip *chip = iio_priv(indio_dev);
++	int old_gain;
++	int ret;
++
++	if (chip->info->apple)
++		return apple_als_reconfigure(indio_dev,
++					     chip->als_settings.als_time, gain,
++					     force_suspend);
++
++	old_gain = chip->als_settings.als_gain;
++	chip->als_settings.als_gain = gain;
++	ret = tsl2583_set_als_gain(chip);
++	if (ret < 0)
++		chip->als_settings.als_gain = old_gain;
++
++	return ret;
++}
++
++static int tsl2583_apply_time(struct iio_dev *indio_dev, int als_time,
++			      bool *force_suspend)
++{
++	struct tsl2583_chip *chip = iio_priv(indio_dev);
++	int old_time;
++	int ret;
++
++	if (chip->info->apple)
++		return apple_als_reconfigure(indio_dev, als_time,
++					     chip->als_settings.als_gain,
++					     force_suspend);
++
++	old_time = chip->als_settings.als_time;
++	chip->als_settings.als_time = als_time;
++	ret = tsl2583_set_als_time(chip);
++	if (ret < 0)
++		chip->als_settings.als_time = old_time;
++
++	return ret;
+ }
+ 
+ /* Sysfs Interface Functions */
+@@ -471,7 +983,7 @@ static ssize_t in_illuminance_input_target_show(struct device *dev,
+ 	int ret;
+ 
+ 	mutex_lock(&chip->als_mutex);
+-	ret = sysfs_emit(buf, "%d\n", chip->als_settings.als_cal_target);
++	ret = sprintf(buf, "%d\n", chip->als_settings.als_cal_target);
+ 	mutex_unlock(&chip->als_mutex);
+ 
+ 	return ret;
+@@ -529,10 +1041,10 @@ static ssize_t in_illuminance_lux_table_show(struct device *dev,
+ 	int offset = 0;
+ 
+ 	for (i = 0; i < ARRAY_SIZE(chip->als_settings.als_device_lux); i++) {
+-		offset += sysfs_emit_at(buf, offset, "%u,%u,%u,",
+-					chip->als_settings.als_device_lux[i].ratio,
+-					chip->als_settings.als_device_lux[i].ch0,
+-					chip->als_settings.als_device_lux[i].ch1);
++		offset += sprintf(buf + offset, "%u,%u,%u,",
++				  chip->als_settings.als_device_lux[i].ratio,
++				  chip->als_settings.als_device_lux[i].ch0,
++				  chip->als_settings.als_device_lux[i].ch1);
+ 		if (chip->als_settings.als_device_lux[i].ratio == 0) {
+ 			/*
+ 			 * We just printed the first "0" entry.
+@@ -543,7 +1055,7 @@ static ssize_t in_illuminance_lux_table_show(struct device *dev,
+ 		}
+ 	}
+ 
+-	offset += sysfs_emit_at(buf, offset, "\n");
++	offset += sprintf(buf + offset, "\n");
+ 
+ 	return offset;
+ }
+@@ -594,6 +1106,12 @@ static ssize_t in_illuminance_lux_table_store(struct device *dev,
+ }
+ 
+ static IIO_CONST_ATTR(in_illuminance_calibscale_available, "1 8 16 111");
++static IIO_CONST_ATTR_NAMED(in_illuminance_calibscale_available_ct819,
++			   in_illuminance_calibscale_available,
++			   "1 8 16 128");
++static IIO_CONST_ATTR_NAMED(in_illuminance_calibscale_available_ct821,
++			   in_illuminance_calibscale_available,
++			   "1 2 4 8 16 32 64 140");
+ static IIO_CONST_ATTR(in_illuminance_integration_time_available,
+ 		      "0.050 0.100 0.150 0.200 0.250 0.300 0.350 0.400 0.450 0.500 0.550 0.600 0.650");
+ static IIO_DEVICE_ATTR_RW(in_illuminance_input_target, 0);
+@@ -609,10 +1127,30 @@ static struct attribute *sysfs_attrs_ctrl[] = {
+ 	NULL
+ };
+ 
++static struct attribute *ct819_sysfs_attrs_ctrl[] = {
++	&iio_const_attr_in_illuminance_calibscale_available_ct819.dev_attr.attr,
++	&iio_const_attr_in_illuminance_integration_time_available.dev_attr.attr,
++	NULL
++};
++
++static struct attribute *ct821_sysfs_attrs_ctrl[] = {
++	&iio_const_attr_in_illuminance_calibscale_available_ct821.dev_attr.attr,
++	&iio_const_attr_in_illuminance_integration_time_available.dev_attr.attr,
++	NULL
++};
++
+ static const struct attribute_group tsl2583_attribute_group = {
+ 	.attrs = sysfs_attrs_ctrl,
+ };
+ 
++static const struct attribute_group ct819_attribute_group = {
++	.attrs = ct819_sysfs_attrs_ctrl,
++};
++
++static const struct attribute_group ct821_attribute_group = {
++	.attrs = ct821_sysfs_attrs_ctrl,
++};
++
+ static const struct iio_chan_spec tsl2583_channels[] = {
+ 	{
+ 		.type = IIO_LIGHT,
+@@ -635,19 +1173,50 @@ static const struct iio_chan_spec tsl2583_channels[] = {
+ 	},
+ };
+ 
++static int tsl2583_set_pm_runtime_busy(struct tsl2583_chip *chip, bool on)
++{
++	if (on)
++		return pm_runtime_resume_and_get(&chip->client->dev);
++
++	return pm_runtime_put_autosuspend(&chip->client->dev);
++}
++
++static void tsl2583_put_pm_after_error(struct tsl2583_chip *chip,
++				       bool force_suspend)
++{
++	int ret;
++
++	if (force_suspend)
++		ret = pm_runtime_put_sync_suspend(&chip->client->dev);
++	else
++		ret = tsl2583_set_pm_runtime_busy(chip, false);
++	if (ret < 0)
++		dev_err(&chip->client->dev,
++			"failed to release runtime PM after I/O error: %d\n", ret);
++}
++
+ static int tsl2583_read_raw(struct iio_dev *indio_dev,
+ 			    struct iio_chan_spec const *chan,
+ 			    int *val, int *val2, long mask)
+ {
+ 	struct tsl2583_chip *chip = iio_priv(indio_dev);
++	bool force_suspend = false;
+ 	int ret, pm_ret;
+ 
+-	ret = pm_runtime_resume_and_get(&chip->client->dev);
++	ret = tsl2583_set_pm_runtime_busy(chip, true);
+ 	if (ret < 0)
+ 		return ret;
+ 
+ 	mutex_lock(&chip->als_mutex);
+ 
++	if (chip->needs_reinit) {
++		ret = tsl2583_chip_init_and_power_on(indio_dev);
++		if (ret < 0) {
++			force_suspend = true;
++			goto read_done;
++		}
++	}
++
+ 	ret = -EINVAL;
+ 	switch (mask) {
+ 	case IIO_CHAN_INFO_RAW:
+@@ -691,14 +1260,14 @@ static int tsl2583_read_raw(struct iio_dev *indio_dev,
+ 		break;
+ 	case IIO_CHAN_INFO_CALIBSCALE:
+ 		if (chan->type == IIO_LIGHT) {
+-			*val = gainadj[chip->als_settings.als_gain].mean;
++			*val = chip->info->gainadj[chip->als_settings.als_gain].mean;
+ 			ret = IIO_VAL_INT;
+ 		}
+ 		break;
+ 	case IIO_CHAN_INFO_INT_TIME:
+ 		if (chan->type == IIO_LIGHT) {
+ 			*val = 0;
+-			*val2 = chip->als_settings.als_time;
++			*val2 = chip->als_settings.als_time * USEC_PER_MSEC;
+ 			ret = IIO_VAL_INT_PLUS_MICRO;
+ 		}
+ 		break;
+@@ -710,16 +1279,16 @@ static int tsl2583_read_raw(struct iio_dev *indio_dev,
+ 	mutex_unlock(&chip->als_mutex);
+ 
+ 	if (ret < 0) {
+-		pm_runtime_put_autosuspend(&chip->client->dev);
++		tsl2583_put_pm_after_error(chip, force_suspend);
+ 		return ret;
+ 	}
+ 
+ 	/*
+ 	 * Preserve the ret variable if the call to
+-	 * pm_runtime_put_autosuspend() is successful so the reading
++	 * tsl2583_set_pm_runtime_busy() is successful so the reading
+ 	 * (if applicable) is returned to user space.
+ 	 */
+-	pm_ret = pm_runtime_put_autosuspend(&chip->client->dev);
++	pm_ret = tsl2583_set_pm_runtime_busy(chip, false);
+ 	if (pm_ret < 0)
+ 		return pm_ret;
+ 
+@@ -731,18 +1300,27 @@ static int tsl2583_write_raw(struct iio_dev *indio_dev,
+ 			     int val, int val2, long mask)
+ {
+ 	struct tsl2583_chip *chip = iio_priv(indio_dev);
++	bool force_suspend = false;
+ 	int ret;
+ 
+-	ret = pm_runtime_resume_and_get(&chip->client->dev);
++	ret = tsl2583_set_pm_runtime_busy(chip, true);
+ 	if (ret < 0)
+ 		return ret;
+ 
+ 	mutex_lock(&chip->als_mutex);
+ 
++	if (chip->needs_reinit) {
++		ret = tsl2583_chip_init_and_power_on(indio_dev);
++		if (ret < 0) {
++			force_suspend = true;
++			goto write_done;
++		}
++	}
++
+ 	ret = -EINVAL;
+ 	switch (mask) {
+ 	case IIO_CHAN_INFO_CALIBBIAS:
+-		if (chan->type == IIO_LIGHT) {
++		if (chan->type == IIO_LIGHT && val >= 250 && val <= 4000) {
+ 			chip->als_settings.als_gain_trim = val;
+ 			ret = 0;
+ 		}
+@@ -751,38 +1329,41 @@ static int tsl2583_write_raw(struct iio_dev *indio_dev,
+ 		if (chan->type == IIO_LIGHT) {
+ 			unsigned int i;
+ 
+-			for (i = 0; i < ARRAY_SIZE(gainadj); i++) {
+-				if (gainadj[i].mean == val) {
+-					chip->als_settings.als_gain = i;
+-					ret = tsl2583_set_als_gain(chip);
++			for (i = 0; i < chip->info->num_gainadj; i++) {
++				if (chip->info->gainadj[i].mean == val) {
++					ret = tsl2583_reconfigure_gain(indio_dev, i,
++								       &force_suspend);
+ 					break;
+ 				}
+ 			}
+ 		}
+ 		break;
+ 	case IIO_CHAN_INFO_INT_TIME:
+-		if (chan->type == IIO_LIGHT && !val && val2 >= 50 &&
+-		    val2 <= 650 && !(val2 % 50)) {
+-			chip->als_settings.als_time = val2;
+-			ret = tsl2583_set_als_time(chip);
++		if (chan->type == IIO_LIGHT && !val &&
++		    val2 >= 50 * USEC_PER_MSEC &&
++		    val2 <= 650 * USEC_PER_MSEC &&
++		    !(val2 % (50 * USEC_PER_MSEC))) {
++			val2 /= USEC_PER_MSEC;
++			ret = tsl2583_apply_time(indio_dev, val2, &force_suspend);
+ 		}
+ 		break;
+ 	default:
+ 		break;
+ 	}
+ 
++write_done:
+ 	mutex_unlock(&chip->als_mutex);
+ 
+ 	if (ret < 0) {
+-		pm_runtime_put_autosuspend(&chip->client->dev);
++		tsl2583_put_pm_after_error(chip, force_suspend);
+ 		return ret;
+ 	}
+ 
+-	ret = pm_runtime_put_autosuspend(&chip->client->dev);
++	ret = tsl2583_set_pm_runtime_busy(chip, false);
+ 	if (ret < 0)
+ 		return ret;
+ 
+-	return 0;
++	return ret;
+ }
+ 
+ static const struct iio_info tsl2583_info = {
+@@ -791,6 +1372,75 @@ static const struct iio_info tsl2583_info = {
+ 	.write_raw = tsl2583_write_raw,
+ };
+ 
++static const struct iio_info ct819_iio_info = {
++	.attrs = &ct819_attribute_group,
++	.read_raw = tsl2583_read_raw,
++	.write_raw = tsl2583_write_raw,
++};
++
++static const struct iio_info ct821_iio_info = {
++	.attrs = &ct821_attribute_group,
++	.read_raw = tsl2583_read_raw,
++	.write_raw = tsl2583_write_raw,
++};
++
++static const struct tsl2583_chip_info tsl2583_chip_info = {
++	.gainadj = tsl2583_gainadj,
++	.num_gainadj = ARRAY_SIZE(tsl2583_gainadj),
++	.iio_info = &tsl2583_info,
++	.default_als_time = 100,
++	.default_als_gain = 0,
++	.gain_reg = TSL2583_GAIN,
++	.integration_cycle_us = TSL2583_INTEGRATION_CYCLE_US,
++};
++
++/*
++ * Apart from the LSCI calibration and the lux computation the CT819 behaves
++ * like a plain TSL2581: it keeps the gain in the TSL258x gain register,
++ * clears the ALS interrupt through the TSL258x special function and needs no
++ * extra control or analog frontend programming.
++ */
++static const struct tsl2583_chip_info ct819_chip_info = {
++	.gainadj = ct819_gainadj,
++	.num_gainadj = ARRAY_SIZE(ct819_gainadj),
++	.iio_info = &ct819_iio_info,
++	.default_als_time = 400,
++	.default_als_gain = 1,
++	.apple = true,
++	.gain_reg = TSL2583_GAIN,
++	.cal_version = 2,
++	.cal_record_size = CT819_CAL_RECORD_SIZE_V2,
++	.cal_record_len = CT819_CAL_RECORD_SIZE_V2,
++	.cal_gain_count = CT819_CAL_GAIN_COUNT,
++	.cal_ratio_off = CT819_CAL_RATIO_OFF,
++	.cal_ratio_scale = CT819_CAL_RATIO_SCALE,
++	.integration_cycle_us = TSL2583_INTEGRATION_CYCLE_US,
++	.counts_per_cycle = CT819_COUNTS_PER_CYCLE,
++	.lux_max = CT819_LUX_MAX,
++};
++
++static const struct tsl2583_chip_info ct821_chip_info = {
++	.gainadj = ct821_gainadj,
++	.num_gainadj = ARRAY_SIZE(ct821_gainadj),
++	.iio_info = &ct821_iio_info,
++	.default_als_time = 500,
++	.default_als_gain = 7,
++	.apple = true,
++	.gain_reg = CT821_GAIN,
++	.int_clr_data_cmd = CT821_CMD_ALS_INT_CLR,
++	.cntl_enable = CT821_CNTL_ENABLE,
++	.als_config = true,
++	.cal_version = 3,
++	.cal_record_size = CT821_CAL_RECORD_SIZE_V3,
++	.cal_record_len = CT821_CAL_RECORD_DATA_SIZE_V3,
++	.cal_gain_count = CT821_CAL_GAIN_COUNT,
++	.cal_gain_count_off = CT821_CAL_GAIN_COUNT_OFF,
++	.cal_ratio_off = CT821_CAL_RATIO_OFF,
++	.cal_ratio_scale = CT821_CAL_RATIO_SCALE,
++	.integration_cycle_us = CT821_INTEGRATION_CYCLE_US,
++	.lux_max = TSL2583_LUX_CALC_OVER_FLOW,
++};
++
+ static int tsl2583_probe(struct i2c_client *clientp)
+ {
+ 	int ret;
+@@ -810,6 +1460,9 @@ static int tsl2583_probe(struct i2c_client *clientp)
+ 
+ 	chip = iio_priv(indio_dev);
+ 	chip->client = clientp;
++	chip->info = device_get_match_data(&clientp->dev);
++	if (!chip->info)
++		chip->info = &tsl2583_chip_info;
+ 	i2c_set_clientdata(clientp, indio_dev);
+ 
+ 	mutex_init(&chip->als_mutex);
+@@ -828,12 +1481,20 @@ static int tsl2583_probe(struct i2c_client *clientp)
+ 		return -EINVAL;
+ 	}
+ 
+-	indio_dev->info = &tsl2583_info;
++	indio_dev->info = chip->info->iio_info;
+ 	indio_dev->channels = tsl2583_channels;
+ 	indio_dev->num_channels = ARRAY_SIZE(tsl2583_channels);
+ 	indio_dev->modes = INDIO_DIRECT_MODE;
+ 	indio_dev->name = chip->client->name;
+ 
++	/* Load defaults before exposing the IIO device to userspace. */
++	tsl2583_defaults(chip);
++	if (chip->info->apple) {
++		ret = apple_als_load_calibration(chip);
++		if (ret)
++			return ret;
++	}
++
+ 	pm_runtime_enable(&clientp->dev);
+ 	pm_runtime_set_autosuspend_delay(&clientp->dev,
+ 					 TSL2583_POWER_OFF_DELAY_MS);
+@@ -843,12 +1504,10 @@ static int tsl2583_probe(struct i2c_client *clientp)
+ 	if (ret) {
+ 		dev_err(&clientp->dev, "%s: iio registration failed\n",
+ 			__func__);
++		pm_runtime_disable(&clientp->dev);
+ 		return ret;
+ 	}
+ 
+-	/* Load up the V2 defaults (these are hard coded defaults for now) */
+-	tsl2583_defaults(chip);
+-
+ 	dev_info(&clientp->dev, "Light sensor found.\n");
+ 
+ 	return 0;
+@@ -909,9 +1568,11 @@ static const struct i2c_device_id tsl2583_idtable[] = {
+ MODULE_DEVICE_TABLE(i2c, tsl2583_idtable);
+ 
+ static const struct of_device_id tsl2583_of_match[] = {
+-	{ .compatible = "amstaos,tsl2580", },
+-	{ .compatible = "amstaos,tsl2581", },
+-	{ .compatible = "amstaos,tsl2583", },
++	{ .compatible = "apple,ct819", .data = &ct819_chip_info },
++	{ .compatible = "apple,ct821", .data = &ct821_chip_info },
++	{ .compatible = "amstaos,tsl2580", .data = &tsl2583_chip_info },
++	{ .compatible = "amstaos,tsl2581", .data = &tsl2583_chip_info },
++	{ .compatible = "amstaos,tsl2583", .data = &tsl2583_chip_info },
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(of, tsl2583_of_match);
+diff --git a/drivers/iio/light/tsl2583.h b/drivers/iio/light/tsl2583.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..949c5f7407d8a30d18c16f67255a038e71a1be11
+--- /dev/null
++++ b/drivers/iio/light/tsl2583.h
+@@ -0,0 +1,176 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++#ifndef _TSL2583_H
++#define _TSL2583_H
++
++#include <linux/errno.h>
++#include <linux/kernel.h>
++#include <linux/math64.h>
++#include <linux/overflow.h>
++#include <linux/time64.h>
++#include <linux/types.h>
++
++/*
++ * Fixed-point scale of the per-gain-step ratios in an Apple LSCI ambient-light
++ * calibration record. The record stores the sensitivity of one gain step
++ * relative to the previous one, so the factors have to be folded together.
++ */
++#define CT819_CAL_RATIO_SCALE 256
++#define CT821_CAL_RATIO_SCALE 255
++
++static inline int apple_als_calculate_gain_factor(u32 previous, u16 ratio,
++						  u32 scale, u32 *next)
++{
++	u64 value;
++
++	if (!previous || !ratio || !scale)
++		return -EINVAL;
++
++	value = DIV_ROUND_CLOSEST_ULL((u64)previous * ratio, scale);
++	if (!value || value > U32_MAX)
++		return -ERANGE;
++
++	*next = value;
++
++	return 0;
++}
++
++/* Largest lux value any of the parts reports */
++#define TSL2583_LUX_CALC_OVER_FLOW	65535
++
++/*
++ * Apple pairs the TSL258x register interface with its own factory LSCI
++ * calibration record. The record layout is versioned; every version shares
++ * the same 8 byte header and the same fixed-point scale for the lux
++ * coefficients, but differs in the record size and in the number of
++ * calibrated gain steps.
++ */
++#define APPLE_ALS_CAL_SCALE		65536
++#define APPLE_ALS_LUX_FUDGE_SCALE	255
++#define APPLE_ALS_MAX_GAIN_COUNT	8
++
++/* ADC counts per integration cycle of the CT819 (a TSL2581 clone) */
++#define CT819_COUNTS_PER_CYCLE		1024
++
++struct apple_als_calibration {
++	u16 lux_fudge;
++	u16 integration_time;
++	u8 gain;
++	s32 a_coeff1;
++	s32 b_coeff1;
++	s32 upper_range;
++	s32 a_coeff2;
++	s32 b_coeff2;
++	u8 ch0_dark_counts;
++	u8 ch1_dark_counts;
++	u32 gain_factor[APPLE_ALS_MAX_GAIN_COUNT][2];
++};
++
++/*
++ * Scale a raw channel reading back to the integration time and gain the
++ * factory calibration was taken at.
++ */
++static inline int apple_als_normalize_counts(const struct apple_als_calibration *cal,
++					     unsigned int gain_index, u32 cycles,
++					     u32 cycle_us, u16 raw, int channel,
++					     u32 *normalized)
++{
++	u64 value;
++	u32 calibration_gain;
++	u32 current_gain;
++	u32 calibration_cycles;
++
++	if (!cycle_us || gain_index >= APPLE_ALS_MAX_GAIN_COUNT)
++		return -EINVAL;
++
++	calibration_cycles = cal->integration_time * USEC_PER_MSEC / cycle_us;
++	current_gain = cal->gain_factor[gain_index][channel];
++	calibration_gain = cal->gain_factor[cal->gain][channel];
++	if (!calibration_cycles || !cycles || !current_gain || !calibration_gain)
++		return -EINVAL;
++
++	value = (u64)raw * calibration_cycles * calibration_gain;
++	value = DIV_ROUND_CLOSEST_ULL(value, (u64)cycles * current_gain);
++	*normalized = min_t(u64, value, U32_MAX);
++
++	return 0;
++}
++
++/**
++ * apple_als_calc_lux - lux from raw ADC counts and an Apple LSCI record
++ * @cal:	parsed calibration record
++ * @gain_index:	gain step the counts were taken at
++ * @cycles:	integration cycles the counts were taken over
++ * @cycle_us:	length of one integration cycle
++ * @counts_per_cycle: the ADC's counts per cycle, 0 if only 16 bits limit it
++ * @trim:	user gain trim, 1000 is unity
++ * @lux_max:	the largest value to report; a saturated channel reports it
++ * @ch0:	counts of the visible + infrared channel
++ * @ch1:	counts of the infrared channel
++ *
++ * The counts are first scaled to the record's reference integration time and
++ * gain and the dark counts are taken off. Then lux is the two-segment
++ * a * ch0 - b * ch1 curve (coefficients in Q16), times fudge / 255. A channel
++ * at its ADC limit (@counts_per_cycle per cycle, 16 bits at most) is clipped,
++ * so its ratio is meaningless: report @lux_max.
++ *
++ * Return: lux, or a negative error for a record or setting that can't be used.
++ */
++static inline int apple_als_calc_lux(const struct apple_als_calibration *cal,
++				     unsigned int gain_index, u32 cycles,
++				     u32 cycle_us, u32 counts_per_cycle, u32 trim,
++				     u32 lux_max, u16 ch0, u16 ch1)
++{
++	s64 lux_scaled;
++	s32 a_coeff;
++	s32 b_coeff;
++	u64 lux;
++	u32 norm_ch0;
++	u32 norm_ch1;
++	u32 saturation;
++
++	if (!cycles)
++		return -EINVAL;
++
++	saturation = U16_MAX;
++	if (counts_per_cycle)
++		saturation = min_t(u32, saturation, counts_per_cycle * cycles - 1);
++	if (ch0 >= saturation || ch1 >= saturation)
++		return lux_max;
++
++	if (apple_als_normalize_counts(cal, gain_index, cycles, cycle_us, ch0, 0,
++				       &norm_ch0) ||
++	    apple_als_normalize_counts(cal, gain_index, cycles, cycle_us, ch1, 1,
++				       &norm_ch1))
++		return -EINVAL;
++	norm_ch0 = max_t(u32, norm_ch0, cal->ch0_dark_counts) -
++		   cal->ch0_dark_counts;
++	norm_ch1 = max_t(u32, norm_ch1, cal->ch1_dark_counts) -
++		   cal->ch1_dark_counts;
++
++	if (!norm_ch0)
++		return 0;
++
++	if ((u64)norm_ch1 * APPLE_ALS_CAL_SCALE <=
++	    (u64)norm_ch0 * cal->upper_range) {
++		a_coeff = cal->a_coeff1;
++		b_coeff = cal->b_coeff1;
++	} else {
++		a_coeff = cal->a_coeff2;
++		b_coeff = cal->b_coeff2;
++	}
++
++	lux_scaled = (s64)norm_ch0 * a_coeff - (s64)norm_ch1 * b_coeff;
++	if (lux_scaled <= 0)
++		return 0;
++
++	if (check_mul_overflow((u64)lux_scaled, (u64)cal->lux_fudge, &lux))
++		return lux_max;
++	lux = div_u64(lux, APPLE_ALS_CAL_SCALE * APPLE_ALS_LUX_FUDGE_SCALE);
++	if (check_mul_overflow(lux, (u64)trim, &lux))
++		return lux_max;
++	lux = div_u64(lux, 1000);
++
++	return min_t(u64, lux, lux_max);
++}
++
++#endif /* _TSL2583_H */
+diff --git a/drivers/pinctrl/pinctrl-apple-gpio.c b/drivers/pinctrl/pinctrl-apple-gpio.c
+index 6305b96aaa7331a17bffa1daecacb0404d521346..7b21d5014d8df4791d7ed11977ab2e65f2654531 100644
+--- a/drivers/pinctrl/pinctrl-apple-gpio.c
++++ b/drivers/pinctrl/pinctrl-apple-gpio.c
+@@ -19,6 +19,7 @@
+ #include <linux/irq.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
++#include <linux/of_fdt.h>
+ #include <linux/of_irq.h>
+ #include <linux/platform_device.h>
+ #include <linux/regmap.h>
+@@ -30,12 +31,18 @@
+ #include "core.h"
+ #include "pinmux.h"
+ 
++struct apple_gpio_soc_data {
++	bool s8000_mux;
++};
++
+ struct apple_gpio_pinctrl {
+ 	struct device *dev;
+ 	struct pinctrl_dev *pctldev;
++	const struct apple_gpio_soc_data *soc;
+ 
+ 	void __iomem *base;
+ 	struct regmap *map;
++	bool warm;
+ 
+ 	struct pinctrl_desc pinctrl_desc;
+ 	struct gpio_chip gpio_chip;
+@@ -182,9 +189,22 @@ static int apple_gpio_pinmux_set(struct pinctrl_dev *pctldev, unsigned int func,
+ {
+ 	struct apple_gpio_pinctrl *pctl = pinctrl_dev_get_drvdata(pctldev);
+ 
+-	apple_gpio_set_reg(
+-		pctl, group, REG_GPIOx_PERIPH | REG_GPIOx_INPUT_ENABLE,
+-		FIELD_PREP(REG_GPIOx_PERIPH, func) | REG_GPIOx_INPUT_ENABLE);
++	u32 mask = REG_GPIOx_PERIPH | REG_GPIOx_INPUT_ENABLE;
++	u32 value = FIELD_PREP(REG_GPIOx_PERIPH, func) | REG_GPIOx_INPUT_ENABLE;
++
++	/* S8000 GPIO platform-function modes, verified in its iOS driver:
++	 * peripheral routing clears bit 4; GPIO mux selects output mode.
++	 * This reproduces the N1 display-sync on/off states without changing
++	 * the generic/M1 register semantics or the pin data/pull fields.
++	 */
++	if (pctl->soc && pctl->soc->s8000_mux) {
++		mask |= BIT(4);
++		if (!func) {
++			mask |= REG_GPIOx_MODE;
++			value |= FIELD_PREP(REG_GPIOx_MODE, REG_GPIOx_OUT);
++		}
++	}
++	apple_gpio_set_reg(pctl, group, mask, value);
+ 
+ 	return 0;
+ }
+@@ -354,8 +374,33 @@ static void apple_gpio_irq_handler(struct irq_desc *desc)
+ 	chained_irq_enter(chip, desc);
+ 	for (pinh = 0; pinh < gc->ngpio; pinh += 32) {
+ 		pending = readl_relaxed(pctl->base + REG_IRQ(*grpp, pinh));
+-		for_each_set_bit(pinl, &pending, 32)
+-			generic_handle_domain_irq(gc->irq.domain, pinh + pinl);
++		for_each_set_bit(pinl, &pending, 32) {
++			unsigned int pin = pinh + pinl;
++			int ret;
++
++			ret = pin < gc->ngpio ?
++				generic_handle_domain_irq(gc->irq.domain, pin) : -EINVAL;
++			if (ret && pctl->warm) {
++				/* An inherited, unmapped source has nobody to ack it.
++				 * Mask only this GPIO, then clear this group's latch.
++				 */
++				if (pin < gc->ngpio) {
++					u32 reg = apple_gpio_get_reg(pctl, pin);
++					u32 mode = FIELD_GET(REG_GPIOx_MODE, reg);
++					u32 off = FIELD_PREP(REG_GPIOx_MODE,
++							     REG_GPIOx_IN_IRQ_OFF);
++
++					if (!(reg & REG_GPIOx_PERIPH) &&
++					    mode >= REG_GPIOx_IN_IRQ_HI &&
++					    mode <= REG_GPIOx_IN_IRQ_ANY)
++						apple_gpio_set_reg(pctl, pin, REG_GPIOx_MODE, off);
++				}
++				writel(BIT(pinl), pctl->base + REG_IRQ(*grpp, pinh));
++				dev_warn_ratelimited(pctl->dev,
++						     "masked orphan warm GPIO IRQ group=%u pin=%u\n",
++						     *grpp, pin);
++			}
++		}
+ 	}
+ 	chained_irq_exit(chip, desc);
+ }
+@@ -367,12 +412,46 @@ static const struct irq_chip apple_gpio_irqchip = {
+ 	.irq_mask		= apple_gpio_irq_mask,
+ 	.irq_unmask		= apple_gpio_irq_unmask,
+ 	.irq_set_type		= apple_gpio_irq_set_type,
+-	.flags			= IRQCHIP_IMMUTABLE,
++	/*
++	 * Nothing to arm: the bank interrupts are chained to the AIC, which
++	 * stays up in suspend-to-idle, and any of them wakes the CPU. Without
++	 * this, enable_irq_wake() fails and so does gpio-keys' suspend.
++	 */
++	.flags			= IRQCHIP_IMMUTABLE | IRQCHIP_SKIP_SET_WAKE,
+ 	GPIOCHIP_IRQ_RESOURCE_HELPERS,
+ };
+ 
+ /* Probe & register */
+ 
++static void apple_gpio_warm_quiesce(struct apple_gpio_pinctrl *pctl)
++{
++	struct gpio_chip *gc = &pctl->gpio_chip;
++	unsigned int pin, group, mode, masked = 0;
++	u32 reg;
++
++	if (!pctl->warm)
++		return;
++	/* Before chained parent IRQs are enabled, retire old GPIO IRQ modes.
++	 * Preserve outputs, mux, pulls, data and grouping. Consumers rearm their
++	 * own pins later; panic entry need not have run any shutdown callbacks.
++	 */
++	for (pin = 0; pin < gc->ngpio; pin++) {
++		reg = apple_gpio_get_reg(pctl, pin);
++		mode = FIELD_GET(REG_GPIOx_MODE, reg);
++		if (!(reg & REG_GPIOx_PERIPH) && mode >= REG_GPIOx_IN_IRQ_HI &&
++		    mode <= REG_GPIOx_IN_IRQ_ANY) {
++			apple_gpio_set_reg(pctl, pin, REG_GPIOx_MODE,
++					   FIELD_PREP(REG_GPIOx_MODE, REG_GPIOx_IN_IRQ_OFF));
++			masked++;
++		}
++	}
++	for (group = 0; group < gc->irq.num_parents; group++)
++		for (pin = 0; pin < gc->ngpio; pin += 32)
++			writel(GENMASK(min(32U, gc->ngpio - pin) - 1, 0),
++			       pctl->base + REG_IRQ(group, pin));
++	dev_info(pctl->dev, "warm GPIO IRQ baseline: masked %u inherited inputs\n", masked);
++}
++
+ static int apple_gpio_register(struct apple_gpio_pinctrl *pctl)
+ {
+ 	struct gpio_irq_chip *girq = &pctl->gpio_chip.irq;
+@@ -422,6 +501,7 @@ static int apple_gpio_register(struct apple_gpio_pinctrl *pctl)
+ 		girq->handler = handle_level_irq;
+ 	}
+ 
++	apple_gpio_warm_quiesce(pctl);
+ 	ret = devm_gpiochip_add_data(pctl->dev, &pctl->gpio_chip, pctl);
+ 
+ out_free_irq_data:
+@@ -455,6 +535,9 @@ static int apple_gpio_pinctrl_probe(struct platform_device *pdev)
+ 	if (!pctl)
+ 		return -ENOMEM;
+ 	pctl->dev = &pdev->dev;
++	pctl->warm = of_machine_is_compatible("apple,j71t") &&
++		of_property_read_bool(of_chosen, "linux,booted-from-kexec");
++	pctl->soc = of_device_get_match_data(&pdev->dev);
+ 	pctl->gpio_chip.irq.num_parents = nirqs;
+ 	dev_set_drvdata(&pdev->dev, pctl);
+ 
+@@ -521,7 +604,12 @@ static int apple_gpio_pinctrl_probe(struct platform_device *pdev)
+ 	return apple_gpio_register(pctl);
+ }
+ 
++static const struct apple_gpio_soc_data s8000_gpio_data = {
++	.s8000_mux = true,
++};
++
+ static const struct of_device_id apple_gpio_pinctrl_of_match[] = {
++	{ .compatible = "apple,s8000-pinctrl", .data = &s8000_gpio_data },
+ 	{ .compatible = "apple,t8103-pinctrl", },
+ 	{ .compatible = "apple,pinctrl", },
+ 	{ }
+diff --git a/drivers/video/backlight/apple_dwi_bl.c b/drivers/video/backlight/apple_dwi_bl.c
+index 93bd744972d60adcb564c91908f7d81d057d5c3c..0422e396cdb93b13500e4ed34285f265a22f5e9a 100644
+--- a/drivers/video/backlight/apple_dwi_bl.c
++++ b/drivers/video/backlight/apple_dwi_bl.c
+@@ -9,7 +9,11 @@
+ #include <linux/bitfield.h>
+ #include <linux/device.h>
+ #include <linux/io.h>
++#include <linux/iopoll.h>
+ #include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/of.h>
++#include <linux/pm.h>
+ #include <linux/platform_device.h>
+ 
+ #define DWI_BL_CTL			0x0
+@@ -34,24 +38,64 @@
+ #define DWI_BL_MAX_BRIGHTNESS		2047
+ 
+ struct apple_dwi_bl {
++	struct device *dev;
+ 	void __iomem *base;
++	void __iomem *block;
++	/* Serialize block initialization and brightness transactions. */
++	struct mutex lock;
+ };
+ 
++static int dwi_bl_wait(struct apple_dwi_bl *dwi_bl)
++{
++	u32 value;
++	int ret;
++
++	ret = readl_poll_timeout(dwi_bl->base + DWI_BL_CTL, value,
++				 !(value & DWI_BL_CTL_SEND1), 10, 1000);
++	if (ret)
++		dev_err_ratelimited(dwi_bl->dev, "DWI busy timeout: %#x\n", value);
++	return ret;
++}
++
++/* AppleS8000DWI::start(), J71t nclk=1, polarity=1, STR=8000, lockout=5. */
++static int dwi_bl_init(struct apple_dwi_bl *dwi_bl)
++{
++	int ret;
++
++	if (!dwi_bl->block)
++		return 0;
++
++	mutex_lock(&dwi_bl->lock);
++	writel(0x00000001, dwi_bl->block + 0x00);
++	writel(0x0002ee00, dwi_bl->block + 0xd0);
++	writel(0x00000078, dwi_bl->block + 0x04);
++	writel(0, dwi_bl->block + 0x84);
++	writel(0x41, dwi_bl->block + 0x80);
++	ret = dwi_bl_wait(dwi_bl);
++	mutex_unlock(&dwi_bl->lock);
++	if (!ret)
++		dev_info(dwi_bl->dev, "DWI block initialized (1 ms transaction bound)\n");
++	return ret;
++}
++
+ static int dwi_bl_update_status(struct backlight_device *bl)
+ {
+ 	struct apple_dwi_bl *dwi_bl = bl_get_data(bl);
+-
+ 	int brightness = backlight_get_brightness(bl);
+-
+ 	u32 cmd = 0;
++	int ret;
+ 
+ 	cmd |= FIELD_PREP(DWI_BL_CMD_DATA, brightness);
+ 	cmd |= FIELD_PREP(DWI_BL_CMD_TYPE, DWI_BL_CMD_TYPE_SET_BRIGHTNESS);
+ 
+-	writel(cmd, dwi_bl->base + DWI_BL_CMD);
+-	writel(DWI_BL_CTL_SEND, dwi_bl->base + DWI_BL_CTL);
+-
+-	return 0;
++	mutex_lock(&dwi_bl->lock);
++	ret = dwi_bl_wait(dwi_bl);
++	if (!ret) {
++		writel(cmd, dwi_bl->base + DWI_BL_CMD);
++		writel(DWI_BL_CTL_SEND, dwi_bl->base + DWI_BL_CTL);
++	}
++	mutex_unlock(&dwi_bl->lock);
++	return ret;
+ }
+ 
+ static int dwi_bl_get_brightness(struct backlight_device *bl)
+@@ -75,6 +119,7 @@ static int dwi_bl_probe(struct platform_device *dev)
+ 	struct backlight_device *bl;
+ 	struct backlight_properties props;
+ 	struct resource *res;
++	int brightness, ret;
+ 
+ 	dwi_bl = devm_kzalloc(&dev->dev, sizeof(*dwi_bl), GFP_KERNEL);
+ 	if (!dwi_bl)
+@@ -84,6 +129,25 @@ static int dwi_bl_probe(struct platform_device *dev)
+ 	if (IS_ERR(dwi_bl->base))
+ 		return PTR_ERR(dwi_bl->base);
+ 
++	dwi_bl->dev = &dev->dev;
++	mutex_init(&dwi_bl->lock);
++	if (of_device_is_compatible(dev->dev.of_node, "apple,s8000-dwi-bl")) {
++		if (resource_size(res) >= 0xd4) {
++			/* The recovered boot words are specific to this board. */
++			if (of_machine_is_compatible("apple,j71t"))
++				dwi_bl->block = dwi_bl->base;
++			dwi_bl->base += 0x80;
++		} else {
++			dev_warn(&dev->dev, "legacy DWI window: block resume init unavailable\n");
++		}
++	}
++	/* Preserve the boot brightness before the init transaction clears DATA. */
++	brightness = FIELD_GET(DWI_BL_CMD_DATA,
++			       readl(dwi_bl->base + DWI_BL_CMD));
++	ret = dwi_bl_init(dwi_bl);
++	if (ret)
++		return ret;
++
+ 	memset(&props, 0, sizeof(struct backlight_properties));
+ 	props.type = BACKLIGHT_PLATFORM;
+ 	props.max_brightness = DWI_BL_MAX_BRIGHTNESS;
+@@ -96,11 +160,19 @@ static int dwi_bl_probe(struct platform_device *dev)
+ 
+ 	platform_set_drvdata(dev, dwi_bl);
+ 
+-	bl->props.brightness = dwi_bl_get_brightness(bl);
++	bl->props.brightness = brightness;
+ 
+-	return 0;
++	return backlight_update_status(bl);
+ }
+ 
++/* The backlight class child restores brightness after this parent resumes. */
++static int dwi_bl_resume(struct device *dev)
++{
++	return dwi_bl_init(dev_get_drvdata(dev));
++}
++
++static DEFINE_SIMPLE_DEV_PM_OPS(dwi_bl_pm_ops, NULL, dwi_bl_resume);
++
+ static const struct of_device_id dwi_bl_of_match[] = {
+ 	{ .compatible = "apple,dwi-bl" },
+ 	{},
+@@ -111,6 +183,7 @@ MODULE_DEVICE_TABLE(of, dwi_bl_of_match);
+ static struct platform_driver dwi_bl_driver = {
+ 	.driver		= {
+ 		.name	= "apple-dwi-bl",
++		.pm = pm_sleep_ptr(&dwi_bl_pm_ops),
+ 		.of_match_table = dwi_bl_of_match
+ 	},
+ 	.probe		= dwi_bl_probe,

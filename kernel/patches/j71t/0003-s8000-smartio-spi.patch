@@ -1,0 +1,2607 @@
+S8000 SmartIO, SIO DMA and SPI
+
+Generated from linux-a9 a9/release 9dbc8612b3b0 by scripts/orchard/j71t-series.py.
+
+diff --git a/Documentation/devicetree/bindings/dma/apple,sio.yaml b/Documentation/devicetree/bindings/dma/apple,sio.yaml
+new file mode 100644
+index 0000000000000000000000000000000000000000..9595e6df2443e5ae912a83279dd5bee36d06ee8a
+--- /dev/null
++++ b/Documentation/devicetree/bindings/dma/apple,sio.yaml
+@@ -0,0 +1,107 @@
++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/dma/apple,sio.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: Apple S8000/T8010 SmartIO coprocessor and DMA controller
++
++description: |
++  The S8000 (A9) and T8010 (A10) SmartIO coprocessor provides DMA channels
++  for peripheral controllers. The application processor boots the SmartIO firmware and
++  submits DMA commands through the SIO message queues. Clients select the
++  firmware endpoint number used by their peripheral.
++
++maintainers:
++  - Paul Praschl <praschlpaul@g-p.at>
++
++allOf:
++  - $ref: dma-controller.yaml#
++
++properties:
++  compatible:
++    enum:
++      - apple,s8000-sio
++      - apple,t8010-sio
++
++  reg:
++    items:
++      - description: AppleA7IOPV2 coprocessor and message queue registers
++      - description: SmartIO DMA shim registers
++
++  reg-names:
++    items:
++      - const: a7iop
++      - const: shim
++
++  interrupts:
++    minItems: 4
++    maxItems: 4
++    description:
++      The four interrupt outputs described by the T8010 SIO device tree node.
++
++  power-domains:
++    maxItems: 1
++
++  resets:
++    maxItems: 1
++    description:
++      Power-state reset, used if the coprocessor is found already running.
++
++  apple,dma-endpoints:
++    $ref: /schemas/types.yaml#/definitions/uint32-array
++    maxItems: 130
++    items:
++      maximum: 0x81
++    description:
++      Firmware endpoints exposed as DMA channels. Defaults to the SPI, MCA
++      and UART transmit and receive endpoints.
++
++  firmware-name:
++    maxItems: 1
++
++  dma-channels:
++    const: 64
++
++  '#dma-cells':
++    const: 1
++    description:
++      Clients specify the SmartIO DMA endpoint number, for example 0x1a for
++      SPI3 transmit, 0x1b for SPI3 receive or 0x28 for MCA0 transmit.
++
++required:
++  - compatible
++  - reg
++  - reg-names
++  - interrupts
++  - power-domains
++  - firmware-name
++  - dma-channels
++  - '#dma-cells'
++
++additionalProperties: false
++
++examples:
++  - |
++    #include <dt-bindings/interrupt-controller/apple-aic.h>
++    #include <dt-bindings/interrupt-controller/irq.h>
++
++    soc {
++      #address-cells = <2>;
++      #size-cells = <2>;
++
++      sio: dma-controller@20ae00000 {
++        compatible = "apple,t8010-sio";
++        reg = <0x2 0x0ae00000 0x0 0x10000>,
++              <0x2 0x0a000000 0x0 0x2000>;
++        reg-names = "a7iop", "shim";
++        interrupts = <AIC_IRQ 211 IRQ_TYPE_LEVEL_HIGH>,
++                     <AIC_IRQ 210 IRQ_TYPE_LEVEL_HIGH>,
++                     <AIC_IRQ 213 IRQ_TYPE_LEVEL_HIGH>,
++                     <AIC_IRQ 212 IRQ_TYPE_LEVEL_HIGH>;
++        power-domains = <&ps_sio>;
++        firmware-name = "apple/t8010-smartio.bin";
++        dma-channels = <64>;
++        #dma-cells = <1>;
++      };
++    };
+diff --git a/drivers/dma/Kconfig b/drivers/dma/Kconfig
+index ae6a682c9f769fe3de5501d440815616c54c3f9b..08abece22599634050ae6b02daaf94d2fd471771 100644
+--- a/drivers/dma/Kconfig
++++ b/drivers/dma/Kconfig
+@@ -92,6 +92,17 @@ config APPLE_ADMAC
+ 	help
+ 	  Enable support for Audio DMA Controller found on Apple Silicon SoCs.
+ 
++config APPLE_SIO_DMA
++	tristate "Apple S8000/T8010 SmartIO DMA support"
++	depends on APPLE_SIO
++	select DMA_ENGINE
++	select DMA_VIRTUAL_CHANNELS
++	help
++	  Enable support for the DMA service provided by the SmartIO
++	  coprocessor on Apple S8000/S8003 and T8010 SoCs: one channel per
++	  firmware endpoint (SPI, MCA audio, UART), slave scatter-gather and
++	  cyclic transfers, submitted through the SmartIO endpoint protocol.
++
+ config ARM_DMA350
+ 	tristate "Arm DMA-350 support"
+ 	depends on ARM || ARM64 || COMPILE_TEST
+diff --git a/drivers/dma/Makefile b/drivers/dma/Makefile
+index 14aa086629d5c779ed9f79d6312b47457e167458..1d4c09964d310bd9f40052c5cda4ebc035d98371 100644
+--- a/drivers/dma/Makefile
++++ b/drivers/dma/Makefile
+@@ -17,6 +17,7 @@ obj-$(CONFIG_ALTERA_MSGDMA) += altera-msgdma.o
+ obj-$(CONFIG_AMBA_PL08X) += amba-pl08x.o
+ obj-$(CONFIG_AMCC_PPC440SPE_ADMA) += ppc4xx/
+ obj-$(CONFIG_APPLE_ADMAC) += apple-admac.o
++obj-$(CONFIG_APPLE_SIO_DMA) += apple-sio-dma.o
+ obj-$(CONFIG_ARM_DMA350) += arm-dma350.o
+ obj-$(CONFIG_AT_HDMAC) += at_hdmac.o
+ obj-$(CONFIG_AT_XDMAC) += at_xdmac.o
+diff --git a/drivers/dma/apple-sio-dma.c b/drivers/dma/apple-sio-dma.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..6e64257c3069404ab9f60ededbb10f7c15e14539
+--- /dev/null
++++ b/drivers/dma/apple-sio-dma.c
+@@ -0,0 +1,866 @@
++// SPDX-License-Identifier: GPL-2.0-only OR MIT
++/*
++ * Apple SmartIO DMA controller (S8000/T8010)
++ *
++ * Copyright (C) 2026 Paul Praschl
++ * Multiple endpoints, cyclic transfers and stop handling: linux-a9
++ *
++ * Every DMA channel is a SmartIO firmware endpoint (0x1a SPI3 TX, 0x28 MCA0
++ * TX, ...). The protocol, as iOS 16.7.10's AppleSmartIODMA drives it:
++ *
++ *   op 5 configure  data = descriptor slot holding the shim record
++ *                   (struct apple_sio_dma_config); ack 0x65
++ *   op 6 submit     data = first slot of a transfer: 6 header slots (word 14
++ *                   flags, word 15 segment count), then one {addr lo,
++ *                   addr hi, length} slot per segment. Ack 0x65, later an
++ *                   async 0x68 with parameter bit 7, the same tag and
++ *                   data = bytes moved. Commands complete in submit order;
++ *                   several may be queued per endpoint.
++ *   op 8 stop       ack 0x65; every queued command then completes (0x68)
++ *   0x68 without parameter bit 7: channel idle; 0x66: async error
++ *
++ * A cyclic transfer queues one command per period and resubmits a period as
++ * soon as it completes, so the firmware always has the rest of the ring
++ * queued. All firmware communication happens in work items with bounded
++ * timeouts; a dead coprocessor stalls the stream, never the caller.
++ */
++#include <linux/bitfield.h>
++#include <linux/delay.h>
++#include <linux/dmaengine.h>
++#include <linux/dma-mapping.h>
++#include <linux/err.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/of_dma.h>
++#include <linux/platform_device.h>
++#include <linux/scatterlist.h>
++#include <linux/sizes.h>
++#include <linux/slab.h>
++#include <linux/soc/apple/sio.h>
++#include <linux/workqueue.h>
++
++#include "virt-dma.h"
++
++#define SIO_DMA_OP_CONFIGURE		0x05
++#define SIO_DMA_OP_SUBMIT		0x06
++#define SIO_DMA_OP_STOP			0x08
++#define SIO_DMA_OP_ACK			0x65
++#define SIO_DMA_OP_ASYNC_ERROR		0x66
++#define SIO_DMA_OP_COMPLETE		0x68
++
++#define SIO_DMA_MSG_OPCODE		GENMASK_ULL(23, 16)
++#define SIO_DMA_MSG_PARAMETER		GENMASK_ULL(31, 24)
++#define SIO_DMA_MSG_DATA		GENMASK_ULL(63, 32)
++
++#define SIO_DMA_SLOT_WORDS		3
++#define SIO_DMA_HDR_SLOTS		6
++#define SIO_DMA_HDR_FLAGS		14	/* word: kIOMemoryRemote, 0 */
++#define SIO_DMA_HDR_SEGMENTS		15	/* word: segment count */
++#define SIO_DMA_CFG_SLOTS		8
++#define SIO_DMA_SEG_BOUNDARY		SZ_4K	/* iOS splits at pages */
++#define SIO_DMA_MAX_SEGMENTS		(0x0aaa - SIO_DMA_HDR_SLOTS)
++#define SIO_DMA_MAX_PERIODS		16	/* < 31 tags per endpoint */
++
++#define SIO_DMA_CONFIG_TIMEOUT_MS	1000
++#define SIO_DMA_STOP_TIMEOUT_MS		200
++#define SIO_DMA_DRAIN_TIMEOUT_MS	500
++#define SIO_DMA_SUBMIT_RETRIES		3
++
++struct sio_dma_desc;
++
++struct sio_dma_block {
++	struct sio_dma_desc *desc;
++	u32 first_slot;
++	unsigned int slots;
++	size_t len;
++	bool queued;		/* submitted, completion pending */
++};
++
++struct sio_dma_desc {
++	struct virt_dma_desc vd;
++	struct sio_dma_chan *chan;
++	bool cyclic;
++	unsigned int next;	/* next block to submit */
++	unsigned long done;	/* completed blocks */
++	unsigned int nblocks;
++	size_t total;
++	int status;
++	struct sio_dma_block blocks[] __counted_by(nblocks);
++};
++
++struct sio_dma_chan {
++	struct virt_dma_chan vc;
++	struct sio_dma *host;
++	u8 endpoint;
++	struct apple_sio_dma_config cfg;
++	bool cfg_dirty;
++	struct sio_dma_desc *active;
++	unsigned int inflight;
++	bool stopping;
++	struct work_struct submit_work;
++	struct work_struct stop_work;
++	struct completion drained;
++	struct completion stopped;
++};
++
++struct sio_dma {
++	struct device *dev;
++	struct apple_sio *sio;
++	struct dma_device dma;
++	unsigned int nchans;
++	struct sio_dma_chan chans[] __counted_by(nchans);
++};
++
++/* SPI defaults used by the T8010 touch path when no shim record is given */
++static const struct apple_sio_dma_config sio_dma_default_cfg = {
++	.fifo = 0x80, .trigger = 0x40, .limit = 0x80,
++};
++
++/* SPI0-3, MCA0-4 and UART0-8 TX/RX, unless the SIO node lists endpoints */
++static const u8 sio_dma_default_ranges[][2] = {
++	{ 0x14, 0x1b }, { 0x28, 0x31 }, { 0x3c, 0x4d },
++};
++
++static struct sio_dma_chan *to_sio_chan(struct dma_chan *c)
++{
++	return container_of(c, struct sio_dma_chan, vc.chan);
++}
++
++static struct sio_dma_desc *to_sio_desc(struct virt_dma_desc *vd)
++{
++	return container_of(vd, struct sio_dma_desc, vd);
++}
++
++/* --- descriptors ----------------------------------------------------------- */
++
++static unsigned int sio_dma_count_segments(dma_addr_t addr, size_t len)
++{
++	unsigned int n = 0;
++
++	while (len) {
++		size_t chunk = min_t(size_t, len, SIO_DMA_SEG_BOUNDARY -
++				     (addr & (SIO_DMA_SEG_BOUNDARY - 1)));
++
++		addr += chunk;
++		len -= chunk;
++		n++;
++	}
++	return n;
++}
++
++static u32 *sio_dma_fill_segments(u32 *seg, dma_addr_t addr, size_t len)
++{
++	while (len) {
++		size_t chunk = min_t(size_t, len, SIO_DMA_SEG_BOUNDARY -
++				     (addr & (SIO_DMA_SEG_BOUNDARY - 1)));
++
++		seg[0] = lower_32_bits(addr);
++		seg[1] = upper_32_bits(addr);
++		seg[2] = chunk;
++		seg += SIO_DMA_SLOT_WORDS;
++		addr += chunk;
++		len -= chunk;
++	}
++	return seg;
++}
++
++/* Allocate a transfer descriptor in the shared slots; returns its segments. */
++static u32 *sio_dma_block_alloc(struct sio_dma_chan *chan,
++				struct sio_dma_block *b, unsigned int nsegs)
++{
++	u32 *hdr;
++
++	if (!nsegs || nsegs > SIO_DMA_MAX_SEGMENTS)
++		return NULL;
++
++	b->slots = SIO_DMA_HDR_SLOTS + nsegs;
++	hdr = apple_sio_desc0_alloc(chan->host->sio, b->slots, &b->first_slot);
++	if (!hdr) {
++		b->slots = 0;
++		return NULL;
++	}
++
++	hdr[SIO_DMA_HDR_FLAGS] = 0;
++	hdr[SIO_DMA_HDR_SEGMENTS] = nsegs;
++	return hdr + SIO_DMA_HDR_SLOTS * SIO_DMA_SLOT_WORDS;
++}
++
++static void sio_dma_desc_free(struct virt_dma_desc *vd)
++{
++	struct sio_dma_desc *desc = to_sio_desc(vd);
++	struct apple_sio *sio = desc->chan->host->sio;
++	unsigned int i;
++
++	for (i = 0; i < desc->nblocks; i++)
++		if (desc->blocks[i].slots)
++			apple_sio_desc0_free(sio, desc->blocks[i].first_slot,
++					     desc->blocks[i].slots);
++	kfree(desc);
++}
++
++static struct sio_dma_desc *sio_dma_desc_new(struct sio_dma_chan *chan,
++					     unsigned int nblocks, bool cyclic)
++{
++	struct sio_dma_desc *desc;
++	unsigned int i;
++
++	desc = kzalloc_flex(*desc, blocks, nblocks, GFP_NOWAIT);
++	if (!desc)
++		return NULL;
++
++	desc->nblocks = nblocks;
++	desc->chan = chan;
++	desc->cyclic = cyclic;
++	for (i = 0; i < nblocks; i++)
++		desc->blocks[i].desc = desc;
++	return desc;
++}
++
++static bool sio_dma_dir_ok(enum dma_transfer_direction dir)
++{
++	return dir == DMA_MEM_TO_DEV || dir == DMA_DEV_TO_MEM;
++}
++
++static struct dma_async_tx_descriptor *
++sio_dma_prep_slave_sg(struct dma_chan *c, struct scatterlist *sgl,
++		      unsigned int sg_len, enum dma_transfer_direction dir,
++		      unsigned long flags, void *context)
++{
++	struct sio_dma_chan *chan = to_sio_chan(c);
++	struct sio_dma_desc *desc;
++	struct scatterlist *sg;
++	unsigned int nsegs = 0, i;
++	u32 *seg;
++
++	if (!sio_dma_dir_ok(dir) || !sg_len)
++		return NULL;
++
++	for_each_sg(sgl, sg, sg_len, i) {
++		if (!sg_dma_len(sg))
++			return NULL;
++		nsegs += sio_dma_count_segments(sg_dma_address(sg),
++						sg_dma_len(sg));
++	}
++
++	desc = sio_dma_desc_new(chan, 1, false);
++	if (!desc)
++		return NULL;
++
++	seg = sio_dma_block_alloc(chan, &desc->blocks[0], nsegs);
++	if (!seg) {
++		kfree(desc);
++		return NULL;
++	}
++
++	for_each_sg(sgl, sg, sg_len, i) {
++		seg = sio_dma_fill_segments(seg, sg_dma_address(sg),
++					    sg_dma_len(sg));
++		desc->total += sg_dma_len(sg);
++	}
++	desc->blocks[0].len = desc->total;
++
++	return vchan_tx_prep(&chan->vc, &desc->vd, flags);
++}
++
++static struct dma_async_tx_descriptor *
++sio_dma_prep_cyclic(struct dma_chan *c, dma_addr_t buf, size_t buf_len,
++		    size_t period_len, enum dma_transfer_direction dir,
++		    unsigned long flags)
++{
++	struct sio_dma_chan *chan = to_sio_chan(c);
++	struct sio_dma_desc *desc;
++	unsigned int n, i;
++
++	if (!sio_dma_dir_ok(dir) || !period_len || buf_len % period_len)
++		return NULL;
++
++	n = buf_len / period_len;
++	if (!n || n > SIO_DMA_MAX_PERIODS)
++		return NULL;
++
++	desc = sio_dma_desc_new(chan, n, true);
++	if (!desc)
++		return NULL;
++
++	for (i = 0; i < n; i++) {
++		dma_addr_t addr = buf + (dma_addr_t)i * period_len;
++		struct sio_dma_block *b = &desc->blocks[i];
++		u32 *seg;
++
++		seg = sio_dma_block_alloc(chan, b,
++					  sio_dma_count_segments(addr, period_len));
++		if (!seg) {
++			sio_dma_desc_free(&desc->vd);
++			return NULL;
++		}
++		sio_dma_fill_segments(seg, addr, period_len);
++		b->len = period_len;
++	}
++	desc->total = buf_len;
++
++	return vchan_tx_prep(&chan->vc, &desc->vd, flags);
++}
++
++/* --- firmware interaction (work items) ----------------------------------- */
++
++static int sio_dma_configure(struct sio_dma_chan *chan)
++{
++	struct apple_sio *sio = chan->host->sio;
++	struct apple_sio_dma_config cfg;
++	unsigned long flags;
++	u32 slot, *rec;
++	int ret;
++
++	spin_lock_irqsave(&chan->vc.lock, flags);
++	if (!chan->cfg_dirty) {
++		spin_unlock_irqrestore(&chan->vc.lock, flags);
++		return 0;
++	}
++	cfg = chan->cfg;
++	chan->cfg_dirty = false;
++	spin_unlock_irqrestore(&chan->vc.lock, flags);
++
++	rec = apple_sio_desc0_alloc(sio, SIO_DMA_CFG_SLOTS, &slot);
++	if (!rec) {
++		ret = -ENOMEM;
++		goto fail;
++	}
++
++	/* AppleSmartIODMA::_configureDMA record layout */
++	rec[0] = cfg.xfer;
++	rec[1] = cfg.timeout;
++	rec[2] = cfg.fifo;
++	rec[3] = cfg.trigger;
++	rec[4] = cfg.limit;
++	rec[5] = cfg.word5;
++	rec[6] = cfg.frame;
++	rec[7] = cfg.word7;
++	rec[SIO_DMA_HDR_FLAGS] = 0;
++	dma_wmb();
++
++	ret = apple_sio_request(sio, chan->endpoint, SIO_DMA_OP_CONFIGURE, 0,
++				slot, SIO_DMA_OP_ACK,
++				msecs_to_jiffies(SIO_DMA_CONFIG_TIMEOUT_MS),
++				NULL);
++	apple_sio_desc0_free(sio, slot, SIO_DMA_CFG_SLOTS);
++	if (ret)
++		goto fail;
++
++	dev_dbg(chan->host->dev,
++		"ep %#x shim: xfer %#x timeout %u fifo %u trigger %u limit %u\n",
++		chan->endpoint, cfg.xfer, cfg.timeout, cfg.fifo, cfg.trigger,
++		cfg.limit);
++	return 0;
++
++fail:
++	spin_lock_irqsave(&chan->vc.lock, flags);
++	chan->cfg_dirty = true;
++	spin_unlock_irqrestore(&chan->vc.lock, flags);
++	dev_err_ratelimited(chan->host->dev, "ep %#x: configure failed: %d\n",
++			    chan->endpoint, ret);
++	return ret;
++}
++
++static void sio_dma_block_done(void *data, int status, u64 response)
++{
++	struct sio_dma_block *b = data;
++	struct sio_dma_desc *desc = b->desc;
++	struct sio_dma_chan *chan = desc->chan;
++	bool kick = false;
++	unsigned long flags;
++
++	spin_lock_irqsave(&chan->vc.lock, flags);
++	b->queued = false;
++	if (!WARN_ON_ONCE(!chan->inflight))
++		chan->inflight--;
++
++	if (chan->active == desc && !chan->stopping) {
++		if (status) {
++			desc->status = status;
++			dev_err_ratelimited(chan->host->dev,
++					    "ep %#x: transfer failed: %d\n",
++					    chan->endpoint, status);
++		}
++		if (desc->cyclic) {
++			if (!status) {
++				desc->done++;
++				vchan_cyclic_callback(&desc->vd);
++				kick = true;
++			}
++		} else {
++			desc->vd.tx_result.result = status ?
++				DMA_TRANS_ABORTED : DMA_TRANS_NOERROR;
++			desc->vd.tx_result.residue = status ? desc->total : 0;
++			vchan_cookie_complete(&desc->vd);
++			chan->active = NULL;
++			kick = true;
++		}
++	}
++
++	if (chan->stopping && !chan->inflight)
++		complete(&chan->drained);
++	spin_unlock_irqrestore(&chan->vc.lock, flags);
++
++	if (kick)
++		queue_work(system_highpri_wq, &chan->submit_work);
++}
++
++static void sio_dma_submit_work(struct work_struct *work)
++{
++	struct sio_dma_chan *chan = container_of(work, struct sio_dma_chan,
++						 submit_work);
++	struct apple_sio *sio = chan->host->sio;
++	unsigned int retries = 0;
++
++	if (sio_dma_configure(chan))
++		return;
++
++	for (;;) {
++		struct apple_sio_async *req;
++		struct virt_dma_desc *vd;
++		struct sio_dma_desc *desc;
++		struct sio_dma_block *b;
++		unsigned long flags;
++		unsigned int idx;
++
++		spin_lock_irqsave(&chan->vc.lock, flags);
++		if (chan->stopping)
++			goto unlock_out;
++		if (!chan->active) {
++			vd = vchan_next_desc(&chan->vc);
++			if (!vd)
++				goto unlock_out;
++			list_del(&vd->node);
++			chan->active = to_sio_desc(vd);
++		}
++		desc = chan->active;
++		if (desc->status || (!desc->cyclic && desc->next >= desc->nblocks))
++			goto unlock_out;
++		idx = desc->next;
++		b = &desc->blocks[idx];
++		if (b->queued)
++			goto unlock_out;
++		b->queued = true;
++		chan->inflight++;
++		desc->next = desc->cyclic ? (idx + 1) % desc->nblocks : idx + 1;
++		spin_unlock_irqrestore(&chan->vc.lock, flags);
++
++		dma_wmb();
++		req = apple_sio_request_async(sio, chan->endpoint,
++					      SIO_DMA_OP_SUBMIT, 0,
++					      b->first_slot,
++					      SIO_DMA_OP_COMPLETE,
++					      sio_dma_block_done, b);
++		if (!IS_ERR(req)) {
++			/* errors after allocation arrive via the callback */
++			apple_sio_async_put(req);
++			continue;
++		}
++
++		spin_lock_irqsave(&chan->vc.lock, flags);
++		b->queued = false;
++		chan->inflight--;
++		desc->next = idx;
++		if (chan->stopping && !chan->inflight)
++			complete(&chan->drained);
++		spin_unlock_irqrestore(&chan->vc.lock, flags);
++
++		if (++retries > SIO_DMA_SUBMIT_RETRIES) {
++			dev_err_ratelimited(chan->host->dev,
++					    "ep %#x: submit failed: %ld\n",
++					    chan->endpoint, PTR_ERR(req));
++			return;
++		}
++		usleep_range(500, 1000);
++		continue;
++
++unlock_out:
++		spin_unlock_irqrestore(&chan->vc.lock, flags);
++		return;
++	}
++}
++
++static void sio_dma_stop_work(struct work_struct *work)
++{
++	struct sio_dma_chan *chan = container_of(work, struct sio_dma_chan,
++						 stop_work);
++	struct apple_sio *sio = chan->host->sio;
++	struct sio_dma_desc *desc;
++	unsigned long flags;
++	bool busy, issued;
++	int ret;
++
++	spin_lock_irqsave(&chan->vc.lock, flags);
++	busy = chan->inflight;
++	spin_unlock_irqrestore(&chan->vc.lock, flags);
++
++	if (busy) {
++		ret = apple_sio_request(sio, chan->endpoint, SIO_DMA_OP_STOP, 0,
++					0, SIO_DMA_OP_ACK,
++					msecs_to_jiffies(SIO_DMA_STOP_TIMEOUT_MS),
++					NULL);
++		if (ret)
++			dev_warn(chan->host->dev, "ep %#x: stop failed: %d\n",
++				 chan->endpoint, ret);
++
++		if (!wait_for_completion_timeout(&chan->drained,
++				msecs_to_jiffies(SIO_DMA_DRAIN_TIMEOUT_MS))) {
++			dev_warn(chan->host->dev,
++				 "ep %#x: %u commands left after stop, cancelling\n",
++				 chan->endpoint, READ_ONCE(chan->inflight));
++			apple_sio_cancel_endpoint(sio, chan->endpoint);
++		}
++	}
++
++	spin_lock_irqsave(&chan->vc.lock, flags);
++	desc = chan->active;
++	chan->active = NULL;
++	if (desc)
++		vchan_terminate_vdesc(&desc->vd);
++	chan->inflight = 0;
++	chan->stopping = false;
++	issued = !list_empty(&chan->vc.desc_issued);
++	spin_unlock_irqrestore(&chan->vc.lock, flags);
++
++	complete_all(&chan->stopped);
++	if (issued)
++		queue_work(system_highpri_wq, &chan->submit_work);
++}
++
++/* --- dmaengine ops ----------------------------------------------------------- */
++
++static void sio_dma_issue_pending(struct dma_chan *c)
++{
++	struct sio_dma_chan *chan = to_sio_chan(c);
++	unsigned long flags;
++	bool issued;
++
++	spin_lock_irqsave(&chan->vc.lock, flags);
++	issued = vchan_issue_pending(&chan->vc) && !chan->stopping;
++	spin_unlock_irqrestore(&chan->vc.lock, flags);
++
++	if (issued)
++		queue_work(system_highpri_wq, &chan->submit_work);
++}
++
++static int sio_dma_terminate_all(struct dma_chan *c)
++{
++	struct sio_dma_chan *chan = to_sio_chan(c);
++	unsigned long flags;
++	bool stop = false;
++	LIST_HEAD(head);
++
++	spin_lock_irqsave(&chan->vc.lock, flags);
++	vchan_get_all_descriptors(&chan->vc, &head);
++	if (chan->active && !chan->stopping) {
++		chan->stopping = true;
++		reinit_completion(&chan->drained);
++		reinit_completion(&chan->stopped);
++		if (!chan->inflight)
++			complete(&chan->drained);
++		stop = true;
++	}
++	spin_unlock_irqrestore(&chan->vc.lock, flags);
++
++	vchan_dma_desc_free_list(&chan->vc, &head);
++	if (stop)
++		queue_work(system_highpri_wq, &chan->stop_work);
++	return 0;
++}
++
++static void sio_dma_synchronize(struct dma_chan *c)
++{
++	struct sio_dma_chan *chan = to_sio_chan(c);
++
++	if (!wait_for_completion_timeout(&chan->stopped,
++			msecs_to_jiffies(SIO_DMA_STOP_TIMEOUT_MS +
++					 SIO_DMA_DRAIN_TIMEOUT_MS + 100)))
++		dev_warn(chan->host->dev, "ep %#x: stop did not finish\n",
++			 chan->endpoint);
++	vchan_synchronize(&chan->vc);
++}
++
++static enum dma_status sio_dma_tx_status(struct dma_chan *c,
++					 dma_cookie_t cookie,
++					 struct dma_tx_state *state)
++{
++	struct sio_dma_chan *chan = to_sio_chan(c);
++	struct virt_dma_desc *vd;
++	enum dma_status status;
++	unsigned long flags;
++	size_t residue = 0;
++
++	status = dma_cookie_status(c, cookie, state);
++	if (status == DMA_COMPLETE || !state)
++		return status;
++
++	spin_lock_irqsave(&chan->vc.lock, flags);
++	if (chan->active && chan->active->vd.tx.cookie == cookie) {
++		struct sio_dma_desc *desc = chan->active;
++
++		if (desc->cyclic)
++			residue = desc->total - (desc->done % desc->nblocks) *
++				  desc->blocks[0].len;
++		else
++			residue = desc->total;
++		if (desc->status)
++			status = DMA_ERROR;
++	} else {
++		vd = vchan_find_desc(&chan->vc, cookie);
++		if (vd)
++			residue = to_sio_desc(vd)->total;
++	}
++	spin_unlock_irqrestore(&chan->vc.lock, flags);
++
++	dma_set_residue(state, residue);
++	return status;
++}
++
++/* AppleSmartIODMA::validFIFODepth */
++static u32 sio_dma_valid_depth(const struct apple_sio_dma_config *cfg,
++			       u32 req, enum dma_transfer_direction dir)
++{
++	u32 lo;
++
++	if (dir == DMA_DEV_TO_MEM)
++		return req ? min(req, cfg->trigger) : 1;
++
++	lo = min(cfg->trigger, cfg->fifo - cfg->trigger) + 4;
++	return req < lo ? lo : min(req, cfg->fifo);
++}
++
++static int sio_dma_slave_config(struct dma_chan *c,
++				struct dma_slave_config *sc)
++{
++	struct sio_dma_chan *chan = to_sio_chan(c);
++	struct apple_sio_dma_config cfg = sio_dma_default_cfg;
++	unsigned long flags;
++
++	if (!sio_dma_dir_ok(sc->direction))
++		return -EINVAL;
++
++	if (sc->peripheral_config) {
++		if (sc->peripheral_size != sizeof(cfg))
++			return -EINVAL;
++		memcpy(&cfg, sc->peripheral_config, sizeof(cfg));
++		if (cfg.fifo <= cfg.trigger)
++			return -EINVAL;
++		if (!cfg.limit) {
++			if (sc->direction == DMA_MEM_TO_DEV)
++				cfg.limit = sc->dst_maxburst * sc->dst_addr_width;
++			else
++				cfg.limit = sc->src_maxburst * sc->src_addr_width;
++		}
++		cfg.limit = sio_dma_valid_depth(&cfg, cfg.limit, sc->direction);
++	}
++
++	spin_lock_irqsave(&chan->vc.lock, flags);
++	if (memcmp(&chan->cfg, &cfg, sizeof(cfg))) {
++		chan->cfg = cfg;
++		chan->cfg_dirty = true;
++	}
++	spin_unlock_irqrestore(&chan->vc.lock, flags);
++	return 0;
++}
++
++static int sio_dma_alloc_chan_resources(struct dma_chan *c)
++{
++	struct sio_dma_chan *chan = to_sio_chan(c);
++
++	chan->cfg = sio_dma_default_cfg;
++	chan->cfg_dirty = true;
++	return 0;
++}
++
++static void sio_dma_free_chan_resources(struct dma_chan *c)
++{
++	struct sio_dma_chan *chan = to_sio_chan(c);
++
++	sio_dma_terminate_all(c);
++	sio_dma_synchronize(c);
++	cancel_work_sync(&chan->submit_work);
++	vchan_free_chan_resources(&chan->vc);
++}
++
++static struct dma_chan *sio_dma_of_xlate(struct of_phandle_args *spec,
++					 struct of_dma *ofdma)
++{
++	struct sio_dma *host = ofdma->of_dma_data;
++	unsigned int i;
++
++	if (spec->args_count != 1)
++		return NULL;
++
++	for (i = 0; i < host->nchans; i++)
++		if (host->chans[i].endpoint == spec->args[0])
++			return dma_get_slave_channel(&host->chans[i].vc.chan);
++
++	return NULL;
++}
++
++/* Firmware messages on our endpoints that match no request. */
++static void sio_dma_notify(void *data, u64 message)
++{
++	struct sio_dma_chan *chan = data;
++	u8 op = FIELD_GET(SIO_DMA_MSG_OPCODE, message);
++
++	switch (op) {
++	case SIO_DMA_OP_ACK:		/* ack of an async submit */
++	case SIO_DMA_OP_COMPLETE:	/* idle notification (no tag) */
++		break;
++	case SIO_DMA_OP_ASYNC_ERROR:
++		dev_err_ratelimited(chan->host->dev,
++				    "ep %#x: async error %#llx\n",
++				    chan->endpoint,
++				    FIELD_GET(SIO_DMA_MSG_DATA, message));
++		break;
++	default:
++		dev_dbg(chan->host->dev, "ep %#x: unexpected message %#llx\n",
++			chan->endpoint, message);
++	}
++}
++
++static int sio_dma_endpoints(struct device *dev, u8 *eps, unsigned int max)
++{
++	struct device_node *np = dev->parent->of_node;
++	unsigned int n = 0, i, e;
++	int count;
++
++	count = of_property_count_u32_elems(np, "apple,dma-endpoints");
++	if (count > 0) {
++		for (i = 0; i < count && n < max; i++) {
++			u32 ep;
++
++			of_property_read_u32_index(np, "apple,dma-endpoints", i, &ep);
++			if (ep < APPLE_SIO_MAX_ENDPOINTS)
++				eps[n++] = ep;
++		}
++		return n;
++	}
++
++	for (i = 0; i < ARRAY_SIZE(sio_dma_default_ranges); i++)
++		for (e = sio_dma_default_ranges[i][0];
++		     e <= sio_dma_default_ranges[i][1] && n < max; e++)
++			eps[n++] = e;
++	return n;
++}
++
++static int sio_dma_probe(struct platform_device *pdev)
++{
++	struct apple_sio **parent_data = dev_get_platdata(&pdev->dev);
++	u8 eps[APPLE_SIO_MAX_ENDPOINTS];
++	struct dma_device *dma;
++	struct sio_dma *host;
++	unsigned int n, i;
++	int ret;
++
++	if (!parent_data || !*parent_data || !pdev->dev.parent)
++		return -ENODEV;
++
++	n = sio_dma_endpoints(&pdev->dev, eps, ARRAY_SIZE(eps));
++	if (!n)
++		return -ENODEV;
++
++	host = devm_kzalloc(&pdev->dev, struct_size(host, chans, n), GFP_KERNEL);
++	if (!host)
++		return -ENOMEM;
++	host->nchans = n;
++	host->dev = &pdev->dev;
++	host->sio = *parent_data;
++	platform_set_drvdata(pdev, host);
++
++	ret = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64));
++	if (ret)
++		return dev_err_probe(&pdev->dev, ret, "failed to set DMA mask\n");
++
++	dma = &host->dma;
++	dma_cap_set(DMA_PRIVATE, dma->cap_mask);
++	dma_cap_set(DMA_SLAVE, dma->cap_mask);
++	dma_cap_set(DMA_CYCLIC, dma->cap_mask);
++	dma->dev = &pdev->dev;
++	dma->device_alloc_chan_resources = sio_dma_alloc_chan_resources;
++	dma->device_free_chan_resources = sio_dma_free_chan_resources;
++	dma->device_prep_slave_sg = sio_dma_prep_slave_sg;
++	dma->device_prep_dma_cyclic = sio_dma_prep_cyclic;
++	dma->device_issue_pending = sio_dma_issue_pending;
++	dma->device_tx_status = sio_dma_tx_status;
++	dma->device_terminate_all = sio_dma_terminate_all;
++	dma->device_synchronize = sio_dma_synchronize;
++	dma->device_config = sio_dma_slave_config;
++	dma->directions = BIT(DMA_MEM_TO_DEV) | BIT(DMA_DEV_TO_MEM);
++	dma->residue_granularity = DMA_RESIDUE_GRANULARITY_SEGMENT;
++	dma->src_addr_widths = dma->dst_addr_widths =
++		BIT(DMA_SLAVE_BUSWIDTH_1_BYTE) | BIT(DMA_SLAVE_BUSWIDTH_2_BYTES) |
++		BIT(DMA_SLAVE_BUSWIDTH_4_BYTES) | BIT(DMA_SLAVE_BUSWIDTH_8_BYTES);
++	INIT_LIST_HEAD(&dma->channels);
++
++	for (i = 0; i < n; i++) {
++		struct sio_dma_chan *chan = &host->chans[i];
++
++		chan->host = host;
++		chan->endpoint = eps[i];
++		chan->cfg = sio_dma_default_cfg;
++		chan->cfg_dirty = true;
++		INIT_WORK(&chan->submit_work, sio_dma_submit_work);
++		INIT_WORK(&chan->stop_work, sio_dma_stop_work);
++		init_completion(&chan->drained);
++		init_completion(&chan->stopped);
++		complete_all(&chan->stopped);
++		vchan_init(&chan->vc, dma);
++		chan->vc.desc_free = sio_dma_desc_free;
++		apple_sio_set_notify(host->sio, chan->endpoint, sio_dma_notify,
++				     chan);
++	}
++
++	ret = dma_async_device_register(dma);
++	if (ret)
++		goto err_notify;
++
++	ret = of_dma_controller_register(pdev->dev.parent->of_node,
++					 sio_dma_of_xlate, host);
++	if (ret) {
++		dma_async_device_unregister(dma);
++		goto err_notify;
++	}
++
++	dev_info(&pdev->dev, "%u SmartIO DMA endpoints\n", n);
++	return 0;
++
++err_notify:
++	for (i = 0; i < n; i++)
++		apple_sio_set_notify(host->sio, host->chans[i].endpoint, NULL,
++				     NULL);
++	return dev_err_probe(&pdev->dev, ret, "failed to register DMA device\n");
++}
++
++static void sio_dma_remove(struct platform_device *pdev)
++{
++	struct sio_dma *host = platform_get_drvdata(pdev);
++	unsigned int i;
++
++	of_dma_controller_free(pdev->dev.parent->of_node);
++	dma_async_device_unregister(&host->dma);
++	for (i = 0; i < host->nchans; i++) {
++		struct sio_dma_chan *chan = &host->chans[i];
++
++		sio_dma_terminate_all(&chan->vc.chan);
++		sio_dma_synchronize(&chan->vc.chan);
++		cancel_work_sync(&chan->submit_work);
++		cancel_work_sync(&chan->stop_work);
++		apple_sio_set_notify(host->sio, chan->endpoint, NULL, NULL);
++		vchan_free_chan_resources(&chan->vc);
++	}
++}
++
++static struct platform_driver sio_dma_driver = {
++	.driver = {
++		.name = "apple-sio-dma",
++	},
++	.probe = sio_dma_probe,
++	.remove = sio_dma_remove,
++};
++module_platform_driver(sio_dma_driver);
++
++MODULE_ALIAS("platform:apple-sio-dma");
++MODULE_DESCRIPTION("Apple SmartIO DMA controller");
++MODULE_LICENSE("Dual MIT/GPL");
+diff --git a/drivers/soc/apple/Kconfig b/drivers/soc/apple/Kconfig
+index 99fa23a57c3624849339f79419821f50e9b9e140..0587472546d756fb0cf5e0c980bf09b973b705bc 100644
+--- a/drivers/soc/apple/Kconfig
++++ b/drivers/soc/apple/Kconfig
+@@ -48,6 +48,19 @@ config APPLE_PMP_T8015_V1
+ 
+ 	  Say 'y' here if you have an Apple A11 SoC.
+ 
++config APPLE_SIO
++	tristate "Apple S8000/T8010 SmartIO coprocessor"
++	depends on ARM64
++	depends on PM
++	depends on ARCH_APPLE || COMPILE_TEST
++	help
++	  Support the SmartIO coprocessor found on Apple T8010 SoCs. SmartIO
++	  boots dedicated firmware and exchanges endpoint messages with the
++	  application processor. It provides DMA services to peripheral
++	  controllers such as SPI.
++
++	  Say Y here if you have an Apple S8000/S8003 or T8010 SoC.
++
+ config APPLE_SART
+ 	tristate "Apple SART DMA address filter"
+ 	depends on ARCH_APPLE || COMPILE_TEST
+diff --git a/drivers/soc/apple/Makefile b/drivers/soc/apple/Makefile
+index cad33f1cc0e1f003b00286b02df201d70b9f0c0c..465b0e3ebb5ebcaf6c54343681e112b27345e480 100644
+--- a/drivers/soc/apple/Makefile
++++ b/drivers/soc/apple/Makefile
+@@ -15,3 +15,5 @@ obj-$(CONFIG_APPLE_TUNABLE) += apple-tunable.o
+ apple-tunable-y = tunable.o
+ 
+ obj-$(CONFIG_APPLE_PMP_T8015_V1) += pmp_t8015_v1.o
++obj-$(CONFIG_APPLE_SIO) += apple-sio.o
++apple-sio-y := apple-sio-core.o
+diff --git a/drivers/soc/apple/apple-sio-core.c b/drivers/soc/apple/apple-sio-core.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..28229fd7f9fb3b1a50e2a451575fb1a4ee556e8c
+--- /dev/null
++++ b/drivers/soc/apple/apple-sio-core.c
+@@ -0,0 +1,1074 @@
++// SPDX-License-Identifier: GPL-2.0-only OR MIT
++/*
++ * Apple S8000/T8010 SmartIO coprocessor driver
++ *
++ * Copyright (C) 2026 Paul Praschl
++ */
++
++#include <clocksource/arm_arch_timer.h>
++#include <linux/bitfield.h>
++#include <linux/bitmap.h>
++#include <linux/bits.h>
++#include <linux/completion.h>
++#include <linux/delay.h>
++#include <linux/dma-mapping.h>
++#include <linux/firmware.h>
++#include <linux/idr.h>
++#include <linux/interrupt.h>
++#include <linux/io.h>
++#include <linux/iopoll.h>
++#include <linux/list.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/pm_runtime.h>
++#include <linux/refcount.h>
++#include <linux/reset.h>
++#include <linux/sizes.h>
++#include <linux/slab.h>
++#include <linux/soc/apple/sio.h>
++#include <linux/xarray.h>
++
++#define APPLE_SIO_REMAP_AP_LO		0x0008
++#define APPLE_SIO_REMAP_AP_HI		0x0010
++#define APPLE_SIO_REMAP_IOP_LO		0x0018
++#define APPLE_SIO_REMAP_IOP_HI		0x0020
++#define APPLE_SIO_REMAP_SIZE_LO		0x0028
++#define APPLE_SIO_REMAP_SIZE_HI		0x0030
++#define APPLE_SIO_REMAP_ENABLE		0x0038
++#define APPLE_SIO_CPU_CONTROL		0x0044
++#define APPLE_SIO_CPU_RUN		BIT(4)
++#define APPLE_SIO_TIME_CONTROL		0x080c
++#define APPLE_SIO_IRQ_STATUS_LEGACY	0x0b84
++#define APPLE_SIO_IRQ_STATUS		0x0b88
++#define APPLE_SIO_QUEUE_INIT_B		0x0c00
++#define APPLE_SIO_QUEUE_START_B		0x0c04
++#define APPLE_SIO_QUEUE_INIT_A		0x4000
++#define APPLE_SIO_QUEUE_START_A		0x4004
++#define APPLE_SIO_TX_STATUS		0x4008
++#define APPLE_SIO_TX_MESSAGE		0x4010
++#define APPLE_SIO_RX_STATUS		0x4020
++#define APPLE_SIO_RX_MESSAGE		0x4038
++#define APPLE_SIO_TIME_LO		0xc030
++#define APPLE_SIO_TIME_HI		0xc038
++
++#define APPLE_SIO_MBOX_ENABLE		BIT(0)
++#define APPLE_SIO_MBOX_EMPTY		BIT(17)
++#define APPLE_SIO_MBOX_ERROR		GENMASK(19, 18)
++
++#define APPLE_SIO_MSG_ENDPOINT		GENMASK_ULL(7, 0)
++#define APPLE_SIO_MSG_TAG		GENMASK_ULL(15, 8)
++#define APPLE_SIO_MSG_OPCODE		GENMASK_ULL(23, 16)
++#define APPLE_SIO_MSG_PARAMETER		GENMASK_ULL(31, 24)
++#define APPLE_SIO_MSG_DATA		GENMASK_ULL(63, 32)
++
++#define APPLE_SIO_OP_DMA_ERROR		0x66
++#define APPLE_SIO_OP_DMA_COMPLETE	0x68
++#define APPLE_SIO_DMA_COMPLETE_TAGGED	BIT(7)
++#define APPLE_SIO_OP_ERROR		0x6a
++#define APPLE_SIO_OP_READY		0x6d
++#define APPLE_SIO_READY_PARAMETER	0x03	/* SMARTIO_PROTOCOL_VERSION */
++#define APPLE_SIO_RX_IRQ_INDEX		2
++#define APPLE_SIO_READY_TIMEOUT_MS	5000
++#define APPLE_SIO_TX_TIMEOUT_US		200000
++#define APPLE_SIO_RX_DRAIN_LIMIT	256
++#define APPLE_SIO_REQUEST_TIMEOUT_MS	1000
++#define APPLE_SIO_DESC0_SIZE		0x7ff8
++#define APPLE_SIO_DESC0_COUNT		0x0aaa
++#define APPLE_SIO_DESC0_SLOT_SIZE	(3 * sizeof(u32))
++#define APPLE_SIO_DESC1_SIZE		0x10400
++#define APPLE_SIO_DESC1_COUNT		0x1040
++#define APPLE_SIO_SETUP_COMMANDS	10
++
++struct apple_sio_region {
++	void *buffer;
++	dma_addr_t dma;
++	size_t size;
++};
++
++struct apple_sio_async {
++	struct apple_sio *sio;
++	struct list_head shutdown_node;
++	struct completion done;
++	refcount_t refs;
++	apple_sio_async_callback_t callback;
++	void *callback_data;
++	unsigned long key;
++	u8 endpoint;
++	u8 tag;
++	u8 expected_opcode;
++	int status;
++	u64 response;
++	bool active;
++};
++
++struct apple_sio {
++	struct device *dev;
++	void __iomem *base;
++	void *firmware_buffer;
++	dma_addr_t firmware_dma;
++	size_t firmware_size;
++	struct completion ready;
++	struct completion setup_done;
++	/* Serialize access to the single-entry transmit queue. */
++	struct mutex tx_lock;
++	/* Protect the final transmit status check and message write. */
++	spinlock_t tx_hw_lock;
++	/* Per-endpoint tag bitmaps (bit n = tag n in use), see sio.h. */
++	spinlock_t tag_lock;
++	u32 tags[APPLE_SIO_MAX_ENDPOINTS];
++	struct {
++		apple_sio_notify_t fn;
++		void *data;
++	} notify[APPLE_SIO_MAX_ENDPOINTS];
++	struct xarray pending;
++	struct apple_sio_region ep0_general;
++	struct apple_sio_region ep0_spi;
++	struct apple_sio_region ep3_aux;
++	struct apple_sio_region desc0;
++	struct apple_sio_region desc1;
++	unsigned long *desc0_bitmap;
++	/* Protect contiguous Descriptor-0 slot allocation. */
++	spinlock_t desc0_lock;
++	struct platform_device *dma_pdev;
++	unsigned int setup_index;
++	unsigned int irq_count;
++	unsigned int unmatched_count;
++	u32 last_irq_legacy;
++	u32 last_irq;
++	u32 last_rx_status;
++	u32 last_tx_status;
++	u64 last_rx_message;
++	u64 last_tx_message;
++	int setup_status;
++	bool running;
++	bool stopping;
++};
++
++static struct apple_sio_async *
++apple_sio_request_async_common(struct apple_sio *sio, u8 endpoint, u8 opcode,
++			       u8 parameter, u32 data, u8 expected_opcode,
++			       apple_sio_async_callback_t callback,
++			       void *callback_data, bool atomic, int fixed_tag);
++
++static void apple_sio_submit_setup(struct apple_sio *sio);
++
++static unsigned long apple_sio_request_key(u8 endpoint, u8 tag)
++{
++	return ((unsigned long)endpoint << 8) | tag;
++}
++
++/* fixed_tag < 0: lowest free tag in 1..APPLE_SIO_MAX_TAG */
++static int apple_sio_tag_alloc(struct apple_sio *sio, u8 endpoint,
++			       int fixed_tag)
++{
++	unsigned long flags;
++	u32 *map;
++	int tag;
++
++	if (endpoint >= APPLE_SIO_MAX_ENDPOINTS ||
++	    fixed_tag > APPLE_SIO_MAX_TAG || fixed_tag == 0)
++		return -EINVAL;
++
++	map = &sio->tags[endpoint];
++	spin_lock_irqsave(&sio->tag_lock, flags);
++	if (fixed_tag > 0) {
++		tag = (*map & BIT(fixed_tag)) ? -EBUSY : fixed_tag;
++	} else {
++		/* bit 0 is never used: tags start at 1 */
++		tag = ffz(*map | BIT(0));
++		if (tag > APPLE_SIO_MAX_TAG)
++			tag = -EBUSY;
++	}
++	if (tag > 0)
++		*map |= BIT(tag);
++	spin_unlock_irqrestore(&sio->tag_lock, flags);
++
++	return tag;
++}
++
++static void apple_sio_tag_free(struct apple_sio *sio, u8 endpoint, u8 tag)
++{
++	unsigned long flags;
++
++	if (endpoint >= APPLE_SIO_MAX_ENDPOINTS || tag > APPLE_SIO_MAX_TAG)
++		return;
++
++	spin_lock_irqsave(&sio->tag_lock, flags);
++	sio->tags[endpoint] &= ~BIT(tag);
++	spin_unlock_irqrestore(&sio->tag_lock, flags);
++}
++
++void apple_sio_set_notify(struct apple_sio *sio, u8 endpoint,
++			  apple_sio_notify_t notify, void *data)
++{
++	unsigned long flags;
++
++	if (endpoint >= APPLE_SIO_MAX_ENDPOINTS)
++		return;
++
++	/* the RX handler reads these under the pending lock */
++	xa_lock_irqsave(&sio->pending, flags);
++	sio->notify[endpoint].fn = notify;
++	sio->notify[endpoint].data = data;
++	xa_unlock_irqrestore(&sio->pending, flags);
++}
++EXPORT_SYMBOL_GPL(apple_sio_set_notify);
++
++void *apple_sio_desc0_alloc(struct apple_sio *sio, unsigned int slots,
++			    u32 *first_slot)
++{
++	unsigned long flags;
++	unsigned long slot;
++	void *buffer;
++
++	if (!first_slot || !slots || slots > APPLE_SIO_DESC0_COUNT)
++		return NULL;
++
++	spin_lock_irqsave(&sio->desc0_lock, flags);
++	slot = bitmap_find_next_zero_area(sio->desc0_bitmap,
++					  APPLE_SIO_DESC0_COUNT, 0,
++					  slots, 0);
++	if (slot < APPLE_SIO_DESC0_COUNT)
++		bitmap_set(sio->desc0_bitmap, slot, slots);
++	spin_unlock_irqrestore(&sio->desc0_lock, flags);
++
++	if (slot >= APPLE_SIO_DESC0_COUNT)
++		return NULL;
++
++	buffer = sio->desc0.buffer + slot * APPLE_SIO_DESC0_SLOT_SIZE;
++	memset(buffer, 0, slots * APPLE_SIO_DESC0_SLOT_SIZE);
++	*first_slot = slot;
++	return buffer;
++}
++EXPORT_SYMBOL_GPL(apple_sio_desc0_alloc);
++
++void apple_sio_desc0_free(struct apple_sio *sio, u32 first_slot,
++			  unsigned int slots)
++{
++	unsigned long flags;
++
++	if (!slots || first_slot >= APPLE_SIO_DESC0_COUNT ||
++	    slots > APPLE_SIO_DESC0_COUNT - first_slot)
++		return;
++
++	spin_lock_irqsave(&sio->desc0_lock, flags);
++	bitmap_clear(sio->desc0_bitmap, first_slot, slots);
++	spin_unlock_irqrestore(&sio->desc0_lock, flags);
++}
++EXPORT_SYMBOL_GPL(apple_sio_desc0_free);
++
++static bool apple_sio_can_read(u32 status)
++{
++	return (status & APPLE_SIO_MBOX_ENABLE) &&
++	       !(status & (APPLE_SIO_MBOX_ERROR | APPLE_SIO_MBOX_EMPTY));
++}
++
++static bool apple_sio_can_write(u32 status)
++{
++	return (status & APPLE_SIO_MBOX_ENABLE) &&
++	       !(status & APPLE_SIO_MBOX_ERROR) &&
++	       (status & APPLE_SIO_MBOX_EMPTY);
++}
++
++static bool apple_sio_is_ready(u64 message)
++{
++	return FIELD_GET(APPLE_SIO_MSG_ENDPOINT, message) == 0 &&
++	       FIELD_GET(APPLE_SIO_MSG_TAG, message) == 0 &&
++	       FIELD_GET(APPLE_SIO_MSG_OPCODE, message) == APPLE_SIO_OP_READY &&
++	       FIELD_GET(APPLE_SIO_MSG_PARAMETER, message) ==
++			APPLE_SIO_READY_PARAMETER;
++}
++
++static void apple_sio_dispatch(struct apple_sio *sio, u64 message)
++{
++	struct apple_sio_async *request;
++	unsigned long flags;
++	bool matched = false;
++	u8 endpoint = FIELD_GET(APPLE_SIO_MSG_ENDPOINT, message);
++	u8 tag = FIELD_GET(APPLE_SIO_MSG_TAG, message);
++	u8 opcode = FIELD_GET(APPLE_SIO_MSG_OPCODE, message);
++	unsigned long key = apple_sio_request_key(endpoint, tag);
++
++	if (apple_sio_is_ready(message)) {
++		if (!READ_ONCE(sio->running) && !READ_ONCE(sio->stopping)) {
++			WRITE_ONCE(sio->running, true);
++			apple_sio_submit_setup(sio);
++		}
++		complete_all(&sio->ready);
++		return;
++	}
++
++	apple_sio_notify_t notify = NULL;
++	void *notify_data = NULL;
++	u8 parameter = FIELD_GET(APPLE_SIO_MSG_PARAMETER, message);
++	/*
++	 * A DMA "complete" (0x68) only refers to a command when parameter bit
++	 * 7 is set (AppleSmartIODMA::_asyncAction); without it, it is the
++	 * channel-idle notification and its tag field means nothing.
++	 */
++	bool tagged = !(opcode == APPLE_SIO_OP_DMA_COMPLETE &&
++			!(parameter & APPLE_SIO_DMA_COMPLETE_TAGGED));
++
++	xa_lock_irqsave(&sio->pending, flags);
++	request = tagged ? xa_load(&sio->pending, key) : NULL;
++	if (request && (opcode == request->expected_opcode ||
++			opcode == APPLE_SIO_OP_ERROR ||
++			opcode == APPLE_SIO_OP_DMA_ERROR)) {
++		__xa_erase(&sio->pending, key);
++		request->active = false;
++		request->response = message;
++		request->status = opcode == request->expected_opcode ? 0 : -EIO;
++		matched = true;
++	} else if (endpoint < APPLE_SIO_MAX_ENDPOINTS) {
++		notify = sio->notify[endpoint].fn;
++		notify_data = sio->notify[endpoint].data;
++	}
++	xa_unlock_irqrestore(&sio->pending, flags);
++
++	if (!matched) {
++		/* acks of async submits, DMA idle notifications, ... */
++		sio->unmatched_count++;
++		if (notify)
++			notify(notify_data, message);
++		return;
++	}
++
++	apple_sio_tag_free(sio, request->endpoint, request->tag);
++	if (request->callback)
++		request->callback(request->callback_data, request->status,
++				  request->response);
++	complete_all(&request->done);
++	apple_sio_async_put(request);
++}
++
++static irqreturn_t apple_sio_irq(int irq, void *data)
++{
++	struct apple_sio *sio = data;
++	unsigned int count = 0;
++	u32 status;
++
++	sio->irq_count++;
++	sio->last_irq_legacy =
++		readl_relaxed(sio->base + APPLE_SIO_IRQ_STATUS_LEGACY);
++	sio->last_irq = readl_relaxed(sio->base + APPLE_SIO_IRQ_STATUS);
++	while (count < APPLE_SIO_RX_DRAIN_LIMIT) {
++		status = readl_relaxed(sio->base + APPLE_SIO_RX_STATUS);
++		sio->last_rx_status = status;
++		if (!apple_sio_can_read(status))
++			break;
++
++		sio->last_rx_message =
++			readq_relaxed(sio->base + APPLE_SIO_RX_MESSAGE);
++		apple_sio_dispatch(sio, sio->last_rx_message);
++		count++;
++	}
++
++	if (count == APPLE_SIO_RX_DRAIN_LIMIT)
++		dev_warn_ratelimited(sio->dev, "RX queue drain limit reached\n");
++
++	return IRQ_HANDLED;
++}
++
++static int apple_sio_send(struct apple_sio *sio, u64 message)
++{
++	unsigned long flags;
++	u32 status;
++	int ret;
++
++	mutex_lock(&sio->tx_lock);
++	if (READ_ONCE(sio->stopping)) {
++		ret = -ESHUTDOWN;
++		goto out_unlock;
++	}
++
++	ret = readl_poll_timeout(sio->base + APPLE_SIO_TX_STATUS, status,
++				 apple_sio_can_write(status), 10,
++				 APPLE_SIO_TX_TIMEOUT_US);
++	if (ret)
++		goto out_unlock;
++
++	spin_lock_irqsave(&sio->tx_hw_lock, flags);
++	if (sio->stopping) {
++		ret = -ESHUTDOWN;
++		goto out_hw_unlock;
++	}
++
++	status = readl_relaxed(sio->base + APPLE_SIO_TX_STATUS);
++	if (!apple_sio_can_write(status)) {
++		ret = -EBUSY;
++		goto out_hw_unlock;
++	}
++
++	dma_wmb();
++	sio->last_tx_message = message;
++	writeq_relaxed(message, sio->base + APPLE_SIO_TX_MESSAGE);
++
++out_hw_unlock:
++	spin_unlock_irqrestore(&sio->tx_hw_lock, flags);
++out_unlock:
++	mutex_unlock(&sio->tx_lock);
++	return ret;
++}
++
++static int apple_sio_send_atomic(struct apple_sio *sio, u64 message)
++{
++	unsigned long flags;
++	u32 status;
++	int ret = 0;
++
++	spin_lock_irqsave(&sio->tx_hw_lock, flags);
++	if (sio->stopping) {
++		ret = -ESHUTDOWN;
++		goto out_unlock;
++	}
++
++	status = readl_relaxed(sio->base + APPLE_SIO_TX_STATUS);
++	sio->last_tx_status = status;
++	if (!apple_sio_can_write(status)) {
++		ret = -EBUSY;
++		goto out_unlock;
++	}
++
++	dma_wmb();
++	sio->last_tx_message = message;
++	writeq_relaxed(message, sio->base + APPLE_SIO_TX_MESSAGE);
++
++out_unlock:
++	spin_unlock_irqrestore(&sio->tx_hw_lock, flags);
++	return ret;
++}
++
++void apple_sio_async_put(struct apple_sio_async *request)
++{
++	if (refcount_dec_and_test(&request->refs))
++		kfree(request);
++}
++EXPORT_SYMBOL_GPL(apple_sio_async_put);
++
++static void apple_sio_async_finish(struct apple_sio_async *request,
++				   int status, u64 response, bool notify)
++{
++	struct apple_sio *sio = request->sio;
++
++	apple_sio_tag_free(sio, request->endpoint, request->tag);
++	request->status = status;
++	request->response = response;
++	if (notify && request->callback)
++		request->callback(request->callback_data, status, response);
++	complete_all(&request->done);
++	apple_sio_async_put(request);
++}
++
++static struct apple_sio_async *
++apple_sio_request_async_common(struct apple_sio *sio, u8 endpoint, u8 opcode,
++			       u8 parameter, u32 data, u8 expected_opcode,
++			       apple_sio_async_callback_t callback,
++			       void *callback_data, bool atomic, int fixed_tag)
++{
++	struct apple_sio_async *request;
++	gfp_t gfp = atomic ? GFP_ATOMIC : GFP_KERNEL;
++	unsigned long flags;
++	u64 message;
++	bool finish = false;
++	int tag;
++	int ret;
++
++	if (!READ_ONCE(sio->running) || READ_ONCE(sio->stopping))
++		return ERR_PTR(-ESHUTDOWN);
++
++	request = kzalloc_obj(*request, gfp);
++	if (!request)
++		return ERR_PTR(-ENOMEM);
++
++	tag = apple_sio_tag_alloc(sio, endpoint, fixed_tag);
++	if (tag < 0) {
++		kfree(request);
++		return ERR_PTR(tag);
++	}
++
++	request->sio = sio;
++	request->endpoint = endpoint;
++	INIT_LIST_HEAD(&request->shutdown_node);
++	init_completion(&request->done);
++	refcount_set(&request->refs, 2);
++	request->callback = callback;
++	request->callback_data = callback_data;
++	request->key = apple_sio_request_key(endpoint, tag);
++	request->tag = tag;
++	request->expected_opcode = expected_opcode;
++	request->status = -EINPROGRESS;
++	request->active = true;
++
++	ret = xa_insert(&sio->pending, request->key, request, gfp);
++	if (ret) {
++		apple_sio_tag_free(sio, endpoint, tag);
++		apple_sio_async_put(request);
++		apple_sio_async_put(request);
++		return ERR_PTR(ret);
++	}
++
++	xa_lock_irqsave(&sio->pending, flags);
++	if (sio->stopping &&
++	    xa_load(&sio->pending, request->key) == request) {
++		__xa_erase(&sio->pending, request->key);
++		request->active = false;
++		finish = true;
++	}
++	xa_unlock_irqrestore(&sio->pending, flags);
++	if (finish) {
++		apple_sio_async_finish(request, -ESHUTDOWN, 0, true);
++		return request;
++	}
++
++	message = FIELD_PREP(APPLE_SIO_MSG_ENDPOINT, endpoint) |
++		  FIELD_PREP(APPLE_SIO_MSG_TAG, tag) |
++		  FIELD_PREP(APPLE_SIO_MSG_OPCODE, opcode) |
++		  FIELD_PREP(APPLE_SIO_MSG_PARAMETER, parameter) |
++		  FIELD_PREP(APPLE_SIO_MSG_DATA, data);
++
++	ret = atomic ? apple_sio_send_atomic(sio, message) :
++		       apple_sio_send(sio, message);
++	if (ret) {
++		xa_lock_irqsave(&sio->pending, flags);
++		if (xa_load(&sio->pending, request->key) == request) {
++			__xa_erase(&sio->pending, request->key);
++			request->active = false;
++			finish = true;
++		}
++		xa_unlock_irqrestore(&sio->pending, flags);
++		if (finish)
++			apple_sio_async_finish(request, ret, 0, true);
++	}
++
++	return request;
++}
++
++struct apple_sio_async *
++apple_sio_request_async(struct apple_sio *sio, u8 endpoint, u8 opcode,
++			u8 parameter, u32 data, u8 expected_opcode,
++			apple_sio_async_callback_t callback,
++			void *callback_data)
++{
++	return apple_sio_request_async_common(sio, endpoint, opcode, parameter,
++					      data, expected_opcode, callback,
++					      callback_data, false, -1);
++}
++EXPORT_SYMBOL_GPL(apple_sio_request_async);
++
++struct apple_sio_async *
++apple_sio_request_async_atomic(struct apple_sio *sio, u8 endpoint, u8 opcode,
++			       u8 parameter, u32 data, u8 expected_opcode,
++			       apple_sio_async_callback_t callback,
++			       void *callback_data)
++{
++	return apple_sio_request_async_common(sio, endpoint, opcode, parameter,
++					      data, expected_opcode, callback,
++					      callback_data, true, -1);
++}
++EXPORT_SYMBOL_GPL(apple_sio_request_async_atomic);
++
++static void apple_sio_setup_done(void *data, int status, u64 response)
++{
++	struct apple_sio *sio = data;
++
++	(void)response;
++	if (status) {
++		sio->setup_status = status;
++		complete_all(&sio->setup_done);
++		return;
++	}
++
++	sio->setup_index++;
++	if (sio->setup_index == APPLE_SIO_SETUP_COMMANDS) {
++		sio->setup_status = 0;
++		complete_all(&sio->setup_done);
++		return;
++	}
++
++	apple_sio_submit_setup(sio);
++}
++
++static void apple_sio_submit_setup(struct apple_sio *sio)
++{
++	static const u8 endpoints[APPLE_SIO_SETUP_COMMANDS] = {
++		0, 0, 0, 0, 3, 3, 0, 0, 0, 0,
++	};
++	static const u8 tags[APPLE_SIO_SETUP_COMMANDS] = {
++		1, 2, 3, 4, 1, 2, 5, 6, 7, 8,
++	};
++	static const u8 parameters[APPLE_SIO_SETUP_COMMANDS] = {
++		0x0f, 0x10, 0x1a, 0x1b, 0x0d,
++		0x0e, 0x01, 0x02, 0x0b, 0x0c,
++	};
++	struct apple_sio_async *request;
++	u32 index = sio->setup_index;
++	u32 value;
++
++	switch (index) {
++	case 0:
++		value = lower_32_bits(sio->ep0_general.dma >> 12);
++		break;
++	case 1:
++		value = SZ_16K;
++		break;
++	case 2:
++		value = lower_32_bits(sio->ep0_spi.dma >> 12);
++		break;
++	case 3:
++		value = SZ_8K;
++		break;
++	case 4:
++		value = lower_32_bits(sio->ep3_aux.dma >> 12);
++		break;
++	case 5:
++		value = SZ_16K;
++		break;
++	case 6:
++		value = lower_32_bits(sio->desc0.dma >> 12);
++		break;
++	case 7:
++		value = APPLE_SIO_DESC0_COUNT;
++		break;
++	case 8:
++		value = lower_32_bits(sio->desc1.dma >> 12);
++		break;
++	case 9:
++		value = APPLE_SIO_DESC1_COUNT;
++		break;
++	default:
++		sio->setup_status = -EINVAL;
++		complete_all(&sio->setup_done);
++		return;
++	}
++
++	request = apple_sio_request_async_common(sio, endpoints[index], 0x03,
++						 parameters[index], value, 0x65,
++						 apple_sio_setup_done, sio, true,
++						 tags[index]);
++	if (IS_ERR(request)) {
++		sio->setup_status = PTR_ERR(request);
++		complete_all(&sio->setup_done);
++		return;
++	}
++
++	apple_sio_async_put(request);
++}
++
++int apple_sio_async_cancel(struct apple_sio_async *request)
++{
++	struct apple_sio *sio = request->sio;
++	unsigned long flags;
++	bool cancelled = false;
++
++	xa_lock_irqsave(&sio->pending, flags);
++	if (request->active &&
++	    xa_load(&sio->pending, request->key) == request) {
++		__xa_erase(&sio->pending, request->key);
++		request->active = false;
++		cancelled = true;
++	}
++	xa_unlock_irqrestore(&sio->pending, flags);
++
++	if (cancelled) {
++		apple_sio_async_finish(request, -ECANCELED, 0, false);
++		return 0;
++	}
++
++	wait_for_completion(&request->done);
++	return -EALREADY;
++}
++EXPORT_SYMBOL_GPL(apple_sio_async_cancel);
++
++void apple_sio_cancel_endpoint(struct apple_sio *sio, u8 endpoint)
++{
++	struct apple_sio_async *request;
++	LIST_HEAD(cancelled);
++	unsigned long index;
++	unsigned long flags;
++
++	xa_lock_irqsave(&sio->pending, flags);
++	xa_for_each(&sio->pending, index, request) {
++		if (request->endpoint != endpoint)
++			continue;
++		__xa_erase(&sio->pending, index);
++		request->active = false;
++		list_add_tail(&request->shutdown_node, &cancelled);
++	}
++	xa_unlock_irqrestore(&sio->pending, flags);
++
++	while (!list_empty(&cancelled)) {
++		request = list_first_entry(&cancelled, struct apple_sio_async,
++					   shutdown_node);
++		list_del_init(&request->shutdown_node);
++		apple_sio_async_finish(request, -ECANCELED, 0, true);
++	}
++}
++EXPORT_SYMBOL_GPL(apple_sio_cancel_endpoint);
++
++int apple_sio_request(struct apple_sio *sio, u8 endpoint, u8 opcode,
++		      u8 parameter, u32 data, u8 expected_opcode,
++		      unsigned long timeout, u64 *response)
++{
++	struct apple_sio_async *request;
++	bool timed_out = false;
++	int ret;
++
++	request = apple_sio_request_async(sio, endpoint, opcode, parameter,
++					  data, expected_opcode, NULL, NULL);
++	if (IS_ERR(request))
++		return PTR_ERR(request);
++
++	if (!wait_for_completion_timeout(&request->done, timeout)) {
++		if (!apple_sio_async_cancel(request))
++			timed_out = true;
++	}
++
++	ret = timed_out ? -ETIMEDOUT : request->status;
++	if (!ret && response)
++		*response = request->response;
++
++	apple_sio_async_put(request);
++	return ret;
++}
++EXPORT_SYMBOL_GPL(apple_sio_request);
++
++static void apple_sio_fail_pending(struct apple_sio *sio)
++{
++	struct apple_sio_async *request;
++	LIST_HEAD(shutdown);
++	unsigned long index;
++	unsigned long flags;
++
++	xa_lock_irqsave(&sio->pending, flags);
++	sio->stopping = true;
++	xa_for_each(&sio->pending, index, request) {
++		__xa_erase(&sio->pending, index);
++		request->active = false;
++		list_add_tail(&request->shutdown_node, &shutdown);
++	}
++	xa_unlock_irqrestore(&sio->pending, flags);
++
++	while (!list_empty(&shutdown)) {
++		request = list_first_entry(&shutdown, struct apple_sio_async,
++					   shutdown_node);
++		list_del_init(&request->shutdown_node);
++		apple_sio_async_finish(request, -ESHUTDOWN, 0, true);
++	}
++}
++
++static void apple_sio_stop(struct apple_sio *sio)
++{
++	u32 control;
++
++	WRITE_ONCE(sio->running, false);
++	WRITE_ONCE(sio->stopping, true);
++
++	mutex_lock(&sio->tx_lock);
++	spin_lock_irq(&sio->tx_hw_lock);
++	control = readl(sio->base + APPLE_SIO_CPU_CONTROL);
++	writel(control & ~APPLE_SIO_CPU_RUN,
++	       sio->base + APPLE_SIO_CPU_CONTROL);
++	readl(sio->base + APPLE_SIO_CPU_CONTROL);
++	writel(0, sio->base + APPLE_SIO_REMAP_ENABLE);
++	spin_unlock_irq(&sio->tx_hw_lock);
++	mutex_unlock(&sio->tx_lock);
++
++	apple_sio_fail_pending(sio);
++}
++
++static int apple_sio_start(struct apple_sio *sio, const char *firmware_name)
++{
++	const struct firmware *firmware;
++	dma_addr_t dma;
++	void *buffer;
++	size_t size;
++	u64 counter;
++	unsigned long ready_timeout;
++	u32 control;
++	u32 status;
++	int ret;
++
++	control = readl(sio->base + APPLE_SIO_CPU_CONTROL);
++	if (control & APPLE_SIO_CPU_RUN) {
++		/* Left running by the bootloader chain: reset via the PMGR. */
++		ret = device_reset_optional(sio->dev);
++		control = readl(sio->base + APPLE_SIO_CPU_CONTROL);
++		if (ret || (control & APPLE_SIO_CPU_RUN))
++			return dev_err_probe(sio->dev, -EBUSY,
++					     "SmartIO CPU is already running (reset %d)\n",
++					     ret);
++	}
++
++	/* No user-helper fallback: a missing file must not stall boot. */
++	ret = request_firmware_direct(&firmware, firmware_name, sio->dev);
++	if (ret)
++		return dev_err_probe(sio->dev, ret,
++				     "failed to load firmware %s\n",
++				     firmware_name);
++
++	/* iOS maps the image page-truncated; round up so all of it is mapped */
++	size = ALIGN(firmware->size, SZ_4K);
++	buffer = dma_alloc_coherent(sio->dev, size, &dma, GFP_KERNEL);
++	if (!buffer) {
++		ret = -ENOMEM;
++		goto out_release_firmware;
++	}
++
++	memset(buffer, 0, size);
++	memcpy(buffer, firmware->data, firmware->size);
++	dma_wmb();
++
++	sio->firmware_buffer = buffer;
++	sio->firmware_dma = dma;
++	sio->firmware_size = size;
++
++	writel(0, sio->base + APPLE_SIO_REMAP_IOP_LO);
++	writel(0, sio->base + APPLE_SIO_REMAP_IOP_HI);
++	writel(lower_32_bits(size), sio->base + APPLE_SIO_REMAP_SIZE_LO);
++	writel(upper_32_bits(size), sio->base + APPLE_SIO_REMAP_SIZE_HI);
++	writel(lower_32_bits(dma), sio->base + APPLE_SIO_REMAP_AP_LO);
++	writel(upper_32_bits(dma), sio->base + APPLE_SIO_REMAP_AP_HI);
++	writel(1, sio->base + APPLE_SIO_REMAP_ENABLE);
++
++	writel(0x1111, sio->base + APPLE_SIO_QUEUE_INIT_A);
++	writel(0x1111, sio->base + APPLE_SIO_QUEUE_INIT_B);
++	writel(1, sio->base + APPLE_SIO_QUEUE_START_A);
++	writel(1, sio->base + APPLE_SIO_QUEUE_START_B);
++	writel(0x1000, sio->base + APPLE_SIO_QUEUE_START_A);
++	writel(0x1000, sio->base + APPLE_SIO_QUEUE_START_B);
++	status = readl(sio->base + APPLE_SIO_RX_STATUS);
++	writel(status | APPLE_SIO_MBOX_ENABLE,
++	       sio->base + APPLE_SIO_RX_STATUS);
++
++	control = readl(sio->base + APPLE_SIO_TIME_CONTROL);
++	writel(control & ~BIT(1), sio->base + APPLE_SIO_TIME_CONTROL);
++	counter = arch_timer_read_counter();
++	writel(lower_32_bits(counter), sio->base + APPLE_SIO_TIME_LO);
++	writel(upper_32_bits(counter), sio->base + APPLE_SIO_TIME_HI);
++	writel(control | BIT(1), sio->base + APPLE_SIO_TIME_CONTROL);
++
++	control = readl(sio->base + APPLE_SIO_CPU_CONTROL);
++	writel(control | APPLE_SIO_CPU_RUN,
++	       sio->base + APPLE_SIO_CPU_CONTROL);
++
++	ready_timeout = msecs_to_jiffies(APPLE_SIO_READY_TIMEOUT_MS);
++	if (!wait_for_completion_timeout(&sio->ready, ready_timeout)) {
++		ret = -ETIMEDOUT;
++		goto out_stop;
++	}
++
++	WRITE_ONCE(sio->running, true);
++	release_firmware(firmware);
++	dev_info(sio->dev, "SmartIO firmware ready (%zu bytes)\n", size);
++	return 0;
++
++out_stop:
++	apple_sio_stop(sio);
++	dma_free_coherent(sio->dev, size, buffer, dma);
++	sio->firmware_buffer = NULL;
++	dev_err(sio->dev, "SmartIO firmware did not become ready\n");
++out_release_firmware:
++	release_firmware(firmware);
++	return ret;
++}
++
++static int apple_sio_alloc_region(struct apple_sio *sio,
++				  struct apple_sio_region *region, size_t size)
++{
++	region->buffer = dmam_alloc_coherent(sio->dev, size, &region->dma,
++					     GFP_KERNEL);
++	if (!region->buffer)
++		return -ENOMEM;
++
++	region->size = size;
++	memset(region->buffer, 0, size);
++	return 0;
++}
++
++static int apple_sio_alloc_shared_regions(struct apple_sio *sio)
++{
++	int ret;
++
++	ret = apple_sio_alloc_region(sio, &sio->ep0_general, SZ_16K);
++	if (ret)
++		return ret;
++
++	ret = apple_sio_alloc_region(sio, &sio->ep0_spi, SZ_8K);
++	if (ret)
++		return ret;
++
++	ret = apple_sio_alloc_region(sio, &sio->ep3_aux, SZ_16K);
++	if (ret)
++		return ret;
++
++	ret = apple_sio_alloc_region(sio, &sio->desc0,
++				     APPLE_SIO_DESC0_SIZE);
++	if (ret)
++		return ret;
++
++	return apple_sio_alloc_region(sio, &sio->desc1,
++				      APPLE_SIO_DESC1_SIZE);
++}
++
++static int apple_sio_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	const char *firmware_name;
++	unsigned long setup_timeout;
++	struct apple_sio *sio;
++	int irq;
++	int ret;
++
++	sio = devm_kzalloc(dev, sizeof(*sio), GFP_KERNEL);
++	if (!sio)
++		return -ENOMEM;
++
++	sio->dev = dev;
++	init_completion(&sio->ready);
++	init_completion(&sio->setup_done);
++	sio->setup_status = -EINPROGRESS;
++	mutex_init(&sio->tx_lock);
++	spin_lock_init(&sio->tx_hw_lock);
++	spin_lock_init(&sio->tag_lock);
++	xa_init(&sio->pending);
++	spin_lock_init(&sio->desc0_lock);
++	platform_set_drvdata(pdev, sio);
++
++	ret = devm_pm_runtime_enable(dev);
++	if (ret)
++		goto out_destroy_allocators;
++
++	ret = pm_runtime_resume_and_get(dev);
++	if (ret < 0) {
++		dev_err_probe(dev, ret, "failed to activate power domain\n");
++		goto out_destroy_allocators;
++	}
++
++	sio->base = devm_platform_ioremap_resource_byname(pdev, "a7iop");
++	if (IS_ERR(sio->base)) {
++		ret = PTR_ERR(sio->base);
++		goto out_pm_put;
++	}
++
++	irq = platform_get_irq(pdev, APPLE_SIO_RX_IRQ_INDEX);
++	if (irq < 0) {
++		ret = irq;
++		goto out_pm_put;
++	}
++
++	ret = devm_request_irq(dev, irq, apple_sio_irq, 0,
++			       dev_name(dev), sio);
++	if (ret) {
++		ret = dev_err_probe(dev, ret, "failed to request RX interrupt\n");
++		goto out_pm_put;
++	}
++
++	ret = dma_set_mask_and_coherent(dev, DMA_BIT_MASK(64));
++	if (ret) {
++		ret = dev_err_probe(dev, ret, "failed to set DMA mask\n");
++		goto out_pm_put;
++	}
++
++	sio->desc0_bitmap = devm_bitmap_zalloc(dev, APPLE_SIO_DESC0_COUNT,
++					       GFP_KERNEL);
++	if (!sio->desc0_bitmap) {
++		ret = -ENOMEM;
++		goto out_pm_put;
++	}
++
++	ret = apple_sio_alloc_shared_regions(sio);
++	if (ret)
++		goto out_pm_put;
++
++	ret = of_property_read_string(dev->of_node, "firmware-name",
++				      &firmware_name);
++	if (ret) {
++		ret = dev_err_probe(dev, ret, "missing firmware-name\n");
++		goto out_pm_put;
++	}
++
++	ret = apple_sio_start(sio, firmware_name);
++	if (ret)
++		goto out_pm_put;
++
++	setup_timeout = msecs_to_jiffies(APPLE_SIO_REQUEST_TIMEOUT_MS);
++	if (!wait_for_completion_timeout(&sio->setup_done, setup_timeout)) {
++		ret = -ETIMEDOUT;
++		dev_err(dev,
++			"SmartIO setup timed out: index=%u irqs=%u unmatched=%u irq=%#x/%#x rx_status=%#x tx_status=%#x rx=%#llx tx=%#llx\n",
++			sio->setup_index, sio->irq_count, sio->unmatched_count,
++			sio->last_irq_legacy, sio->last_irq,
++			sio->last_rx_status, sio->last_tx_status,
++			sio->last_rx_message, sio->last_tx_message);
++		goto out_stop;
++	}
++	ret = sio->setup_status;
++	if (ret) {
++		dev_err_probe(dev, ret, "SmartIO shared-region setup failed\n");
++		goto out_stop;
++	}
++
++	dev_info(dev, "SmartIO shared regions configured\n");
++
++	sio->dma_pdev = platform_device_register_data(dev, "apple-sio-dma",
++						      PLATFORM_DEVID_AUTO,
++						      &sio, sizeof(sio));
++	if (IS_ERR(sio->dma_pdev)) {
++		ret = dev_err_probe(dev, PTR_ERR(sio->dma_pdev),
++				    "failed to register DMA child\n");
++		sio->dma_pdev = NULL;
++		goto out_stop;
++	}
++
++	return 0;
++
++out_stop:
++	apple_sio_stop(sio);
++	dma_free_coherent(dev, sio->firmware_size, sio->firmware_buffer,
++			  sio->firmware_dma);
++	sio->firmware_buffer = NULL;
++
++out_pm_put:
++	pm_runtime_put_sync(dev);
++out_destroy_allocators:
++	xa_destroy(&sio->pending);
++	return ret;
++}
++
++static void apple_sio_remove(struct platform_device *pdev)
++{
++	struct apple_sio *sio = platform_get_drvdata(pdev);
++
++	platform_device_unregister(sio->dma_pdev);
++	apple_sio_stop(sio);
++	dma_free_coherent(sio->dev, sio->firmware_size,
++			  sio->firmware_buffer, sio->firmware_dma);
++	pm_runtime_put_sync(sio->dev);
++	xa_destroy(&sio->pending);
++}
++
++static const struct of_device_id apple_sio_of_match[] = {
++	{ .compatible = "apple,s8000-sio" },
++	{ .compatible = "apple,t8010-sio" },
++	{}
++};
++MODULE_DEVICE_TABLE(of, apple_sio_of_match);
++
++static struct platform_driver apple_sio_driver = {
++	.driver = {
++		.name = "apple-sio",
++		.of_match_table = apple_sio_of_match,
++		/* firmware boot waits up to ~6 s: never hold up other probes */
++		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
++	},
++	.probe = apple_sio_probe,
++	.remove = apple_sio_remove,
++};
++module_platform_driver(apple_sio_driver);
++
++MODULE_FIRMWARE("apple/s8000-smartio.bin");
++MODULE_FIRMWARE("apple/t8010-smartio.bin");
++MODULE_DESCRIPTION("Apple S8000/T8010 SmartIO coprocessor driver");
++MODULE_LICENSE("Dual MIT/GPL");
+diff --git a/drivers/spi/Kconfig b/drivers/spi/Kconfig
+index a0f37e2df71658f54e2076f13d77dc494557e290..fc3bc0c0de2ac7c89afc25f23f348e65da40269c 100644
+--- a/drivers/spi/Kconfig
++++ b/drivers/spi/Kconfig
+@@ -118,6 +118,13 @@ config SPI_AMLOGIC_SPISG
+ 	  communication controller), which is available on platforms such as
+ 	  Amlogic A4 SoCs.
+ 
++config SPI_APPLE_S8000
++	tristate "Apple S8000 Samsung SPI v1 PIO controller"
++	depends on ARCH_APPLE || COMPILE_TEST
++	depends on OF && COMMON_CLK
++	help
++	  Bounded byte-wide PIO support for the legacy SPI controller on A9.
++
+ config SPI_APPLE
+ 	tristate "Apple SoC SPI Controller platform driver"
+ 	depends on ARCH_APPLE || COMPILE_TEST
+diff --git a/drivers/spi/Makefile b/drivers/spi/Makefile
+index a18814fbde93f416bb1ca7877443669e61dbb7ad..515b424bc2963d35d2411974b5cce87c73654712 100644
+--- a/drivers/spi/Makefile
++++ b/drivers/spi/Makefile
+@@ -181,3 +181,4 @@ obj-$(CONFIG_SPI_SLAVE_SYSTEM_CONTROL)	+= spi-slave-system-control.o
+ # SPI offload triggers
+ obj-$(CONFIG_SPI_OFFLOAD_TRIGGER_PWM)	+= spi-offload-trigger-pwm.o
+ obj-$(CONFIG_SPI_OFFLOAD_TRIGGER_ADI_UTIL_SD) += spi-offload-trigger-adi-util-sigma-delta.o
++obj-$(CONFIG_SPI_APPLE_S8000) += spi-apple-s8000.o
+diff --git a/drivers/spi/spi-apple-s8000.c b/drivers/spi/spi-apple-s8000.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..7bfa9be80c30adcb78e396d6e300dc9dfee4de19
+--- /dev/null
++++ b/drivers/spi/spi-apple-s8000.c
+@@ -0,0 +1,360 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/* Apple S8000 Samsung SPI v1 controller, bounded byte-wide PIO. */
++#include <linux/bitfield.h>
++#include <linux/clk.h>
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/io.h>
++#include <linux/kexec.h>
++#include <linux/ktime.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/pm_runtime.h>
++#include <linux/sizes.h>
++#include <linux/spi/spi.h>
++
++#define S8000_CTRL		0x00
++#define S8000_CTRL_ENABLE	0x0d
++#define S8000_CFG		0x04
++#define S8000_CFG_BASE		0x4018
++#define S8000_CFG_CPHA		BIT(1)
++#define S8000_CFG_CPOL		BIT(2)
++#define S8000_CFG_PIO		BIT(5)
++#define S8000_STATUS		0x08
++#define S8000_STATUS_CLEAR	0x40000f
++#define S8000_TX_LEVEL		GENMASK(10, 6)
++#define S8000_RX_LEVEL		GENMASK(15, 11)
++#define S8000_PIN		0x0c
++#define S8000_PIN_CS		BIT(1)
++#define S8000_TXDATA		0x10
++#define S8000_RXDATA		0x20
++#define S8000_CLKDIV		0x30
++#define S8000_RXCNT		0x34
++#define S8000_WORD_DELAY		0x38
++#define S8000_TXCNT		0x4c
++#define S8000_FIFO_DEPTH		16
++#define S8000_DIV_MAX		2047
++#define S8000_XFER_TIMEOUT_US	1000000
++
++static bool autosuspend;
++module_param(autosuspend, bool, 0444);
++MODULE_PARM_DESC(autosuspend, "Experimental PIO domain autosuspend (default: off)");
++
++struct s8000_spi {
++	void __iomem *base;
++	struct clk *clk;
++	bool held;
++	unsigned int traced_xfers;
++};
++
++/* Only documented version-1 registers, with RUN, DMA/IRQ modes and counts off.
++ * Retain the existing CTRL_ENABLE sequence for subsequent FIFO transfers.
++ * Do not touch SmartIO: this driver never submits DMA descriptors.
++ */
++static int s8000_spi_idle(struct s8000_spi *spi, struct device *dev)
++{
++	u32 ctrl, cfg, status;
++
++	dev_info(dev, "SPI idle begin\n");
++	ctrl = readl(spi->base + S8000_CTRL);
++	cfg = readl(spi->base + S8000_CFG);
++	status = readl(spi->base + S8000_STATUS);
++	dev_info(dev, "SPI inherited ctrl=%#x cfg=%#x status=%#x\n",
++		 ctrl, cfg, status);
++	writel(0, spi->base + S8000_CTRL);
++	writel(S8000_CFG_BASE, spi->base + S8000_CFG);
++	writel(0, spi->base + S8000_RXCNT);
++	writel(0, spi->base + S8000_TXCNT);
++	writel(S8000_PIN_CS, spi->base + S8000_PIN);
++	writel(S8000_STATUS_CLEAR, spi->base + S8000_STATUS);
++	/* Complete posted writes before publishing children or leaving Linux. */
++	ctrl = readl(spi->base + S8000_CTRL);
++	if (ctrl) {
++		dev_err(dev, "SPI failed to stop: ctrl=%#x\n", ctrl);
++		return -EIO;
++	}
++	dev_info(dev, "SPI idle complete\n");
++	return 0;
++}
++
++static void s8000_spi_pm_put(void *data)
++{
++	struct device *dev = data;
++	struct spi_controller *ctlr = dev_get_drvdata(dev);
++	struct s8000_spi *spi = spi_controller_get_devdata(ctlr);
++
++	pm_runtime_dont_use_autosuspend(dev);
++	if (spi->held)
++		pm_runtime_put_sync(dev);
++	else
++		pm_runtime_barrier(dev);
++}
++
++static void s8000_spi_set_cs(struct spi_device *device, bool high)
++{
++	struct s8000_spi *spi = spi_controller_get_devdata(device->controller);
++
++	/* Descriptor-backed chip selects belong to the SPI core. */
++	if (!spi_get_csgpiod(device, 0))
++		writel(high ? S8000_PIN_CS : 0, spi->base + S8000_PIN);
++}
++
++static size_t s8000_spi_max_transfer_size(struct spi_device *device)
++{
++	/* Bound both FIFO work and worst-case wall time for malformed clients. */
++	return SZ_64K;
++}
++
++static int s8000_spi_transfer_one(struct spi_controller *ctlr,
++				 struct spi_device *device,
++				 struct spi_transfer *transfer)
++{
++	struct s8000_spi *spi = spi_controller_get_devdata(ctlr);
++	const u8 *tx = transfer->tx_buf;
++	u8 *rx = transfer->rx_buf;
++	unsigned long rate = clk_get_rate(spi->clk);
++	unsigned int sent = 0, received = 0, iterations = 0;
++	u32 speed = transfer->speed_hz ?: device->max_speed_hz;
++	u32 divisor, cfg, status, tx_level, rx_level;
++	u64 word_delay_cycles;
++	ktime_t deadline;
++	int word_delay_ns, ret = 0;
++	bool traced = spi->traced_xfers < 8;
++
++	if (!transfer->len)
++		return 0;
++	if (transfer->bits_per_word != 8 || !speed || !rate ||
++	    transfer->len > SZ_64K)
++		return -EINVAL;
++	divisor = DIV_ROUND_UP(rate, speed);
++	if (!divisor || divisor > S8000_DIV_MAX)
++		return -EINVAL;
++	transfer->effective_speed_hz = rate / divisor;
++	/* The SPI core merges the device minimum into transfer->word_delay. */
++	word_delay_ns = spi_delay_to_ns(&transfer->word_delay, transfer);
++	if (word_delay_ns < 0)
++		return word_delay_ns;
++	/* WORD_DELAY counts input-clock cycles, not divided SCK cycles. */
++	word_delay_cycles = DIV_ROUND_UP_ULL((u64)rate * word_delay_ns,
++					    NSEC_PER_SEC);
++	if (word_delay_cycles > U32_MAX)
++		return -EINVAL;
++	cfg = S8000_CFG_BASE;
++	if (device->mode & SPI_CPHA)
++		cfg |= S8000_CFG_CPHA;
++	if (device->mode & SPI_CPOL)
++		cfg |= S8000_CFG_CPOL;
++
++	if (traced) {
++		spi->traced_xfers++;
++		dev_info(&device->dev, "PIO begin %u len=%u speed=%u\n",
++			 spi->traced_xfers, transfer->len, transfer->effective_speed_hz);
++	}
++	/* spi-version 1 has FIFO counts in STATUS, unlike the M1 controller. */
++	writel(0, spi->base + S8000_CTRL);
++	writel(divisor, spi->base + S8000_CLKDIV);
++	writel(word_delay_cycles, spi->base + S8000_WORD_DELAY);
++	writel(S8000_STATUS_CLEAR, spi->base + S8000_STATUS);
++	writel(cfg, spi->base + S8000_CFG);
++	writel(S8000_CTRL_ENABLE, spi->base + S8000_CTRL);
++	writel(transfer->len, spi->base + S8000_RXCNT);
++	writel(transfer->len, spi->base + S8000_TXCNT);
++	writel(cfg | S8000_CFG_PIO, spi->base + S8000_CFG);
++	deadline = ktime_add_us(ktime_get(), S8000_XFER_TIMEOUT_US);
++
++	while (received < transfer->len) {
++		status = readl(spi->base + S8000_STATUS);
++		tx_level = FIELD_GET(S8000_TX_LEVEL, status);
++		rx_level = FIELD_GET(S8000_RX_LEVEL, status);
++		if (tx_level > S8000_FIFO_DEPTH || rx_level > S8000_FIFO_DEPTH ||
++		    rx_level > transfer->len - received ||
++		    rx_level > sent - received) {
++			dev_err(&device->dev,
++				"invalid PIO FIFO: tx=%u rx=%u status=%#x\n",
++				sent, received, status);
++			ret = -EIO;
++			break;
++		}
++		writel(status, spi->base + S8000_STATUS);
++		while (rx_level--) {
++			u8 value = readl(spi->base + S8000_RXDATA);
++
++			if (rx)
++				rx[received] = value;
++			received++;
++		}
++		/* Never queue more than one RX FIFO's worth of unconsumed data. */
++		while (sent < transfer->len && tx_level < S8000_FIFO_DEPTH &&
++		       sent - received < S8000_FIFO_DEPTH) {
++			writel(tx ? tx[sent] : 0xff, spi->base + S8000_TXDATA);
++			sent++;
++			tx_level++;
++		}
++		if (ktime_compare(ktime_get(), deadline) >= 0) {
++			dev_err(&device->dev,
++				"PIO timeout: tx %u/%u rx %u/%u status=%#x\n",
++				sent, transfer->len, received, transfer->len, status);
++			ret = -ETIMEDOUT;
++			break;
++		}
++		if (!(++iterations & 0xff))
++			cond_resched();
++		cpu_relax();
++	}
++	writel(cfg, spi->base + S8000_CFG);
++	writel(0, spi->base + S8000_CTRL);
++	writel(S8000_STATUS_CLEAR, spi->base + S8000_STATUS);
++	readl(spi->base + S8000_CTRL);
++	if (traced) {
++		dev_info(&device->dev, "PIO end %u ret=%d tx=%u rx=%u\n",
++			 spi->traced_xfers, ret, sent, received);
++	}
++	return ret;
++}
++
++static int s8000_spi_runtime_suspend(struct device *dev)
++{
++	struct s8000_spi *spi = spi_controller_get_devdata(dev_get_drvdata(dev));
++
++	/* SPI core holds a PM reference across the entire message, including CS. */
++	writel(0, spi->base + S8000_CTRL);
++	readl(spi->base + S8000_CTRL);
++	return 0;
++}
++
++static int s8000_spi_runtime_resume(struct device *dev)
++{
++	struct s8000_spi *spi = spi_controller_get_devdata(dev_get_drvdata(dev));
++
++	if (!autosuspend)
++		return 0;
++	/* genpd has powered the block before this callback. No IRQs or DMA. */
++	writel(0, spi->base + S8000_CTRL);
++	writel(S8000_PIN_CS, spi->base + S8000_PIN);
++	writel(S8000_CFG_BASE, spi->base + S8000_CFG);
++	writel(S8000_STATUS_CLEAR, spi->base + S8000_STATUS);
++	/* CLKDIV, WORD_DELAY, CFG and counts are programmed per transfer. */
++	return 0;
++}
++
++static const struct dev_pm_ops s8000_spi_pm_ops = {
++	SET_RUNTIME_PM_OPS(s8000_spi_runtime_suspend, s8000_spi_runtime_resume, NULL)
++};
++
++static int s8000_spi_probe(struct platform_device *pdev)
++{
++	struct spi_controller *ctlr;
++	struct s8000_spi *spi;
++	unsigned long rate;
++	int ret;
++
++	ctlr = devm_spi_alloc_host(&pdev->dev, sizeof(*spi));
++	if (!ctlr)
++		return -ENOMEM;
++	spi = spi_controller_get_devdata(ctlr);
++	spi->base = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(spi->base))
++		return PTR_ERR(spi->base);
++	spi->clk = devm_clk_get_enabled(&pdev->dev, NULL);
++	if (IS_ERR(spi->clk))
++		return dev_err_probe(&pdev->dev, PTR_ERR(spi->clk), "missing SPI input clock\n");
++	rate = clk_get_rate(spi->clk);
++	if (!rate)
++		return -EINVAL;
++	platform_set_drvdata(pdev, ctlr);
++	if (autosuspend) {
++		pm_runtime_set_autosuspend_delay(&pdev->dev, 1000);
++		pm_runtime_use_autosuspend(&pdev->dev);
++	}
++	ret = devm_pm_runtime_enable(&pdev->dev);
++	if (ret)
++		return ret;
++	ret = pm_runtime_resume_and_get(&pdev->dev);
++	if (ret < 0)
++		return ret;
++	spi->held = true;
++	/* Keep the default bring-up reference unless explicitly opted in. */
++	ret = devm_add_action_or_reset(&pdev->dev, s8000_spi_pm_put, &pdev->dev);
++	if (ret)
++		return ret;
++
++	ctlr->bus_num = -1;
++	ctlr->num_chipselect = 1;
++	ctlr->mode_bits = SPI_CPHA | SPI_CPOL;
++	ctlr->bits_per_word_mask = SPI_BPW_MASK(8);
++	ctlr->min_speed_hz = DIV_ROUND_UP(rate, S8000_DIV_MAX);
++	ctlr->max_speed_hz = rate;
++	ctlr->set_cs = s8000_spi_set_cs;
++	ctlr->transfer_one = s8000_spi_transfer_one;
++	ctlr->max_transfer_size = s8000_spi_max_transfer_size;
++	ctlr->use_gpio_descriptors = true;
++	ctlr->auto_runtime_pm = autosuspend;
++	ret = s8000_spi_idle(spi, &pdev->dev);
++	if (ret)
++		return ret;
++	/* No controller IRQ enable bits are set: every PIO transfer is bounded. */
++	dev_info(&pdev->dev, "Samsung SPI v1 PIO, input clock %lu Hz\n", rate);
++	dev_info(&pdev->dev, "SPI register/children begin\n");
++	ret = devm_spi_register_controller(&pdev->dev, ctlr);
++	dev_info(&pdev->dev, "SPI register/children end ret=%d\n", ret);
++	if (ret)
++		return ret;
++	if (autosuspend) {
++		spi->held = false;
++		pm_runtime_mark_last_busy(&pdev->dev);
++		pm_runtime_put_autosuspend(&pdev->dev);
++		dev_info(&pdev->dev, "experimental 1000ms domain autosuspend enabled\n");
++	}
++	return 0;
++}
++
++static void s8000_spi_shutdown(struct platform_device *pdev)
++{
++	struct spi_controller *ctlr = platform_get_drvdata(pdev);
++	struct s8000_spi *spi = spi_controller_get_devdata(ctlr);
++	int ret;
++	unsigned int cs;
++
++	/* device_shutdown() has already stopped the children (N1 masks/frees
++	 * its IRQ before asserting reset). Drain before touching controller MMIO.
++	 */
++	dev_info(&pdev->dev, "SPI shutdown queue begin\n");
++	ret = spi_controller_suspend(ctlr);
++	if (!ret)
++		ret = pm_runtime_resume_and_get(&pdev->dev);
++	if (ret >= 0) {
++		/* Core-owned GPIO selects may have been retained by cs_change. */
++		if (ctlr->cs_gpiods)
++			for (cs = 0; cs < ctlr->num_chipselect; cs++)
++				gpiod_set_value_cansleep(ctlr->cs_gpiods[cs], 0);
++		ret = s8000_spi_idle(spi, &pdev->dev);
++	}
++	if (ret < 0) {
++		dev_err(&pdev->dev, "SPI shutdown failed: %d\n", ret);
++		if (kexec_in_progress)
++			panic("S8000 SPI shutdown failed before kexec: %d", ret);
++		return;
++	}
++	/* Pin runtime power until the jump; no transfers may restart here. */
++	dev_info(&pdev->dev, "SPI shutdown complete\n");
++}
++
++static const struct of_device_id s8000_spi_match[] = {
++	{ .compatible = "apple,s8000-spi" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, s8000_spi_match);
++
++static struct platform_driver s8000_spi_driver = {
++	.probe = s8000_spi_probe,
++	.shutdown = s8000_spi_shutdown,
++	.driver = {
++		.name = "apple-s8000-spi",
++		.of_match_table = s8000_spi_match,
++		.pm = &s8000_spi_pm_ops,
++	},
++};
++module_platform_driver(s8000_spi_driver);
++MODULE_DESCRIPTION("Apple S8000 Samsung SPI v1 PIO controller");
++MODULE_LICENSE("GPL");
+diff --git a/include/linux/soc/apple/sio.h b/include/linux/soc/apple/sio.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..6a0510644a8c07676948dde429feff80ebbb65f4
+--- /dev/null
++++ b/include/linux/soc/apple/sio.h
+@@ -0,0 +1,71 @@
++/* SPDX-License-Identifier: GPL-2.0-only OR MIT */
++#ifndef _LINUX_SOC_APPLE_SIO_H_
++#define _LINUX_SOC_APPLE_SIO_H_
++
++#include <linux/types.h>
++
++struct apple_sio;
++struct apple_sio_async;
++
++/* Endpoint numbers are 8 bits; the firmware names 0x00..0x81. */
++#define APPLE_SIO_MAX_ENDPOINTS		0x82
++
++/*
++ * The firmware keeps 32 response slots per endpoint and indexes them by
++ * tag - 1 (AppleSmartIODMAController::responseForEndpointAndTag), so tags
++ * are allocated per endpoint in 1..APPLE_SIO_MAX_TAG.
++ */
++#define APPLE_SIO_MAX_TAG		31
++
++/*
++ * Shim configuration of a DMA endpoint (op 5). These are the words of an
++ * Apple ADT "dma-channels" record after the endpoint number, as sent by
++ * AppleSmartIODMA::_configureDMA. DMA clients pass it through
++ * dma_slave_config.peripheral_config; @limit 0 means "derive from the
++ * slave config's burst".
++ */
++struct apple_sio_dma_config {
++	u32 xfer;	/* transfer control, e.g. 0x21 16-bit / 0x22 32-bit (MCA) */
++	u32 timeout;
++	u32 fifo;	/* shim FIFO, bytes */
++	u32 trigger;	/* shim trigger level, bytes */
++	u32 limit;	/* client FIFO depth, bytes (setFIFODepth) */
++	u32 word5;	/* ADT word 5 */
++	u32 frame;	/* setFrameSize, 0 unless the client sets it */
++	u32 word7;	/* ADT word 6 */
++};
++
++typedef void (*apple_sio_async_callback_t)(void *data, int status,
++					   u64 response);
++typedef void (*apple_sio_notify_t)(void *data, u64 message);
++
++void *apple_sio_desc0_alloc(struct apple_sio *sio, unsigned int slots,
++			    u32 *first_slot);
++void apple_sio_desc0_free(struct apple_sio *sio, u32 first_slot,
++			  unsigned int slots);
++
++struct apple_sio_async *
++apple_sio_request_async(struct apple_sio *sio, u8 endpoint, u8 opcode,
++			u8 parameter, u32 data, u8 expected_opcode,
++			apple_sio_async_callback_t callback,
++			void *callback_data);
++struct apple_sio_async *
++apple_sio_request_async_atomic(struct apple_sio *sio, u8 endpoint, u8 opcode,
++			       u8 parameter, u32 data, u8 expected_opcode,
++			       apple_sio_async_callback_t callback,
++			       void *callback_data);
++int apple_sio_async_cancel(struct apple_sio_async *request);
++void apple_sio_async_put(struct apple_sio_async *request);
++
++int apple_sio_request(struct apple_sio *sio, u8 endpoint, u8 opcode,
++		      u8 parameter, u32 data, u8 expected_opcode,
++		      unsigned long timeout, u64 *response);
++
++/* Fail every outstanding request on @endpoint with -ECANCELED. */
++void apple_sio_cancel_endpoint(struct apple_sio *sio, u8 endpoint);
++
++/* Messages on @endpoint that match no pending request (IRQ context). */
++void apple_sio_set_notify(struct apple_sio *sio, u8 endpoint,
++			  apple_sio_notify_t notify, void *data);
++
++#endif

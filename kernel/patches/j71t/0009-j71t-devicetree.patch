@@ -1,0 +1,2698 @@
+S8003 and J71t device trees
+
+Generated from linux-a9 a9/release 9dbc8612b3b0 by scripts/orchard/j71t-series.py.
+
+diff --git a/arch/arm64/boot/dts/apple/s800-0-3-pmgr.dtsi b/arch/arm64/boot/dts/apple/s800-0-3-pmgr.dtsi
+index 196b8e745a957c3735ea68bd2d035c0fb891b9fa..bdae99a4e2839a5caa7fa76ef90327be2ecfac5d 100644
+--- a/arch/arm64/boot/dts/apple/s800-0-3-pmgr.dtsi
++++ b/arch/arm64/boot/dts/apple/s800-0-3-pmgr.dtsi
+@@ -82,6 +82,11 @@ ps_gpio: power-controller@80118 {
+ 		#power-domain-cells = <0>;
+ 		#reset-cells = <0>;
+ 		label = "gpio";
++		/*
++		 * Holds the PCIe PERST# lines and the wake buttons: suspend
++		 * must not power it off under live links.
++		 */
++		apple,always-on;
+ 	};
+ 
+ 	ps_pms: power-controller@80120 {
+diff --git a/arch/arm64/boot/dts/apple/s800-0-3.dtsi b/arch/arm64/boot/dts/apple/s800-0-3.dtsi
+index fc7dc7c5ba3a4ff53b104b7f1b87d5a4766d8c9f..21fe566414f5eca806ebdc0cf26339c51704b136 100644
+--- a/arch/arm64/boot/dts/apple/s800-0-3.dtsi
++++ b/arch/arm64/boot/dts/apple/s800-0-3.dtsi
+@@ -76,6 +76,21 @@ cpufreq: performance-controller@202220000 {
+ 			#performance-domain-cells = <0>;
+ 		};
+ 
++		/*
++		 * Imagination PowerVR MSVDX ("VXD") hardware video decoder,
++		 * ADT node vxd@7F00000 (vxd-version 7, level 4.2 H.264).
++		 * No DART: the core carries its own two-level GART, which
++		 * the apple-vxd driver programs.  The DEVA firmware is not
++		 * in the DT (the iOS kext embeds it); Linux loads it from
++		 * /lib/firmware/apple/vxd-deva.bin.
++		 */
++		vxd@207f00000 {
++			compatible = "apple,s8000-vxd";
++			reg = <0x2 0x07f00000 0x0 0x100000>;
++			interrupts = <AIC_IRQ 157 IRQ_TYPE_LEVEL_HIGH>;
++			power-domains = <&ps_vdec>;
++		};
++
+ 		serial0: serial@20a0c0000 {
+ 			compatible = "apple,s5l-uart";
+ 			reg = <0x2 0x0a0c0000 0x0 0x4000>;
+@@ -209,9 +224,9 @@ aic: interrupt-controller@20e100000 {
+ 			power-domains = <&ps_aic>;
+ 		};
+ 
+-		dwi_bl: backlight@20e200080 {
++		dwi_bl: backlight@20e200000 {
+ 			compatible = "apple,s8000-dwi-bl", "apple,dwi-bl";
+-			reg = <0x2 0x0e200080 0x0 0x8>;
++			reg = <0x2 0x0e200000 0x0 0x4000>;
+ 			power-domains = <&ps_dwi>;
+ 			status = "disabled";
+ 		};
+@@ -290,6 +305,40 @@ wdt: watchdog@2102b0000 {
+ 			interrupt-parent = <&aic>;
+ 			interrupts = <AIC_IRQ 4 IRQ_TYPE_LEVEL_HIGH>;
+ 		};
++
++		/*
++		 * dma-range, error-reflector, fetch-config and diag-config are
++		 * the j71t ADT dart-apcie0/1 vm-offset/vm-size, error-reflector,
++		 * fetch-config and diag-config, which iOS programs at every
++		 * DART init.
++		 */
++		pcie0_dart0: iommu@601008000 {
++			compatible = "apple,s8000-dart", "apple,s5l8960x-dart";
++			reg = <0x6 0x01008000 0x0 0x4000>;
++			#iommu-cells = <1>;
++			interrupt-parent = <&aic>;
++			interrupts = <AIC_IRQ 245 IRQ_TYPE_LEVEL_HIGH>;
++			power-domains = <&ps_pcie_link0>;
++			apple,dma-range = <0x0 0x80000000 0x0 0x3c000000>;
++			apple,error-reflector = /bits/ 64 <0x20fffc000>;
++			apple,fetch-config = <0x000e0303>;
++			apple,diag-config = <0x00000100>;
++			status = "disabled";
++		};
++
++		pcie0_dart1: iommu@602008000 {
++			compatible = "apple,s8000-dart", "apple,s5l8960x-dart";
++			reg = <0x6 0x02008000 0x0 0x4000>;
++			#iommu-cells = <1>;
++			interrupt-parent = <&aic>;
++			interrupts = <AIC_IRQ 248 IRQ_TYPE_LEVEL_HIGH>;
++			power-domains = <&ps_pcie_link1>;
++			apple,dma-range = <0x0 0x80000000 0x0 0x3ffff000>;
++			apple,error-reflector = /bits/ 64 <0x20fffc000>;
++			apple,fetch-config = <0x000e0303>;
++			apple,diag-config = <0x00000100>;
++			status = "disabled";
++		};
+ 	};
+ 
+ 	timer {
+diff --git a/arch/arm64/boot/dts/apple/s8003-j71t-audio.dtsi b/arch/arm64/boot/dts/apple/s8003-j71t-audio.dtsi
+new file mode 100644
+index 0000000000000000000000000000000000000000..ad463056f73d7baa8a83f3e037ce375e984e707b
+--- /dev/null
++++ b/arch/arm64/boot/dts/apple/s8003-j71t-audio.dtsi
+@@ -0,0 +1,161 @@
++// SPDX-License-Identifier: GPL-2.0+ OR MIT
++/*
++ * J71t audio: CS42L81 on SPI1 (control) + MCA0 (data). Built-in speakers,
++ * 3.5 mm headphones and the two built-in DMICs (capture over MCA0 RX).
++ * Values: Apple's J71t ADT and iOS 16.7.10's AppleCS42L81Audio/AppleAE2MCA
++ * (linux-a9 docs/audio/playback-path.md, ds-capture-and-jack.md). Items
++ * marked "inferred" are unverified on hardware.
++ */
++
++/ {
++	/* Live iOS arm-io clock-frequencies[0x12e - 0x100] (spi1 clock-ids) */
++	spi1_nclk: clock-spi1 {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++		clock-frequency = <61538461>;
++	};
++
++	sound: sound {
++		compatible = "simple-audio-card";
++		/* name kept from the speaker-only card: ALSA card id iPad5Speakers */
++		simple-audio-card,name = "iPad5 Speakers";
++		simple-audio-card,format = "i2s";
++		simple-audio-card,bitclock-master = <&j71t_codec_dai>;
++		simple-audio-card,frame-master = <&j71t_codec_dai>;
++		simple-audio-card,widgets = "Speaker", "Speakers",
++					    "Headphone", "Headphones",
++					    "Microphone", "Internal Mic";
++		/* ADT dmic1a-intmic "cimi", dmic1b-intmic "cims" */
++		simple-audio-card,routing = "Speakers", "SPKOUT",
++					    "Headphones", "HPOUT",
++					    "DMIC1A", "Internal Mic",
++					    "DMIC1B", "Internal Mic";
++		/*
++		 * The codec's "Headphone Jack" switches HPOUT/SPKOUT; these add
++		 * user switches on top (ALSA "Speakers/Headphones Switch").
++		 */
++		simple-audio-card,pin-switches = "Speakers", "Headphones";
++
++		simple-audio-card,cpu {
++			sound-dai = <&mca0>;
++		};
++
++		j71t_codec_dai: simple-audio-card,codec {
++			sound-dai = <&cs42l81>;
++		};
++	};
++};
++
++/*
++ * SmartIO coprocessor domain: PMGR device "SIO" is index 12 in the ADT, next
++ * to SIO_BUSIF (10, 0x80150) and SIO_P (11, 0x80158) -> 0x80160 (inferred).
++ */
++&pmgr {
++	ps_sio: power-controller@80160 {
++		compatible = "apple,s8000-pmgr-pwrstate", "apple,pmgr-pwrstate";
++		reg = <0x80160 4>;
++		#power-domain-cells = <0>;
++		#reset-cells = <0>;
++		label = "sio";
++		power-domains = <&ps_sio_p>;
++	};
++};
++
++&{/soc} {
++	/* ADT /arm-io/sio: iop,s8000, iop-version 1 (AppleA7IOPV1) */
++	sio: dma-controller@20ae00000 {
++		compatible = "apple,s8000-sio";
++		reg = <0x2 0x0ae00000 0x0 0x10000>,
++		      <0x2 0x0a000000 0x0 0x2000>;
++		reg-names = "a7iop", "shim";
++		interrupt-parent = <&aic>;
++		/* ADT order; the driver takes index 2 (187) as the RX mailbox */
++		interrupts = <AIC_IRQ 185 IRQ_TYPE_LEVEL_HIGH>,
++			     <AIC_IRQ 184 IRQ_TYPE_LEVEL_HIGH>,
++			     <AIC_IRQ 187 IRQ_TYPE_LEVEL_HIGH>,
++			     <AIC_IRQ 186 IRQ_TYPE_LEVEL_HIGH>;
++		power-domains = <&ps_sio>;
++		resets = <&ps_sio>;
++		firmware-name = "apple/s8000-smartio.bin";
++		dma-channels = <64>;
++		#dma-cells = <1>;
++	};
++
++	i2s_switch: syscon@20a003000 {
++		compatible = "apple,s8000-i2s-switch", "syscon";
++		reg = <0x2 0x0a003000 0x0 0x1000>;
++	};
++
++	mca0: mca@20a0a0000 {
++		compatible = "apple,s8000-mca";
++		reg = <0x2 0x0a0a0000 0x0 0x4000>,
++		      <0x2 0x0a002000 0x0 0x4>;
++		reg-names = "mca", "mclk";
++		interrupt-parent = <&aic>;
++		interrupts = <AIC_IRQ 201 IRQ_TYPE_LEVEL_HIGH>;
++		power-domains = <&ps_mca0>;
++		#sound-dai-cells = <0>;
++		#clock-cells = <0>;
++		clock-output-names = "mca0-mclk";
++		/* nclk (24 MHz fixed, inferred) / 2 = 12 MHz, output enabled */
++		apple,mclk-control = <0x58>;
++		apple,mclk-frequency = <12000000>;
++		apple,i2s-switch = <&i2s_switch>;
++		/*
++		 * Byte offset, value. Codec is clock master on pin0 (inferred):
++		 * pin0 data from aud0, aud0 clocks+data from pin0, pin0 drives
++		 * data only.
++		 */
++		apple,i2s-switch-route = <0x00 0x00000018>,
++					 <0x14 0x00080808>,
++					 <0x3c 0x00000010>;
++		/*
++		 * SmartIO MCA0 TX/RX, ADT dma-channels: 0x28 and 0x29, both
++		 * {0x21|0x22, 0, 0x300, 0x180}.
++		 */
++		dmas = <&sio 0x28>, <&sio 0x29>;
++		dma-names = "tx", "rx";
++		apple,sio-dma-config = <0x21 0x22 0 0x300 0x180>;
++	};
++
++	j71t_spi1: spi@20a084000 {
++		/* driver: spi-apple-s8000 (touch workstream) */
++		compatible = "apple,s8000-spi";
++		reg = <0x2 0x0a084000 0x0 0x4000>;
++		interrupt-parent = <&aic>;
++		interrupts = <AIC_IRQ 189 IRQ_TYPE_LEVEL_HIGH>;
++		clocks = <&spi1_nclk>;
++		power-domains = <&ps_spi1>;
++		/* ADT function-spi_cs0 = GPIO(0x10, 0x10001) */
++		cs-gpios = <&pinctrl_ap 16 GPIO_ACTIVE_LOW>;
++		#address-cells = <1>;
++		#size-cells = <0>;
++
++		cs42l81: audio-codec@0 {
++			compatible = "cirrus,cs42l81";
++			reg = <0>;
++			/* ADT gives no speed; iOS framing is mode 0 (inferred) */
++			spi-max-frequency = <1000000>;
++			clocks = <&mca0>;
++			clock-names = "mclk";
++			/* function-spkr_mute = GPIO(0x40, 0x10001): active low (inferred) */
++			mute-gpios = <&pinctrl_ap 64 GPIO_ACTIVE_LOW>;
++			/* spkr-gain-db = -3.0 dB */
++			apple,max-speaker-gain-db-q8 = <(-768)>;
++			apple,speaker-mode = <2>;
++			/*
++			 * ADT function-ext_sw1 = GPIO(0x44, 0x101), ext_sw2 =
++			 * GPIO(0x42, 0x101): headset switch, direction unknown.
++			 * The driver only reads them (GPIOD_ASIS).
++			 */
++			hs-switch-gpios = <&pinctrl_ap 68 GPIO_ACTIVE_HIGH>,
++					  <&pinctrl_ap 66 GPIO_ACTIVE_HIGH>;
++			/*
++			 * No interrupts yet: ADT has <0x36 0x1> (AP GPIO 54),
++			 * but iOS detects the jack with a timer; the driver
++			 * polls (jack_poll_ms).
++			 */
++			#sound-dai-cells = <0>;
++		};
++	};
++};
+diff --git a/arch/arm64/boot/dts/apple/s8003-j71t-display.dtsi b/arch/arm64/boot/dts/apple/s8003-j71t-display.dtsi
+new file mode 100644
+index 0000000000000000000000000000000000000000..690ac1368f9664e73ae9d055b3d6eafc34410c7e
+--- /dev/null
++++ b/arch/arm64/boot/dts/apple/s8003-j71t-display.dtsi
+@@ -0,0 +1,47 @@
++// SPDX-License-Identifier: GPL-2.0+ OR MIT
++
++/* Observer only: no clock, power-domain, reset or IOMMU consumers. */
++&{/soc} {
++	disp0: display-subsystem@206200000 {
++		compatible = "adbe0,s8000";
++		reg = <0x2 0x06200000 0 0x100000>,
++		      <0x2 0x06400000 0 0x8000>,
++		      <0x2 0x06440000 0 0x8000>,
++		      <0x2 0x06480000 0 0x8000>,
++		      <0x2 0x064c0000 0 0x8000>,
++		      <0x2 0x06500000 0 0x1c>;
++		interrupts = <AIC_IRQ 140 IRQ_TYPE_LEVEL_HIGH>,
++			     <AIC_IRQ 143 IRQ_TYPE_LEVEL_HIGH>,
++			     <AIC_IRQ 144 IRQ_TYPE_LEVEL_HIGH>,
++			     <AIC_IRQ 145 IRQ_TYPE_LEVEL_HIGH>,
++			     <AIC_IRQ 146 IRQ_TYPE_LEVEL_HIGH>;
++		memory-region = <&adbe_boot_vram>;
++	};
++};
++
++/*
++ * Live j71t ADT /vram: CPU 0x87c95c000, length 0x2400000 (36 MiB).
++ * Reserve it against allocation; this does not assert any DART mapping.
++ * D2 separately requires the operator to verify the current mapping span.
++ */
++/ {
++	reserved-memory {
++		#address-cells = <2>;
++		#size-cells = <2>;
++		ranges;
++
++		adbe_boot_vram: framebuffer@87c95c000 {
++			reg = <0x8 0x7c95c000 0 0x2400000>;
++			no-map;
++		};
++	};
++};
++
++/* Also keep standalone a9/display builds safe, before the pcie merge. */
++&ps_disp0 {
++	apple,always-on;
++};
++
++&ps_dp {
++	apple,always-on;
++};
+diff --git a/arch/arm64/boot/dts/apple/s8003-j71t-periph.dtsi b/arch/arm64/boot/dts/apple/s8003-j71t-periph.dtsi
+new file mode 100644
+index 0000000000000000000000000000000000000000..5c6580c860862a951fe3c6c34d0c51314c2c2759
+--- /dev/null
++++ b/arch/arm64/boot/dts/apple/s8003-j71t-periph.dtsi
+@@ -0,0 +1,182 @@
++// SPDX-License-Identifier: GPL-2.0+ OR MIT
++/* Round 1 J71t peripherals. Hardware values: Apple's J71t ADT. */
++
++#include <dt-bindings/input/input.h>
++
++/*
++ * Smart Cover hall sensors: PMIC GPIO lines 0 ("halleffect") and 10
++ * ("halleffect1") in the ADT's /buttons node. Which level means "cover
++ * closed" is not measured yet (docs/periph/ds-als-hall.md H1); the guess is a
++ * magnet pulling the line low. After measuring with evtest, change the
++ * define (GPIO_ACTIVE_HIGH if SW_LID reads 1 with the cover open) and rebuild
++ * the dtb, or flip the flag of a built dtb with scripts/sensors/cover-polarity.sh.
++ */
++#define J71T_COVER0_ACTIVE	GPIO_ACTIVE_LOW
++#define J71T_COVER1_ACTIVE	GPIO_ACTIVE_LOW
++
++/ {
++	aliases {
++		serial3 = &serial3;
++		serial5 = &serial5;
++		bluetooth0 = &bluetooth;
++	};
++
++	/*
++	 * Not named "Lid Switch": systemd-logind and Omarchy's Hyprland
++	 * bindings pick the lid up by that name and would suspend on a cover
++	 * close, which does not resume yet. The ipad-lid user daemon of the
++	 * tablet layer reads these instead.
++	 *
++	 * Polled: gpio-apple-d2365 has no irq_chip, so there is no wakeup
++	 * either (docs/periph/ds-als-hall.md 4.2). Each line is its own device so
++	 * that one the PMIC keeps for itself (the driver refuses those) cannot
++	 * take the other down.
++	 */
++	smart-cover {
++		compatible = "gpio-keys-polled";
++		poll-interval = <50>;
++		label = "iPad Smart Cover";
++
++		lid-switch {
++			label = "Smart Cover (PMIC GPIO 0)";
++			gpios = <&periph_pmu_gpio 0 J71T_COVER0_ACTIVE>;
++			linux,input-type = <EV_SW>;
++			linux,code = <SW_LID>;
++			debounce-interval = <50>;
++		};
++	};
++
++	/*
++	 * The second hall, which this does not tell apart from the first one
++	 * (H4): a code of its own, so evtest shows each line separately.
++	 */
++	smart-cover-aux {
++		compatible = "gpio-keys-polled";
++		poll-interval = <50>;
++		label = "iPad Smart Cover 2";
++
++		cover-switch {
++			label = "Smart Cover (PMIC GPIO 10)";
++			gpios = <&periph_pmu_gpio 10 J71T_COVER1_ACTIVE>;
++			linux,input-type = <EV_SW>;
++			linux,code = <SW_MACHINE_COVER>;
++			debounce-interval = <50>;
++		};
++	};
++};
++
++&{/soc} {
++	serial3: serial@20a0cc000 {
++		compatible = "apple,s8000-uart", "apple,s5l-uart";
++		reg = <0x2 0x0a0cc000 0 0x4000>;
++		reg-io-width = <4>;
++		interrupts = <AIC_IRQ 195 IRQ_TYPE_LEVEL_HIGH>;
++		clocks = <&clkref>, <&clkref>;
++		clock-names = "uart", "clk_uart_baud0";
++		power-domains = <&ps_uart3>;
++		pinctrl-0 = <&bluetooth_uart3_pins>;
++		pinctrl-names = "default";
++		uart-has-rtscts;
++		status = "okay";
++
++		bluetooth: bluetooth {
++			compatible = "apple,j71t-bcm4355-bt";
++			/* 115200 ROM rate inferred from A10; runtime rate is in ADT. */
++			current-speed = <115200>;
++			max-speed = <3000000>;
++			shutdown-gpios = <&periph_pmu_gpio 13 GPIO_ACTIVE_HIGH>;
++			device-wakeup-gpios = <&pinctrl_ap 142 GPIO_ACTIVE_HIGH>;
++		};
++	};
++
++	serial5: serial@20a0d4000 {
++		compatible = "apple,s5l-uart";
++		reg = <0x2 0x0a0d4000 0 0x4000>;
++		reg-io-width = <4>;
++		interrupts = <AIC_IRQ 197 IRQ_TYPE_LEVEL_HIGH>;
++		clocks = <&clkref>, <&clkref>;
++		clock-names = "uart", "clk_uart_baud0";
++		power-domains = <&ps_uart5>;
++		pinctrl-0 = <&battery_swi_pins>;
++		pinctrl-names = "default";
++		status = "okay";
++
++		onewire {
++			compatible = "ti,hdq-uart";
++
++			battery: fuel-gauge {
++				/* ADT bq27540; uses the experimental J172 map, not an ID claim. */
++				compatible = "apple,j71t-bq27540";
++			};
++		};
++	};
++};
++
++&pinctrl_ap {
++	bluetooth_uart3_pins: bluetooth-uart3-pins {
++		pinmux = <APPLE_PINMUX(88, 1)>, <APPLE_PINMUX(89, 1)>,
++			 <APPLE_PINMUX(90, 1)>, <APPLE_PINMUX(91, 1)>;
++	};
++
++	battery_swi_pins: battery-swi-pins {
++		pinmux = <APPLE_PINMUX(2, 1)>;
++	};
++};
++
++&{/soc/i2c@20a110000/pmic@3c} {
++	/* Internal register offsets are not CPU MMIO resources. */
++	#size-cells = <0>;
++
++	rtc@500 {
++		reg = <0x500>;
++	};
++
++	nvmem@5000 {
++		reg = <0x5000>;
++		size = <0x28>;
++		read-only;
++	};
++
++	periph_pmu_gpio: gpio {
++		compatible = "apple,d2365-pmic-gpio";
++		gpio-controller;
++		#gpio-cells = <2>;
++		/* Line 13 is Bluetooth enable, 0 and 10 the Smart Cover halls. */
++		gpio-reserved-ranges = <1 9>, <11 2>, <14 10>;
++	};
++
++	charger@180 {
++		/* Automatic policy uses source authorization and private CBAT. */
++		compatible = "apple,j71t-d2365-charger";
++		reg = <0x180>, <0xa00>;
++		reg-names = "status", "control";
++		power-supplies = <&periph_tristar>;
++		apple,usb-input-limit-max-microamp = <2400000>;
++		apple,owner-input-limit-microamp = <2400000>;
++	};
++};
++
++&i2c2 {
++	status = "okay";
++
++	light-sensor@39 {
++		compatible = "apple,ct819", "amstaos,tsl2581";
++		reg = <0x39>;
++		interrupts-extended = <&pinctrl_ap 71 IRQ_TYPE_LEVEL_LOW>;
++		firmware-name = "apple/j71t-LSCI.bin";
++	};
++};
++
++&i2c0 {
++	periph_tristar: power-controller@1a {
++		apple,usb-role-switch = <&usb_role>;
++		compatible = "apple,j71t-cbtl1610-power";
++		usb-controller = <&usbdev>;
++		apple,pmic = <&{/soc/i2c@20a110000/pmic@3c}>;
++		reg = <0x1a>;
++	};
++};
++
++&usbdev {
++	apple,host-current-budget;
++};
+diff --git a/arch/arm64/boot/dts/apple/s8003-j71t-touch.dtsi b/arch/arm64/boot/dts/apple/s8003-j71t-touch.dtsi
+new file mode 100644
+index 0000000000000000000000000000000000000000..9645a33f2afb6d0771cc37d0377ec495874027c6
+--- /dev/null
++++ b/arch/arm64/boot/dts/apple/s8003-j71t-touch.dtsi
+@@ -0,0 +1,80 @@
++// SPDX-License-Identifier: GPL-2.0+ OR MIT
++/* J71t N1 touch wiring; portrait framebuffer, home button at the bottom. */
++/ {
++	/* Live iOS arm-io clock-frequencies[0x130 - 0x100]. */
++	spi3_nclk: clock-spi3 {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++		clock-frequency = <61538461>;
++	};
++};
++
++&pmgr {
++	touch_clk: clock-controller@78000 {
++		compatible = "apple,s8000-touch-clock";
++		reg = <0x78000 4>;
++		#clock-cells = <0>;
++		clocks = <&clkref>;
++	};
++};
++
++&i2c0 {
++	pmic@3c {
++		touch_analog: regulator@31c {
++			compatible = "apple,d2365-touch-analog";
++			reg = <0x31c 1>;
++			regulator-name = "touch-analog";
++		};
++	};
++};
++
++&pinctrl_ap {
++	compatible = "apple,s8000-pinctrl", "apple,pinctrl";
++
++	touch_sync_on: touch-sync-on-pins {
++		pinmux = <APPLE_PINMUX(74, 2)>;
++	};
++
++	touch_sync_off: touch-sync-off-pins {
++		pinmux = <APPLE_PINMUX(74, 0)>;
++	};
++};
++
++/* Isolated board hunk: does not enable this N1 personality on J71s/J72t. */
++&{/soc} {
++	spi3: spi@20a08c000 {
++		compatible = "apple,s8000-spi";
++		reg = <0x2 0x0a08c000 0 0x4000>;
++		#address-cells = <1>;
++		#size-cells = <0>;
++		interrupts = <AIC_IRQ 191 IRQ_TYPE_LEVEL_HIGH>;
++		clocks = <&spi3_nclk>;
++		power-domains = <&ps_spi3>;
++		cs-gpios = <&pinctrl_ap 102 GPIO_ACTIVE_LOW>;
++		status = "okay";
++
++		touchscreen@0 {
++			compatible = "apple,j71t-n1";
++			reg = <0>;
++			/* Owner-confirmed corner taps: X agrees, raw Y grows upward. */
++			touchscreen-inverted-y;
++			/* N1 selects 83 ns; controller rounds up to divider 6. */
++			spi-max-frequency = <12048192>;
++			/* This pinned SPI core applies GPIO CS setup twice. */
++			spi-cs-setup-delay-ns = <5000>;
++			spi-cs-hold-delay-ns = <10000>;
++			interrupt-parent = <&pinctrl_ap>;
++			interrupts = <65 IRQ_TYPE_EDGE_FALLING>;
++			attn-gpios = <&pinctrl_ap 65 GPIO_ACTIVE_LOW>;
++			reset-gpios = <&pinctrl_ap 75 GPIO_ACTIVE_LOW>;
++			ldo-gpios = <&pinctrl_ap 73 GPIO_ACTIVE_HIGH>;
++			vdd-supply = <&touch_analog>;
++			clocks = <&touch_clk>;
++			pinctrl-names = "sync-on", "sync-off";
++			pinctrl-0 = <&touch_sync_on>;
++			pinctrl-1 = <&touch_sync_off>;
++			firmware-name = "apple/j71t-n1.bin";
++			apple,calibration-firmware = "apple/j71t-n1-calibration.bin";
++		};
++	};
++};
+diff --git a/arch/arm64/boot/dts/apple/s8003-j71t-usbhost.dtsi b/arch/arm64/boot/dts/apple/s8003-j71t-usbhost.dtsi
+new file mode 100644
+index 0000000000000000000000000000000000000000..cb3664fce8706b8d2fc706d63a1d6b724fca7016
+--- /dev/null
++++ b/arch/arm64/boot/dts/apple/s8003-j71t-usbhost.dtsi
+@@ -0,0 +1,56 @@
++// SPDX-License-Identifier: GPL-2.0+ OR MIT
++/*
++ * J71t Lightning port USB host mode: the EHCI + OHCI pair behind a role
++ * switch that shares the AUSB PHY with the device-only DWC2. Hardware
++ * values: Apple's J71t ADT (otgphyctrl, usb-complex, dock).
++ *
++ * Included right after /dts-v1/ (before the SoC dtsi, like the AOP
++ * observer): full paths only, and it includes the binding headers it uses.
++ */
++
++#include <dt-bindings/interrupt-controller/apple-aic.h>
++#include <dt-bindings/interrupt-controller/irq.h>
++#include <dt-bindings/phy/phy.h>
++
++/ {
++	soc {
++		/* usb-complex */
++		bus@20c000000 {
++			usb_role: usb-role-switch@20e0d8000 {
++				compatible = "apple,s8000-usb-role-switch";
++				/* The DMA remap words belong to the usb-complex. */
++				reg = <0x2 0x0e0d8000 0x0 0x1000>,
++				      <0x2 0x0c000000 0x0 0x30>;
++				reg-names = "usb-ctl", "glue";
++				#address-cells = <2>;
++				#size-cells = <2>;
++				ranges;
++				/* The usb-complex dma-ranges apply to the host pair. */
++				dma-ranges;
++				nonposted-mmio;
++				phys = <&ausbphy0 PHY_TYPE_USB2>;
++				phy-names = "usb2-phy";
++				apple,usb-device = <&usbdev>;
++				/* dock function-acc_pwr / acc_sw_en: D2365 LDO5 */
++				apple,pmic = <&{/soc/i2c@20a110000/pmic@3c}>;
++				/* CBTL1610 VBUS sink bit */
++				apple,tristar = <&i2c0 0x1a>;
++
++				/* Created by the switch in host mode only. */
++				usb@20c200000 {
++					compatible = "apple,s8000-ehci", "generic-ehci";
++					reg = <0x2 0x0c200000 0x0 0x10000>;
++					interrupts = <AIC_IRQ 215 IRQ_TYPE_LEVEL_HIGH>;
++					power-domains = <&ps_usb2host0>;
++				};
++
++				usb@20c300000 {
++					compatible = "apple,s8000-ohci", "generic-ohci";
++					reg = <0x2 0x0c300000 0x0 0x10000>;
++					interrupts = <AIC_IRQ 216 IRQ_TYPE_LEVEL_HIGH>;
++					power-domains = <&ps_usb2host0_ohci>;
++				};
++			};
++		};
++	};
++};
+diff --git a/arch/arm64/boot/dts/apple/s8003-j71t.dts b/arch/arm64/boot/dts/apple/s8003-j71t.dts
+index 0d906ae80b075622709c7a231aa28cc87b36e9e8..3c48bec20902ed38a6afc592219a1f2da84d6b1e 100644
+--- a/arch/arm64/boot/dts/apple/s8003-j71t.dts
++++ b/arch/arm64/boot/dts/apple/s8003-j71t.dts
+@@ -4,12 +4,154 @@
+  * Copyright (c) 2022, Konrad Dybcio <konradybcio@kernel.org>
+  */
+ 
++#define APPLE_J71T_BOOT_DISPLAY
++
+ /dts-v1/;
+ 
++/memreserve/ 0x210e00000 0x9b000;
++/memreserve/ 0x858000000 0x400000;
++
+ #include "s8003.dtsi"
+ #include "s800x-ipad5.dtsi"
++#include "s8003-j71t-periph.dtsi"
+ 
++#include "s8003-j71t-audio.dtsi"
+ / {
+ 	compatible = "apple,j71t", "apple,s8003", "apple,arm-platform";
+ 	model = "Apple iPad 5 (Wi-Fi) (TSMC)";
++
++	aliases {
++		nvme-hmb = &nvme_hmb; /* Used by loader */
++		serial2 = &wlan_uart;
++		wifi0 = &wifi0; /* m1n1: local-mac-address, brcm,cal-blob */
++	};
++
++	reserved-memory {
++		nvme_hmb: nvme-hmb@0 {
++			reg = <0 0 0 0>; /* To be filled by loader */
++			no-map;
++		};
++
++		/*
++		 * sepOS root shared-memory page, handed over by pongoOS with
++		 * op 6 on endpoint 0xfe (2026-10-26 boot: data=87adb0). sepOS
++		 * may use it for the rest of its life. The address belongs to
++		 * that pongoOS session: after a new sepOS boot, take it from
++		 * the "root shmem ... data=" line of the pongoOS log.
++		 */
++		sep-shmem@87adb0000 {
++			reg = <0x8 0x7adb0000 0x0 0x4000>;
++			no-map;
++		};
++	};
++};
++
++/*
++ * Keep the SEP PMGR word pongoOS hands over (0x4f0000ff) bit for bit. The
++ * cold-boot AUTO_ENABLE update (0x5f0000ff) was in place when sepOS stopped
++ * consuming the AP->SEP mailbox (2026-10-26 15:42).
++ */
++&ps_sep {
++	apple,no-auto-pm;
++};
++
++&pcie0_dart0 {
++	status = "okay";
++};
++
++&pcie0 {
++	apple,lane-cfg = <1>;
++	apple,nvme-hmb = <&nvme_hmb>;
++	/* live ADT nvme-mmu0 invalidate-fifo-workaround (added by iBoot) */
++	apple,nvmmu-invalidate-fifo = <1>;
++	status = "okay";
+ };
++
++/*
++ * Wi-Fi: BCM4355 C0 (USI module "FearA"), 14e4:43dc, on port 1. From the
++ * j71t live ADT:
++ * - REG_ON: uart2/wlan function-reg_on = D2365 PMU GPIO 14
++ * - DEVICE_WAKE: pci-bridge1 function-device_wake = AP GPIO 67
++ * - PERST#: pci-bridge1 function-perst = AP GPIO 161 (s8003.dtsi)
++ * - board type: uart2/wlan module-instance "feara"
++ * The PCIe driver powers the chip and trains the link after probe (the
++ * port has pwren-gpios), then rescans; NVMe on port 0 doesn't wait for it.
++ */
++&{/soc/i2c@20a110000/pmic@3c} {
++	wlan_pmu_gpio: gpio {
++		compatible = "apple,d2365-pmic-gpio";
++		gpio-controller;
++		#gpio-cells = <2>;
++		/* 13: Bluetooth power enable, 14: WLAN REG_ON */
++		gpio-reserved-ranges = <0 13>, <15 9>;
++	};
++};
++
++&{/soc} {
++	/*
++	 * uart2 hosts the ADT's "wlan" (wlan-pcie-uart,bcm4355) node. Keep it
++	 * powered and in its UART pin function while Wi-Fi runs, as Pauli1Go's
++	 * A10 wlan-uart provider does (ADT function-tx = GPIO 192,
++	 * function-rts = GPIO 194). The serial driver does exactly that.
++	 */
++	wlan_uart: serial@20a0c8000 {
++		compatible = "apple,s5l-uart";
++		reg = <0x2 0x0a0c8000 0x0 0x4000>;
++		reg-io-width = <4>;
++		interrupt-parent = <&aic>;
++		interrupts = <AIC_IRQ 194 IRQ_TYPE_LEVEL_HIGH>;
++		clocks = <&clkref>, <&clkref>;
++		clock-names = "uart", "clk_uart_baud0";
++		power-domains = <&ps_uart2>;
++		pinctrl-0 = <&wlan_uart2_pins>;
++		pinctrl-names = "default";
++	};
++};
++
++&pinctrl_ap {
++	wlan_uart2_pins: wlan-uart2-pins {
++		pinmux = <APPLE_PINMUX(192, 1)>, <APPLE_PINMUX(194, 1)>;
++	};
++
++	/*
++	 * Port 1 CLKREQ# (pci-bridge1 function-clkreq, AP GPIO 165) in its
++	 * peripheral function: iBoot doesn't set it up for Wi-Fi on a tethered
++	 * boot. Function 1 by analogy with A10 J172 (pin 19) and the UART pins.
++	 */
++	wifi_clkreq_pins: wifi-clkreq-pins {
++		pinmux = <APPLE_PINMUX(165, 1)>;
++	};
++};
++
++&pcie0 {
++	pinctrl-0 = <&wifi_clkreq_pins>;
++	pinctrl-names = "default";
++};
++
++&pcie0_dart1 {
++	status = "okay";
++};
++
++&pcie0_port1 {
++	/* Linux numbers it after port 0's bus 1 */
++	bus-range = <2 2>;
++	pwren-gpios = <&wlan_pmu_gpio 14 GPIO_ACTIVE_HIGH>;
++	device-wake-gpios = <&pinctrl_ap 67 GPIO_ACTIVE_HIGH>;
++
++	wifi0: wifi@0,0 {
++		compatible = "pci14e4,43dc";
++		/* port 1's secondary bus is 2 (iommu-map 0x200 -> pcie0_dart1) */
++		reg = <0x20000 0x0 0x0 0x0 0x0>;
++		brcm,board-type = "apple,feara";
++		/* the staged firmware's antenna SKU (A10 J172 uses the same) */
++		apple,antenna-sku = "XX";
++		/* filled by m1n1 from the ADT (/chosen mac-address-wifi0) */
++		local-mac-address = [00 00 00 00 00 00];
++		/* cfg80211's country goes to the firmware as <ISO code>/0 */
++		brcm,ccode-map-trivial;
++	};
++};
++
++#include "s8003-j71t-touch.dtsi"
++
++#include "s8003-j71t-usbhost.dtsi"
+diff --git a/arch/arm64/boot/dts/apple/s8003-j72t.dts b/arch/arm64/boot/dts/apple/s8003-j72t.dts
+index 0cd7d88e9dfbb220d389b9d7a74a7d942b7994b6..957091e590c75857ceaaf569f0d624c3a67abc87 100644
+--- a/arch/arm64/boot/dts/apple/s8003-j72t.dts
++++ b/arch/arm64/boot/dts/apple/s8003-j72t.dts
+@@ -12,4 +12,36 @@
+ / {
+ 	compatible = "apple,j72t", "apple,s8003", "apple,arm-platform";
+ 	model = "Apple iPad 5 (Cellular) (TSMC)";
++
++	aliases {
++		nvme-hmb = &nvme_hmb; /* Used by loader */
++	};
++
++	reserved-memory {
++		nvme_hmb: nvme-hmb@0 {
++			reg = <0 0 0 0>; /* To be filled by loader */
++			no-map;
++		};
++	};
++};
++
++&pcie0_dart0 {
++	status = "okay";
++};
++
++&pcie0 {
++	apple,lane-cfg = <1>;
++	apple,nvme-hmb = <&nvme_hmb>;
++	/* live ADT nvme-mmu0 invalidate-fifo-workaround (added by iBoot) */
++	apple,nvmmu-invalidate-fifo = <1>;
++	status = "okay";
++};
++
++/*
++ * The BCM4355 needs a power sequence (PMU-controlled VDD, wlan-uart
++ * provider) before its link can train; until that exists, leave port 1
++ * and its DART off.
++ */
++&pcie0_port1 {
++	status = "disabled";
+ };
+diff --git a/arch/arm64/boot/dts/apple/s8003-thermal.dtsi b/arch/arm64/boot/dts/apple/s8003-thermal.dtsi
+new file mode 100644
+index 0000000000000000000000000000000000000000..20fd657db41ef6672c90319285d7462edd783fb2
+--- /dev/null
++++ b/arch/arm64/boot/dts/apple/s8003-thermal.dtsi
+@@ -0,0 +1,107 @@
++// SPDX-License-Identifier: GPL-2.0+ OR MIT
++/* j71t live ADT, AppleT700XTempSensor. Thresholds are conservative lab
++ * margins below Apple's 100 C alarm, not thermalmonitord skin policy.
++ */
++#include <dt-bindings/thermal/thermal.h>
++
++&cpu0 { #cooling-cells = <2>; };
++&cpu1 { #cooling-cells = <2>; };
++
++&{/soc} {
++	a9_thermal: thermal-sensor@20e0c0000 {
++		compatible = "apple,s8003-thermal";
++		reg = <0x2 0x0e0c0000 0x0 0x1000>,
++		      <0x2 0x02230000 0x0 0x1000>;
++		reg-names = "soc", "tcc";
++		#thermal-sensor-cells = <1>;
++	};
++};
++
++/ {
++	thermal-zones {
++		apple-a9-soc0 {
++			polling-delay-passive = <100>;
++			polling-delay = <100>;
++			thermal-sensors = <&a9_thermal 0>;
++			trips {
++				a9_soc0_passive: passive {
++					temperature = <80000>;
++					hysteresis = <5000>;
++					type = "passive";
++				};
++				hot {
++					temperature = <90000>;
++					hysteresis = <5000>;
++					type = "hot";
++				};
++				critical {
++					temperature = <100000>;
++					hysteresis = <0>;
++					type = "critical";
++				};
++			};
++			cooling-maps {
++				cpu {
++					trip = <&a9_soc0_passive>;
++					cooling-device = <&cpu0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++				};
++			};
++		};
++		apple-a9-soc1 {
++			polling-delay-passive = <100>;
++			polling-delay = <100>;
++			thermal-sensors = <&a9_thermal 1>;
++			trips {
++				a9_soc1_passive: passive {
++					temperature = <80000>;
++					hysteresis = <5000>;
++					type = "passive";
++				};
++				hot {
++					temperature = <90000>;
++					hysteresis = <5000>;
++					type = "hot";
++				};
++				critical {
++					temperature = <100000>;
++					hysteresis = <0>;
++					type = "critical";
++				};
++			};
++			cooling-maps {
++				cpu {
++					trip = <&a9_soc1_passive>;
++					cooling-device = <&cpu0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++				};
++			};
++		};
++		apple-a9-tcc2 {
++			polling-delay-passive = <100>;
++			polling-delay = <100>;
++			thermal-sensors = <&a9_thermal 5>;
++			trips {
++				a9_tcc2_passive: passive {
++					temperature = <80000>;
++					hysteresis = <5000>;
++					type = "passive";
++				};
++				hot {
++					temperature = <90000>;
++					hysteresis = <5000>;
++					type = "hot";
++				};
++				critical {
++					temperature = <100000>;
++					hysteresis = <0>;
++					type = "critical";
++				};
++			};
++			cooling-maps {
++				cpu {
++					trip = <&a9_tcc2_passive>;
++					cooling-device = <&cpu0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++				};
++			};
++		};
++	};
++};
+diff --git a/arch/arm64/boot/dts/apple/s8003.dtsi b/arch/arm64/boot/dts/apple/s8003.dtsi
+index 79df5c7832600beb994952222fdf15bca93c2cb8..696f5a028c228f8aea2b9dabedcc1c011c330219 100644
+--- a/arch/arm64/boot/dts/apple/s8003.dtsi
++++ b/arch/arm64/boot/dts/apple/s8003.dtsi
+@@ -9,6 +9,10 @@
+ 
+ #include "s800-0-3.dtsi"
+ 
++#ifdef APPLE_J71T_BOOT_DISPLAY
++#include "s8003-j71t-display.dtsi"
++#endif
++
+ / {
+ 	twister_opp: opp-table {
+ 		compatible = "operating-points-v2";
+@@ -48,15 +52,1496 @@ opp07 {
+ 			opp-level = <7>;
+ 			clock-latency-ns = <38000>;
+ 		};
+-#if 0
+-		/* Not available until CPU deep sleep is implemented */
++/* Opt-in stock boost; hardware load restriction is preserved. */
+ 		opp08 {
+-			opp-hz = /bits/ 64 <1844000000>;
+-			opp-level = <8>;
++			opp-hz = /bits/ 64 <1848000000>;
++			opp-level = <15>;
+ 			clock-latency-ns = <38000>;
+ 			turbo-mode;
+ 		};
+-#endif
++		/* Guarded experimental slot; inaccessible until explicitly configured. */
++		opp09 {
++			opp-hz = /bits/ 64 <1896000000>;
++			opp-level = <9>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++
++		/* Guarded experimental slot; inaccessible until explicitly configured. */
++		opp10 {
++			opp-hz = /bits/ 64 <1944000000>;
++			opp-level = <10>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++
++		/* Guarded experimental slot; inaccessible until explicitly configured. */
++		opp11 {
++			opp-hz = /bits/ 64 <1992000000>;
++			opp-level = <11>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++
++		/* Guarded experimental slot; inaccessible until explicitly configured. */
++		opp12 {
++			opp-hz = /bits/ 64 <2040000000>;
++			opp-level = <12>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++
++		/* Guarded experimental slot; inaccessible until explicitly configured. */
++		opp13 {
++			opp-hz = /bits/ 64 <2088000000>;
++			opp-level = <13>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++
++		/* Guarded experimental slot; inaccessible until explicitly configured. */
++		opp14 {
++			opp-hz = /bits/ 64 <2160000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++
++		/* Round-6 shared-slot OPPs: begin */
++		opp-r6-2208000 {
++			opp-hz = /bits/ 64 <2208000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-2256000 {
++			opp-hz = /bits/ 64 <2256000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-2304000 {
++			opp-hz = /bits/ 64 <2304000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-2352000 {
++			opp-hz = /bits/ 64 <2352000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-2400000 {
++			opp-hz = /bits/ 64 <2400000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-2448000 {
++			opp-hz = /bits/ 64 <2448000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-2496000 {
++			opp-hz = /bits/ 64 <2496000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-2544000 {
++			opp-hz = /bits/ 64 <2544000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-2592000 {
++			opp-hz = /bits/ 64 <2592000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-2640000 {
++			opp-hz = /bits/ 64 <2640000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-2688000 {
++			opp-hz = /bits/ 64 <2688000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-2736000 {
++			opp-hz = /bits/ 64 <2736000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-2784000 {
++			opp-hz = /bits/ 64 <2784000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-2832000 {
++			opp-hz = /bits/ 64 <2832000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-2880000 {
++			opp-hz = /bits/ 64 <2880000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-2928000 {
++			opp-hz = /bits/ 64 <2928000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-2976000 {
++			opp-hz = /bits/ 64 <2976000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-3024000 {
++			opp-hz = /bits/ 64 <3024000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-3072000 {
++			opp-hz = /bits/ 64 <3072000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-3120000 {
++			opp-hz = /bits/ 64 <3120000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-3168000 {
++			opp-hz = /bits/ 64 <3168000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-3216000 {
++			opp-hz = /bits/ 64 <3216000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-3264000 {
++			opp-hz = /bits/ 64 <3264000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-3312000 {
++			opp-hz = /bits/ 64 <3312000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-3360000 {
++			opp-hz = /bits/ 64 <3360000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-3408000 {
++			opp-hz = /bits/ 64 <3408000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-3456000 {
++			opp-hz = /bits/ 64 <3456000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-3504000 {
++			opp-hz = /bits/ 64 <3504000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-3552000 {
++			opp-hz = /bits/ 64 <3552000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-3600000 {
++			opp-hz = /bits/ 64 <3600000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-3648000 {
++			opp-hz = /bits/ 64 <3648000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-3696000 {
++			opp-hz = /bits/ 64 <3696000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-3744000 {
++			opp-hz = /bits/ 64 <3744000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-3792000 {
++			opp-hz = /bits/ 64 <3792000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-3840000 {
++			opp-hz = /bits/ 64 <3840000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-3888000 {
++			opp-hz = /bits/ 64 <3888000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-3936000 {
++			opp-hz = /bits/ 64 <3936000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-3984000 {
++			opp-hz = /bits/ 64 <3984000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-4032000 {
++			opp-hz = /bits/ 64 <4032000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-4080000 {
++			opp-hz = /bits/ 64 <4080000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-4128000 {
++			opp-hz = /bits/ 64 <4128000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-4176000 {
++			opp-hz = /bits/ 64 <4176000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-4224000 {
++			opp-hz = /bits/ 64 <4224000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-4272000 {
++			opp-hz = /bits/ 64 <4272000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-4320000 {
++			opp-hz = /bits/ 64 <4320000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-4368000 {
++			opp-hz = /bits/ 64 <4368000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-4416000 {
++			opp-hz = /bits/ 64 <4416000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-4464000 {
++			opp-hz = /bits/ 64 <4464000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-4512000 {
++			opp-hz = /bits/ 64 <4512000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-4560000 {
++			opp-hz = /bits/ 64 <4560000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-4608000 {
++			opp-hz = /bits/ 64 <4608000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-4656000 {
++			opp-hz = /bits/ 64 <4656000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-4704000 {
++			opp-hz = /bits/ 64 <4704000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-4752000 {
++			opp-hz = /bits/ 64 <4752000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-4800000 {
++			opp-hz = /bits/ 64 <4800000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-4848000 {
++			opp-hz = /bits/ 64 <4848000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-4896000 {
++			opp-hz = /bits/ 64 <4896000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-4944000 {
++			opp-hz = /bits/ 64 <4944000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-4992000 {
++			opp-hz = /bits/ 64 <4992000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-5040000 {
++			opp-hz = /bits/ 64 <5040000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-5088000 {
++			opp-hz = /bits/ 64 <5088000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-5136000 {
++			opp-hz = /bits/ 64 <5136000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-5184000 {
++			opp-hz = /bits/ 64 <5184000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-5232000 {
++			opp-hz = /bits/ 64 <5232000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-5280000 {
++			opp-hz = /bits/ 64 <5280000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-5328000 {
++			opp-hz = /bits/ 64 <5328000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-5376000 {
++			opp-hz = /bits/ 64 <5376000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-5424000 {
++			opp-hz = /bits/ 64 <5424000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-5472000 {
++			opp-hz = /bits/ 64 <5472000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-5520000 {
++			opp-hz = /bits/ 64 <5520000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-5568000 {
++			opp-hz = /bits/ 64 <5568000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-5616000 {
++			opp-hz = /bits/ 64 <5616000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-5664000 {
++			opp-hz = /bits/ 64 <5664000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-5712000 {
++			opp-hz = /bits/ 64 <5712000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-5760000 {
++			opp-hz = /bits/ 64 <5760000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-5808000 {
++			opp-hz = /bits/ 64 <5808000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-5856000 {
++			opp-hz = /bits/ 64 <5856000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-5904000 {
++			opp-hz = /bits/ 64 <5904000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-5952000 {
++			opp-hz = /bits/ 64 <5952000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-6000000 {
++			opp-hz = /bits/ 64 <6000000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-6048000 {
++			opp-hz = /bits/ 64 <6048000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-6096000 {
++			opp-hz = /bits/ 64 <6096000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-6144000 {
++			opp-hz = /bits/ 64 <6144000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-6192000 {
++			opp-hz = /bits/ 64 <6192000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-6240000 {
++			opp-hz = /bits/ 64 <6240000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-6288000 {
++			opp-hz = /bits/ 64 <6288000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-6336000 {
++			opp-hz = /bits/ 64 <6336000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-6384000 {
++			opp-hz = /bits/ 64 <6384000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-6432000 {
++			opp-hz = /bits/ 64 <6432000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-6480000 {
++			opp-hz = /bits/ 64 <6480000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-6528000 {
++			opp-hz = /bits/ 64 <6528000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-6576000 {
++			opp-hz = /bits/ 64 <6576000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-6624000 {
++			opp-hz = /bits/ 64 <6624000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-6672000 {
++			opp-hz = /bits/ 64 <6672000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-6720000 {
++			opp-hz = /bits/ 64 <6720000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-6768000 {
++			opp-hz = /bits/ 64 <6768000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-6816000 {
++			opp-hz = /bits/ 64 <6816000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-6864000 {
++			opp-hz = /bits/ 64 <6864000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-6912000 {
++			opp-hz = /bits/ 64 <6912000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-6960000 {
++			opp-hz = /bits/ 64 <6960000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-7008000 {
++			opp-hz = /bits/ 64 <7008000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-7056000 {
++			opp-hz = /bits/ 64 <7056000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-7104000 {
++			opp-hz = /bits/ 64 <7104000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-7152000 {
++			opp-hz = /bits/ 64 <7152000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-7200000 {
++			opp-hz = /bits/ 64 <7200000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-7248000 {
++			opp-hz = /bits/ 64 <7248000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-7296000 {
++			opp-hz = /bits/ 64 <7296000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-7344000 {
++			opp-hz = /bits/ 64 <7344000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-7392000 {
++			opp-hz = /bits/ 64 <7392000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-7440000 {
++			opp-hz = /bits/ 64 <7440000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-7488000 {
++			opp-hz = /bits/ 64 <7488000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-7536000 {
++			opp-hz = /bits/ 64 <7536000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-7584000 {
++			opp-hz = /bits/ 64 <7584000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-7632000 {
++			opp-hz = /bits/ 64 <7632000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-7680000 {
++			opp-hz = /bits/ 64 <7680000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-7728000 {
++			opp-hz = /bits/ 64 <7728000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-7776000 {
++			opp-hz = /bits/ 64 <7776000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-7824000 {
++			opp-hz = /bits/ 64 <7824000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-7872000 {
++			opp-hz = /bits/ 64 <7872000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-7920000 {
++			opp-hz = /bits/ 64 <7920000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-7968000 {
++			opp-hz = /bits/ 64 <7968000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-8016000 {
++			opp-hz = /bits/ 64 <8016000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-8064000 {
++			opp-hz = /bits/ 64 <8064000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-8112000 {
++			opp-hz = /bits/ 64 <8112000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-8160000 {
++			opp-hz = /bits/ 64 <8160000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-8208000 {
++			opp-hz = /bits/ 64 <8208000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-8256000 {
++			opp-hz = /bits/ 64 <8256000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-8304000 {
++			opp-hz = /bits/ 64 <8304000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-8352000 {
++			opp-hz = /bits/ 64 <8352000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-8400000 {
++			opp-hz = /bits/ 64 <8400000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-8448000 {
++			opp-hz = /bits/ 64 <8448000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-8496000 {
++			opp-hz = /bits/ 64 <8496000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-8544000 {
++			opp-hz = /bits/ 64 <8544000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-8592000 {
++			opp-hz = /bits/ 64 <8592000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-8640000 {
++			opp-hz = /bits/ 64 <8640000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-8688000 {
++			opp-hz = /bits/ 64 <8688000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-8736000 {
++			opp-hz = /bits/ 64 <8736000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-8784000 {
++			opp-hz = /bits/ 64 <8784000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-8832000 {
++			opp-hz = /bits/ 64 <8832000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-8880000 {
++			opp-hz = /bits/ 64 <8880000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-8928000 {
++			opp-hz = /bits/ 64 <8928000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-8976000 {
++			opp-hz = /bits/ 64 <8976000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-9024000 {
++			opp-hz = /bits/ 64 <9024000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-9072000 {
++			opp-hz = /bits/ 64 <9072000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-9120000 {
++			opp-hz = /bits/ 64 <9120000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-9168000 {
++			opp-hz = /bits/ 64 <9168000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-9216000 {
++			opp-hz = /bits/ 64 <9216000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-9264000 {
++			opp-hz = /bits/ 64 <9264000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-9312000 {
++			opp-hz = /bits/ 64 <9312000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-9360000 {
++			opp-hz = /bits/ 64 <9360000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-9408000 {
++			opp-hz = /bits/ 64 <9408000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-9456000 {
++			opp-hz = /bits/ 64 <9456000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-9504000 {
++			opp-hz = /bits/ 64 <9504000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-9552000 {
++			opp-hz = /bits/ 64 <9552000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-9600000 {
++			opp-hz = /bits/ 64 <9600000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-9648000 {
++			opp-hz = /bits/ 64 <9648000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-9696000 {
++			opp-hz = /bits/ 64 <9696000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-9744000 {
++			opp-hz = /bits/ 64 <9744000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-9792000 {
++			opp-hz = /bits/ 64 <9792000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-9840000 {
++			opp-hz = /bits/ 64 <9840000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-9888000 {
++			opp-hz = /bits/ 64 <9888000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-9936000 {
++			opp-hz = /bits/ 64 <9936000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-9984000 {
++			opp-hz = /bits/ 64 <9984000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-10032000 {
++			opp-hz = /bits/ 64 <10032000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-10080000 {
++			opp-hz = /bits/ 64 <10080000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-10128000 {
++			opp-hz = /bits/ 64 <10128000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-10176000 {
++			opp-hz = /bits/ 64 <10176000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-10224000 {
++			opp-hz = /bits/ 64 <10224000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-10272000 {
++			opp-hz = /bits/ 64 <10272000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-10320000 {
++			opp-hz = /bits/ 64 <10320000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-10368000 {
++			opp-hz = /bits/ 64 <10368000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-10416000 {
++			opp-hz = /bits/ 64 <10416000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-10464000 {
++			opp-hz = /bits/ 64 <10464000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-10512000 {
++			opp-hz = /bits/ 64 <10512000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-10560000 {
++			opp-hz = /bits/ 64 <10560000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-10608000 {
++			opp-hz = /bits/ 64 <10608000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-10656000 {
++			opp-hz = /bits/ 64 <10656000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-10704000 {
++			opp-hz = /bits/ 64 <10704000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-10752000 {
++			opp-hz = /bits/ 64 <10752000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-10800000 {
++			opp-hz = /bits/ 64 <10800000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-10848000 {
++			opp-hz = /bits/ 64 <10848000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-10896000 {
++			opp-hz = /bits/ 64 <10896000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-10944000 {
++			opp-hz = /bits/ 64 <10944000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-10992000 {
++			opp-hz = /bits/ 64 <10992000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-11040000 {
++			opp-hz = /bits/ 64 <11040000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-11088000 {
++			opp-hz = /bits/ 64 <11088000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-11136000 {
++			opp-hz = /bits/ 64 <11136000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-11184000 {
++			opp-hz = /bits/ 64 <11184000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-11232000 {
++			opp-hz = /bits/ 64 <11232000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-11280000 {
++			opp-hz = /bits/ 64 <11280000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-11328000 {
++			opp-hz = /bits/ 64 <11328000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-11376000 {
++			opp-hz = /bits/ 64 <11376000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-11424000 {
++			opp-hz = /bits/ 64 <11424000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-11472000 {
++			opp-hz = /bits/ 64 <11472000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-11520000 {
++			opp-hz = /bits/ 64 <11520000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-11568000 {
++			opp-hz = /bits/ 64 <11568000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-11616000 {
++			opp-hz = /bits/ 64 <11616000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-11664000 {
++			opp-hz = /bits/ 64 <11664000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-11712000 {
++			opp-hz = /bits/ 64 <11712000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-11760000 {
++			opp-hz = /bits/ 64 <11760000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-11808000 {
++			opp-hz = /bits/ 64 <11808000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-11856000 {
++			opp-hz = /bits/ 64 <11856000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-11904000 {
++			opp-hz = /bits/ 64 <11904000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-11952000 {
++			opp-hz = /bits/ 64 <11952000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-12000000 {
++			opp-hz = /bits/ 64 <12000000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-12048000 {
++			opp-hz = /bits/ 64 <12048000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-12096000 {
++			opp-hz = /bits/ 64 <12096000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-12144000 {
++			opp-hz = /bits/ 64 <12144000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-12192000 {
++			opp-hz = /bits/ 64 <12192000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-12240000 {
++			opp-hz = /bits/ 64 <12240000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		opp-r6-12264000 {
++			opp-hz = /bits/ 64 <12264000000>;
++			opp-level = <14>;
++			clock-latency-ns = <400000>;
++			turbo-mode;
++		};
++		/* Round-6 shared-slot OPPs: end */
++
++	};
++};
++
++&{/soc} {
++	/*
++	 * The TSMC part has the same PCIe PHY ("phy-ip" block) as T8010; the
++	 * Samsung S8000 apcie has no phy-ip region and is not described yet.
++	 */
++	pcie0: pcie@610000000 {
++		compatible = "apple,s8003-pcie";
++		device_type = "pci";
++
++		reg = <0x6 0x10000000 0x0 0x1000000>,
++		      <0x6 0x00000000 0x0 0x8000>,
++		      <0x6 0x00008000 0x0 0x4000>,
++		      <0x6 0x0a000000 0x0 0x40000>,
++		      <0x6 0x01000000 0x0 0x4000>,
++		      <0x6 0x02000000 0x0 0x4000>,
++		      <0x6 0x03000000 0x0 0x4000>,
++		      <0x6 0x04000000 0x0 0x4000>,
++		      <0x6 0x01004000 0x0 0x4000>;
++		reg-names = "config", "rc", "phy", "phy-ip",
++			    "port0", "port1", "port2", "port3",
++			    "nvmmu";
++
++		interrupt-parent = <&aic>;
++		interrupts = <AIC_IRQ 244 IRQ_TYPE_LEVEL_HIGH>,
++			     <AIC_IRQ 247 IRQ_TYPE_LEVEL_HIGH>,
++			     <AIC_IRQ 250 IRQ_TYPE_LEVEL_HIGH>,
++			     <AIC_IRQ 253 IRQ_TYPE_LEVEL_HIGH>,
++			     <AIC_IRQ 246 IRQ_TYPE_EDGE_RISING>;
++		interrupt-names = "port0", "port1", "port2", "port3",
++				  "nvmmu";
++
++		msi-controller;
++		msi-parent = <&pcie0>;
++		msi-ranges = <&aic AIC_IRQ 256 IRQ_TYPE_EDGE_RISING 32>;
++		apple,msi-doorbell = <0xbffff000>;
++		apple,nvmmu-iova = <0xbc000000>;
++
++		/*
++		 * Root-complex inbound windows: 0x40000000 NVMMU FlatDMA,
++		 * 0x80000000 DART (ADT vm-offset/vm-size), 0xbc000000 NVMMU
++		 * SART, 0xbffff000 MSI. The DARTs' apple,dma-range keeps IOVAs
++		 * inside the DART window. No dma-ranges here: one that ends
++		 * below RAM empties ZONE_DMA/DMA32 (no CMA, no swiotlb).
++		 */
++		iommu-map = <0x100 &pcie0_dart0 0 1>,
++			    <0x200 &pcie0_dart1 0 1>;
++		iommu-map-mask = <0xff00>;
++
++		#address-cells = <3>;
++		#size-cells = <2>;
++		#interrupt-cells = <1>;
++		interrupt-controller;
++		bus-range = <0x00 0x0f>;
++		ranges = <0x03000000 0x0 0xc0000000
++			  0x7 0xc0000000 0x0 0x40000000>;
++
++		clocks = <&clkref>, <&clkref>, <&clkref>;
++		clock-names = "core", "aux", "ref";
++		/* ADT apcie clock-gates 57-62: pcie, pcie_aux, pcie_link0..3 */
++		power-domains = <&ps_pcie>, <&ps_pcie_aux>, <&ps_pcie_ref>,
++				<&ps_pcie_link0>, <&ps_pcie_link1>,
++				<&ps_pcie_link2>, <&ps_pcie_link3>;
++		power-domain-names = "core", "aux", "ref", "link0", "link1",
++				     "link2", "link3";
++
++		/*
++		 * Tunables iBoot puts in the live ADT (apcie-phy-tunables,
++		 * apcie-common-tunables; per bridge apcie-config-tunables and
++		 * pcie-rc-tunables), as <offset mask value>. Copied from the
++		 * j71t live ADT (iOS 16.7.10 iBoot); both bridges carry the same
++		 * values there.
++		 */
++		apple,tunable-phy = <0x098 0x0000000f 0x00000000>,
++		                    <0x154 0x00f8ff00 0x00000000>,
++		                    <0x000 0x0000318c 0x00002108>,
++		                    <0x004 0x0000318c 0x00002108>;
++		apple,tunable-common = <0x008 0x7f7f7f7f 0x00000000>,
++		                       <0x00c 0x00073f3f 0x00043f00>,
++		                       <0x010 0x00000700 0x00000000>,
++		                       <0x018 0x00ffffff 0x000c0960>,
++		                       <0x01c 0x00001fff 0x0000092c>,
++		                       <0x028 0xffffffff 0x02001000>,
++		                       <0x030 0x000000ff 0x00000009>,
++		                       <0x100 0x31100010 0x01000010>,
++		                       <0x104 0x00000011 0x00000001>,
++		                       <0x108 0x00000007 0x00000000>,
++		                       <0x10c 0x00073f3f 0x00043f00>,
++		                       <0x110 0x0333003f 0x0111000f>,
++		                       <0x120 0x000000ff 0x00000040>,
++		                       <0x128 0x0000007f 0x0000003e>,
++		                       <0x130 0x00000707 0x00000000>,
++		                       <0x134 0x00073f3f 0x00043f00>,
++		                       <0x180 0x31100010 0x01000000>,
++		                       <0x190 0x0333003f 0x0111000f>,
++		                       <0x1a0 0x000000ff 0x00000040>,
++		                       <0x1a8 0x0000007f 0x0000003e>,
++		                       <0x1b0 0x00000707 0x00000000>,
++		                       <0x1b4 0x00073f3f 0x00043f00>,
++		                       <0x200 0x31100010 0x01000000>,
++		                       <0x210 0x0333003f 0x0111000f>,
++		                       <0x220 0x000000ff 0x00000040>,
++		                       <0x228 0x0000007f 0x0000003e>,
++		                       <0x230 0x00000707 0x00000000>,
++		                       <0x234 0x00073f3f 0x00043f00>,
++		                       <0x280 0x31100010 0x01000000>,
++		                       <0x290 0x0333003f 0x0111000f>,
++		                       <0x2a0 0x000000ff 0x00000040>,
++		                       <0x2a8 0x0000007f 0x0000003e>,
++		                       <0x2b0 0x00000707 0x00000000>,
++		                       <0x2b4 0x00073f3f 0x00043f00>;
++		status = "disabled";
++
++		/*
++		 * PERST# from the j71t/j72t ADT pci-bridge0/1 function-perst.
++		 * CLKREQ# (GPIO 164/165) stays in its peripheral function:
++		 * iOS never waits on it here (no clkreq-wait-time).
++		 */
++		pcie0_port0: pci@0,0 {
++			device_type = "pci";
++			reg = <0x0 0x0 0x0 0x0 0x0>;
++			reset-gpios = <&pinctrl_ap 160 GPIO_ACTIVE_LOW>;
++			max-link-speed = <2>;
++			apple,nvme-mode;
++			/*
++			 * Linux would enable ASPM L1 on its own on DT platforms;
++			 * iOS pairs L1 with L1SS/LTR/CLKREQ# setup we don't do.
++			 */
++			aspm-no-l0s;
++			aspm-no-l1;
++			apple,tunable-config = <0x090 0x000000ff 0x00000028>,
++			                       <0x130 0x00000005 0x00000005>,
++			                       <0x134 0x00000001 0x00000001>,
++			                       <0x138 0x00007f7f 0x00000000>,
++			                       <0x13c 0x00000003 0x00000002>,
++			                       <0x140 0x0073ffff 0x00704c4b>;
++			apple,tunable-rc = <0x098 0x0000000f 0x00000000>,
++			                   <0x154 0x00f8ff00 0x00000000>;
++
++			#address-cells = <3>;
++			#size-cells = <2>;
++			ranges;
++		};
++
++		pcie0_port1: pci@1,0 {
++			device_type = "pci";
++			reg = <0x800 0x0 0x0 0x0 0x0>;
++			reset-gpios = <&pinctrl_ap 161 GPIO_ACTIVE_LOW>;
++			max-link-speed = <1>;
++			aspm-no-l0s;
++			aspm-no-l1;
++			apple,tunable-config = <0x090 0x000000ff 0x00000028>,
++			                       <0x130 0x00000005 0x00000005>,
++			                       <0x134 0x00000001 0x00000001>,
++			                       <0x138 0x00007f7f 0x00000000>,
++			                       <0x13c 0x00000003 0x00000002>,
++			                       <0x140 0x0073ffff 0x00704c4b>;
++			apple,tunable-rc = <0x098 0x0000000f 0x00000000>,
++			                   <0x154 0x00f8ff00 0x00000000>;
++
++			#address-cells = <3>;
++			#size-cells = <2>;
++			ranges;
++		};
+ 	};
+ };
+ 
+@@ -66,3 +1551,21 @@ opp08 {
+  * the S8003 (APL1022) on 16nm. There are some minor differences
+  * such as timing in cpufreq state transistions.
+  */
++
++/* j71t ADT: two GPU windows; explicitly activated diagnostic only. */
++&{/soc} {
++	gpu_diag: gpu@201000000 {
++		compatible = "gpu,s8003";
++		reg = <0x2 0x01000000 0x0 0x100000>,
++		      <0x2 0x01e00000 0x0 0x100000>;
++		reg-names = "rgx", "fender";
++		power-domains = <&ps_gfx>;
++		interrupts = <AIC_IRQ 170 IRQ_TYPE_LEVEL_HIGH>,
++			     <AIC_IRQ 171 IRQ_TYPE_LEVEL_HIGH>,
++			     <AIC_IRQ 172 IRQ_TYPE_LEVEL_HIGH>,
++			     <AIC_IRQ 173 IRQ_TYPE_LEVEL_HIGH>,
++			     <AIC_IRQ 174 IRQ_TYPE_LEVEL_HIGH>;
++	};
++};
++
++#include "s8003-thermal.dtsi"
+diff --git a/arch/arm64/boot/dts/apple/s800x-ipad5.dtsi b/arch/arm64/boot/dts/apple/s800x-ipad5.dtsi
+index 972d84d6c0109e2f47bd6766ad13056237eeacac..2a8601059d484da20552b8067b2656e285f52491 100644
+--- a/arch/arm64/boot/dts/apple/s800x-ipad5.dtsi
++++ b/arch/arm64/boot/dts/apple/s800x-ipad5.dtsi
+@@ -7,10 +7,26 @@
+ 
+ #include "s800-0-3-common.dtsi"
+ #include <dt-bindings/input/input.h>
++#include <dt-bindings/interrupt-controller/apple-aic.h>
++#include <dt-bindings/interrupt-controller/irq.h>
+ 
+ / {
+ 	chassis-type = "tablet";
+ 
++	/*
++	 * Secure Enclave. Inert unless the sep-a9 driver is enabled
++	 * (sep_a9.enable=1); the mailbox sits 0x4000 into the block.
++	 */
++	sep: sep@20da00000 {
++		compatible = "apple,s8003-sep", "apple,s8000-sep";
++		reg = <0x2 0x0da00000 0x0 0x10000>;
++		interrupt-parent = <&aic>;
++		interrupts = <AIC_IRQ 99 IRQ_TYPE_LEVEL_HIGH>,
++			     <AIC_IRQ 98 IRQ_TYPE_LEVEL_HIGH>,
++			     <AIC_IRQ 101 IRQ_TYPE_LEVEL_HIGH>,
++			     <AIC_IRQ 100 IRQ_TYPE_LEVEL_HIGH>;
++	};
++
+ 	gpio-keys {
+ 		compatible = "gpio-keys";
+ 
+@@ -46,6 +62,21 @@ &framebuffer0 {
+ 	power-domains = <&ps_disp0 &ps_dp>;
+ };
+ 
++/*
++ * The framebuffer depends on the display pipe and eDP link that the boot
++ * loader set up, and both reset when these power-domains are powered off.
++ * That happens on suspend, when genpd powers off the framebuffer's domains
++ * in the noirq phase. Mark them as always on until a display driver can
++ * bring the panel back up.
++ */
++&ps_disp0 {
++	apple,always-on;
++};
++
++&ps_dp {
++	apple,always-on;
++};
++
+ &i2c0 {
+ 	status = "okay";
+ 
+@@ -55,6 +86,15 @@ pmic@3c {
+ 		#address-cells = <1>;
+ 		#size-cells = <1>;
+ 
++		/* D2365 event line: ADT GPIO 0x4c, not CPU PMU AIC 76. */
++		interrupt-parent = <&pinctrl_ap>;
++		interrupts = <76 IRQ_TYPE_LEVEL_LOW>;
++		wakeup-source;
++
++		/* Child event specifiers need a PMIC irqchip before use. */
++		interrupt-controller;
++		#interrupt-cells = <1>;
++
+ 		rtc@500 {
+ 			compatible = "apple,angel-pmic-rtc", "apple,antigua-pmic-rtc";
+ 			reg = <0x500 0x10>;
+diff --git a/arch/arm64/boot/dts/apple/t8010-common.dtsi b/arch/arm64/boot/dts/apple/t8010-common.dtsi
+index 7426147af3ea9dfb3e3e7f11d1806052f64f6d33..e583b1c57659b7cc0521e523dd42e747a5b7b326 100644
+--- a/arch/arm64/boot/dts/apple/t8010-common.dtsi
++++ b/arch/arm64/boot/dts/apple/t8010-common.dtsi
+@@ -12,6 +12,7 @@
+ / {
+ 	aliases {
+ 		ausbphy0 = &ausbphy0; /* Used by loader */
++		nvme-hmb = &nvme_hmb; /* Used by loader */
+ 		serial0 = &serial0;
+ 	};
+ 
+@@ -40,7 +41,10 @@ reserved-memory {
+ 		#size-cells = <2>;
+ 		ranges;
+ 
+-		/* To be filled by loader */
++		nvme_hmb: nvme-hmb@0 {
++			reg = <0 0 0 0>; /* To be filled by loader */
++			no-map;
++		};
+ 	};
+ };
+ 
+@@ -48,6 +52,14 @@ &dwi_bl {
+ 	status = "okay";
+ };
+ 
++&pcie0_dart0 {
++	status = "okay";
++};
++
++&pcie0 {
++	status = "okay";
++};
++
+ &serial0 {
+ 	status = "okay";
+ };
+diff --git a/arch/arm64/boot/dts/apple/t8010.dtsi b/arch/arm64/boot/dts/apple/t8010.dtsi
+index 72ec543d7c8b426c2a8ba47e303e8da96e5630cb..e77f5d28ad06f82f4ca35a136944db89ae8d9079 100644
+--- a/arch/arm64/boot/dts/apple/t8010.dtsi
++++ b/arch/arm64/boot/dts/apple/t8010.dtsi
+@@ -276,6 +276,78 @@ ehci1: usb-ehci@20c400000 {
+ #endif
+ 		};
+ 
++		pcie0_dart0: iommu@601008000 {
++			compatible = "apple,t8010-dart", "apple,s5l8960x-dart";
++			reg = <0x6 0x01008000 0x0 0x4000>;
++			#iommu-cells = <1>;
++			interrupts = <AIC_IRQ 271 IRQ_TYPE_LEVEL_HIGH>;
++			power-domains = <&ps_pcie>;
++			apple,dma-range = <0x0 0x80000000 0x0 0x3c000000>;
++			status = "disabled";
++		};
++
++		pcie0: pcie@610000000 {
++			compatible = "apple,t8010-pcie";
++			device_type = "pci";
++
++			reg = <0x6 0x10000000 0x0 0x1000000>,
++			      <0x6 0x00000000 0x0 0x8000>,
++			      <0x6 0x00008000 0x0 0x4000>,
++			      <0x6 0x0a000000 0x0 0x40000>,
++			      <0x6 0x01000000 0x0 0x4000>,
++			      <0x6 0x02000000 0x0 0x4000>,
++			      <0x6 0x03000000 0x0 0x4000>,
++			      <0x6 0x04000000 0x0 0x4000>,
++			      <0x6 0x01004000 0x0 0x4000>;
++			reg-names = "config", "rc", "phy", "phy-ip",
++				    "port0", "port1", "port2", "port3",
++				    "nvmmu";
++
++			interrupts = <AIC_IRQ 270 IRQ_TYPE_LEVEL_HIGH>,
++				     <AIC_IRQ 273 IRQ_TYPE_LEVEL_HIGH>,
++				     <AIC_IRQ 276 IRQ_TYPE_LEVEL_HIGH>,
++				     <AIC_IRQ 279 IRQ_TYPE_LEVEL_HIGH>,
++				     <AIC_IRQ 272 IRQ_TYPE_EDGE_RISING>;
++			interrupt-names = "port0", "port1", "port2", "port3",
++					  "nvmmu";
++
++			msi-controller;
++			msi-parent = <&pcie0>;
++			msi-ranges = <&aic AIC_IRQ 288 IRQ_TYPE_EDGE_RISING 32>;
++			apple,msi-doorbell = <0xbffff000>;
++			apple,nvmmu-iova = <0xbc000000>;
++			apple,nvme-hmb = <&nvme_hmb>;
++
++			iommu-map = <0x100 &pcie0_dart0 0 1>;
++			iommu-map-mask = <0xff00>;
++
++			#address-cells = <3>;
++			#size-cells = <2>;
++			#interrupt-cells = <1>;
++			interrupt-controller;
++			bus-range = <0x00 0x0f>;
++			ranges = <0x03000000 0x0 0xc0000000
++				  0x7 0xc0000000 0x0 0x40000000>;
++
++			clocks = <&clkref>, <&clkref>, <&clkref>;
++			clock-names = "core", "aux", "ref";
++			power-domains = <&ps_pcie>, <&ps_pcie_aux>,
++					<&ps_pcie_ref>;
++			power-domain-names = "core", "aux", "ref";
++			status = "disabled";
++
++			pci@0,0 {
++				device_type = "pci";
++				reg = <0x0 0x0 0x0 0x0 0x0>;
++				reset-gpios = <&pinctrl_ap 12 GPIO_ACTIVE_LOW>;
++				clkreq-gpios = <&pinctrl_ap 16 GPIO_ACTIVE_LOW>;
++
++				#address-cells = <3>;
++				#size-cells = <2>;
++				ranges;
++			};
++		};
++
+ 		pmgr: power-management@20e000000 {
+ 			compatible = "apple,t8010-pmgr", "apple,pmgr", "syscon", "simple-mfd";
+ 			#address-cells = <1>;

@@ -1,0 +1,3164 @@
+CS42L81 codec and S8000 MCA audio
+
+Generated from linux-a9 a9/release 9dbc8612b3b0 by scripts/orchard/j71t-series.py.
+
+diff --git a/Documentation/devicetree/bindings/sound/apple,s8000-mca.yaml b/Documentation/devicetree/bindings/sound/apple,s8000-mca.yaml
+new file mode 100644
+index 0000000000000000000000000000000000000000..ad2e3a6f38d7fe8ca8371ea4d4b8721beced1799
+--- /dev/null
++++ b/Documentation/devicetree/bindings/sound/apple,s8000-mca.yaml
+@@ -0,0 +1,106 @@
++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/sound/apple,s8000-mca.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: Apple S8000 (A9) MCA I2S controller
++
++maintainers:
++  - linux-a9 <linux-a9@localhost>
++
++description:
++  The A9 "mca-version 4" serializer. Besides its register window it owns a
++  32-bit MCLK control word (exported as a clock) and programs a route in the
++  shared i2s-switch.
++
++allOf:
++  - $ref: dai-common.yaml#
++
++properties:
++  compatible:
++    const: apple,s8000-mca
++
++  reg:
++    items:
++      - description: MCA registers
++      - description: MCLK control word
++
++  reg-names:
++    items:
++      - const: mca
++      - const: mclk
++
++  interrupts:
++    maxItems: 1
++
++  power-domains:
++    maxItems: 1
++
++  dmas:
++    minItems: 1
++    items:
++      - description: SmartIO transmit (playback) endpoint
++      - description: SmartIO receive (capture) endpoint
++
++  dma-names:
++    minItems: 1
++    items:
++      - const: tx
++      - const: rx
++
++  '#sound-dai-cells':
++    const: 0
++
++  '#clock-cells':
++    const: 0
++
++  clock-output-names:
++    maxItems: 1
++
++  apple,mclk-control:
++    $ref: /schemas/types.yaml#/definitions/uint32
++    description: Value written to the MCLK word to enable MCLK output.
++
++  apple,mclk-frequency:
++    $ref: /schemas/types.yaml#/definitions/uint32
++
++  apple,i2s-switch:
++    $ref: /schemas/types.yaml#/definitions/phandle
++    description: The i2s-switch syscon.
++
++  apple,i2s-switch-route:
++    $ref: /schemas/types.yaml#/definitions/uint32-matrix
++    items:
++      items:
++        - description: register byte offset
++        - description: value
++    description: i2s-switch registers to set while the port runs.
++
++  apple,sio-dma-config:
++    $ref: /schemas/types.yaml#/definitions/uint32-array
++    items:
++      - description: SmartIO transfer control for 16-bit samples
++      - description: SmartIO transfer control for 32-bit samples
++      - description: shim timeout
++      - description: shim FIFO size, bytes
++      - description: shim trigger level, bytes
++    description:
++      The SmartIO shim words of this MCA's DMA endpoints (Apple ADT
++      dma-channels; the transmit and receive entries carry the same words).
++
++  apple,pio-fifo-offset:
++    $ref: /schemas/types.yaml#/definitions/uint32
++    description: Experimental CPU-writable TX FIFO register (no DMA).
++
++  apple,pio-burst:
++    $ref: /schemas/types.yaml#/definitions/uint32
++
++required:
++  - compatible
++  - reg
++  - reg-names
++  - interrupts
++  - '#sound-dai-cells'
++
++unevaluatedProperties: false
+diff --git a/Documentation/devicetree/bindings/sound/cirrus,cs42l81.yaml b/Documentation/devicetree/bindings/sound/cirrus,cs42l81.yaml
+new file mode 100644
+index 0000000000000000000000000000000000000000..47c1fd4f7df86a0d6f5f7f38099647f6bdb90747
+--- /dev/null
++++ b/Documentation/devicetree/bindings/sound/cirrus,cs42l81.yaml
+@@ -0,0 +1,85 @@
++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/sound/cirrus,cs42l81.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: Cirrus Logic CS42L81 audio codec (Apple)
++
++maintainers:
++  - linux-a9 <linux-a9@localhost>
++
++description:
++  Apple-specific Cirrus Logic codec with integrated speaker drivers, a
++  headphone driver and digital microphone inputs, used on the A9 iPad 5.
++  Controlled over SPI with a 5-byte paged register protocol. The codec DAI
++  has outputs SPKOUT and HPOUT and DMIC inputs DMIC1A and DMIC1B for
++  machine routing.
++
++allOf:
++  - $ref: dai-common.yaml#
++  - $ref: /schemas/spi/spi-peripheral-props.yaml#
++
++properties:
++  compatible:
++    const: cirrus,cs42l81
++
++  reg:
++    maxItems: 1
++
++  clocks:
++    maxItems: 1
++
++  clock-names:
++    const: mclk
++
++  mute-gpios:
++    maxItems: 1
++    description: Speaker mute line, asserted while the speakers are muted.
++
++  hs-switch-gpios:
++    maxItems: 2
++    description:
++      The two control lines of the external headset switch (Apple
++      function-ext_sw1, function-ext_sw2). Their direction is not known;
++      the driver only reads them.
++
++  apple,max-speaker-gain-db-q8:
++    $ref: /schemas/types.yaml#/definitions/int32
++    description: Maximum speaker gain in 1/256 dB (ADT spkr-gain-db).
++
++  apple,speaker-mode:
++    $ref: /schemas/types.yaml#/definitions/uint32
++    enum: [1, 2]
++    description: Number of speaker outputs in use.
++
++  '#sound-dai-cells':
++    const: 0
++
++required:
++  - compatible
++  - reg
++  - '#sound-dai-cells'
++
++unevaluatedProperties: false
++
++examples:
++  - |
++    #include <dt-bindings/gpio/gpio.h>
++
++    spi {
++      #address-cells = <1>;
++      #size-cells = <0>;
++
++      audio-codec@0 {
++        compatible = "cirrus,cs42l81";
++        reg = <0>;
++        spi-max-frequency = <1000000>;
++        clocks = <&mca0>;
++        clock-names = "mclk";
++        mute-gpios = <&pinctrl_ap 64 GPIO_ACTIVE_LOW>;
++        hs-switch-gpios = <&pinctrl_ap 68 GPIO_ACTIVE_HIGH>,
++                          <&pinctrl_ap 66 GPIO_ACTIVE_HIGH>;
++        #sound-dai-cells = <0>;
++      };
++    };
+diff --git a/sound/soc/apple/Kconfig b/sound/soc/apple/Kconfig
+index f1d071a99fbf6ef4f2ba60ad8ae0a44afcaddf89..a03470c0fadadf16fc09f69ccb6e1141477c5351 100644
+--- a/sound/soc/apple/Kconfig
++++ b/sound/soc/apple/Kconfig
+@@ -9,4 +9,15 @@ config SND_SOC_APPLE_MCA
+ 	  This option enables an ASoC platform driver for MCA peripherals found
+ 	  on Apple Silicon SoCs.
+ 
++config SND_SOC_APPLE_S8000_MCA
++	tristate "Apple S8000 (A9) MCA driver"
++	depends on ARCH_APPLE || COMPILE_TEST
++	depends on COMMON_CLK
++	select MFD_SYSCON
++	select SND_DMAENGINE_PCM
++	select SND_SOC_GENERIC_DMAENGINE_PCM
++	help
++	  ASoC CPU DAI for the "mca-version 4" serializer of the Apple A9
++	  (S8000/S8003), including its MCLK output and i2s-switch route.
++
+ endmenu
+diff --git a/sound/soc/apple/Makefile b/sound/soc/apple/Makefile
+index 252ba5fc18cb9046f6b2912c32de596d6f9dfdb6..0058680040a380b4011c3a96ca9fcaeb636ab385 100644
+--- a/sound/soc/apple/Makefile
++++ b/sound/soc/apple/Makefile
+@@ -1,4 +1,6 @@
+ # SPDX-License-Identifier: GPL-2.0-only
+ snd-soc-apple-mca-y	:= mca.o
++snd-soc-apple-s8000-mca-y	:= s8000-mca.o
+ 
+ obj-$(CONFIG_SND_SOC_APPLE_MCA)	+= snd-soc-apple-mca.o
++obj-$(CONFIG_SND_SOC_APPLE_S8000_MCA)	+= snd-soc-apple-s8000-mca.o
+diff --git a/sound/soc/apple/s8000-mca.c b/sound/soc/apple/s8000-mca.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..bc5553bd83d274f8b07f346faa5909650cae0c73
+--- /dev/null
++++ b/sound/soc/apple/s8000-mca.c
+@@ -0,0 +1,1262 @@
++// SPDX-License-Identifier: GPL-2.0-only OR MIT
++/*
++ * Apple S8000/S8003 (A9) MCA, "mca-version 4", as an ASoC CPU DAI.
++ *
++ * Register layout and the programming sequence follow iOS 16.7.10's
++ * AppleAE2MCA::_setIISConfig_v4 (see docs/audio/playback-path.md in
++ * linux-a9). Also handles the two neighbours iOS drives from the MCA
++ * driver: the per-MCA MCLK control word (exported as a clock, the codec's
++ * MCLK) and the i2s-switch route (a syscon; route register values from DT).
++ *
++ * Data path: iOS feeds the MCA through SmartIO DMA (endpoint 0x28 for MCA0
++ * TX, 0x29 for MCA0 RX). With "dmas"/"dma-names = tx[, rx]" the generic
++ * dmaengine PCM runs on the apple-sio-dma driver; the SmartIO shim record
++ * (ADT dma-channels words) is passed as the slave config's
++ * peripheral_config. Capture exists only with an "rx" channel. Without DMA
++ * (or with nodma=1), a timer-driven playback PCM keeps the stream running
++ * and, if "apple,pio-fifo-offset" names a CPU writable FIFO port
++ * (unverified, see test plan), feeds it from the MCA's TX-low-water
++ * interrupt. Otherwise samples are discarded: clocks, codec and speakers
++ * still run.
++ *
++ * TX and RX share the frame (clocks, slot width, run bit) and the IRQ: the
++ * first prepared direction programs the whole block, the other one only
++ * resets and programs its own half, and the frame stops with the last.
++ */
++
++#include <linux/bitfield.h>
++#include <linux/clk-provider.h>
++#include <linux/debugfs.h>
++#include <linux/delay.h>
++#include <linux/fs.h>
++#include <linux/hrtimer.h>
++#include <linux/interrupt.h>
++#include <linux/io.h>
++#include <linux/iopoll.h>
++#include <linux/kstrtox.h>
++#include <linux/mfd/syscon.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/pm_runtime.h>
++#include <linux/regmap.h>
++#include <linux/seq_file.h>
++#include <linux/slab.h>
++#include <linux/soc/apple/sio.h>
++#include <sound/dmaengine_pcm.h>
++#include <sound/pcm.h>
++#include <sound/pcm_params.h>
++#include <sound/soc.h>
++
++#define MCA_VERSION		0x00
++#define MCA_FIFO_SIZE		0x04
++#define  MCA_FIFO_SIZE_TX	GENMASK(9, 0)
++#define  MCA_FIFO_SIZE_RX	GENMASK(25, 16)
++#define MCA_SAMPLE		0x08
++#define MCA_RESET		0x0c
++#define  MCA_RESET_TX		BIT(0)
++#define  MCA_RESET_RX		BIT(1)
++#define MCA_FRAME		0x10
++#define  MCA_FRAME_MASTER	BIT(0)
++#define  MCA_FRAME_RUN		BIT(1)
++#define  MCA_FRAME_FMT		BIT(3)	/* set unless format flag bit 1 */
++#define  MCA_FRAME_DUTY		BIT(6)
++#define  MCA_FRAME_MCLK_DIV	GENMASK(11, 8)
++#define  MCA_FRAME_SLOTS	GENMASK(15, 12)
++#define  MCA_FRAME_WIDTH	GENMASK(23, 20)
++#define  MCA_FRAME_HALF		GENMASK(31, 24)
++#define MCA_PAD			0x14
++#define MCA_IRQ_STATUS		0x1c
++#define MCA_IRQ_MASK		0x20
++#define  MCA_IRQ_TX_UNDERFLOW	BIT(0)
++#define  MCA_IRQ_TX_OVERFLOW	BIT(1)
++#define  MCA_IRQ_TX_LOW_WATER	BIT(2)
++#define  MCA_IRQ_RX_UNDERFLOW	BIT(3)
++#define  MCA_IRQ_RX_OVERFLOW	BIT(4)
++#define  MCA_IRQ_RX_HIGH_WATER	BIT(5)
++#define  MCA_IRQ_FRAME_ERROR	BIT(6)
++#define  MCA_IRQ_BCLK		BIT(7)
++#define  MCA_IRQ_NO_BCLK	BIT(8)
++#define  MCA_IRQ_FSYNC		BIT(9)
++#define  MCA_IRQ_NO_FSYNC	BIT(10)
++#define  MCA_IRQ_SHORT_FSYNC	BIT(11)
++#define  MCA_IRQ_RATE		BIT(12)
++#define  MCA_IRQ_ALL		GENMASK(12, 0)
++#define  MCA_IRQ_ERRORS		(MCA_IRQ_TX_UNDERFLOW | MCA_IRQ_TX_OVERFLOW | \
++				 MCA_IRQ_RX_UNDERFLOW | MCA_IRQ_RX_OVERFLOW | \
++				 MCA_IRQ_FRAME_ERROR)
++/*
++ * iOS v4 unmasks only the four FIFO error causes (mask 0x1fe4); split per
++ * direction so a direction's causes are only open while it is prepared.
++ */
++#define  MCA_IRQ_TX_CAUSES	(MCA_IRQ_TX_UNDERFLOW | MCA_IRQ_TX_OVERFLOW)
++#define  MCA_IRQ_RX_CAUSES	(MCA_IRQ_RX_UNDERFLOW | MCA_IRQ_RX_OVERFLOW)
++#define  MCA_IRQ_TX_ALL		GENMASK(2, 0)
++#define  MCA_IRQ_RX_ALL		GENMASK(5, 3)
++#define MCA_FLUSH		0x24
++#define MCA_TX_CFG		0x60
++#define MCA_TX_FIFO_CFG		0x64
++#define MCA_TX_SLOTS		0x68
++#define MCA_TX_SLOTS_HI		0x6c
++#define MCA_RX_CFG		0x80
++#define MCA_RX_FIFO_CFG		0x84
++#define MCA_RX_SLOTS		0x88
++#define MCA_RX_SLOTS_HI		0x8c
++#define  MCA_XX_CFG_EN		BIT(0)
++
++/* iOS _setIISConfig_v4 values for MCA0 (playback-path.md section 3) */
++#define MCA_TX_CFG_I2S		(BIT(8) | 0x33 | 0x4)	/* enable: 0x137 */
++#define MCA_RX_CFG_I2S		(BIT(8) | 0x33)		/* enable: 0x133 */
++#define MCA_RX_FIFO_CFG_IOS	0x00030004	/* RX depth 4 (mcaKeepDMABusy) */
++
++static bool nodma;
++module_param(nodma, bool, 0444);
++MODULE_PARM_DESC(nodma, "ignore dmas, use the timer PCM (clock/codec tests)");
++
++/* bring-up overrides, read at every prepare / MCLK enable */
++static uint mclk_ctl;
++module_param(mclk_ctl, uint, 0644);
++MODULE_PARM_DESC(mclk_ctl, "MCLK control word override (0 = from DT)");
++static char *route = "";
++module_param(route, charp, 0644);
++MODULE_PARM_DESC(route, "i2s-switch route override: \"off=val,off=val\" (byte offsets)");
++
++#define MCA_POLL_US		10
++#define MCA_TIMEOUT_US		10000
++
++/* i2s-switch v3 reset values (AppleAE2I2SSwitch3 +0x580) */
++#define I2S_SW_NODE_DEFAULT	0x00181818
++#define I2S_SW_DSPC_DEFAULT	0x18
++#define I2S_SW_DSPC_OFFSET	0x38
++
++#define MCA_RATES	(SNDRV_PCM_RATE_8000 | SNDRV_PCM_RATE_11025 | \
++			 SNDRV_PCM_RATE_16000 | SNDRV_PCM_RATE_22050 | \
++			 SNDRV_PCM_RATE_32000 | SNDRV_PCM_RATE_44100 | \
++			 SNDRV_PCM_RATE_48000)
++#define MCA_FORMATS	(SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S32_LE)
++
++struct s8000_mca {
++	struct device *dev;
++	void __iomem *base;
++	void __iomem *mclk_reg;
++	struct regmap *sw;
++	u32 *sw_route;		/* offset, value pairs */
++	unsigned int sw_route_len;
++
++	struct clk_hw mclk_hw;
++	u32 mclk_ctl;
++	u32 mclk_rate;
++
++	u32 fifo_tx;
++	bool use_dma;
++	bool capture;		/* SmartIO "rx" channel present */
++	struct snd_soc_dai_driver dai_drv;
++	struct snd_dmaengine_dai_dma_data dma_tx, dma_rx;
++	/* SmartIO shim words from DT: xfer 16-bit, xfer 32-bit, timeout, fifo, trigger */
++	u32 sio_dt[5];
++	struct apple_sio_dma_config sio_cfg[2];	/* per SNDRV_PCM_STREAM_* */
++
++	/* computed in hw_params, written in prepare */
++	u32 sample, frame, tx_cfg, tx_fifo_cfg, tx_slots, rx_slots;
++
++	/*
++	 * BIT(SNDRV_PCM_STREAM_*): prepared (prepare .. hw_free) and running
++	 * (trigger start .. stop). Under hw_lock with frame RUN and irq_mask.
++	 */
++	spinlock_t hw_lock;
++	unsigned int prep_mask, run_mask;
++
++	/* timer/PIO PCM */
++	spinlock_t lock;
++	struct snd_pcm_substream *substream;
++	struct hrtimer timer;
++	ktime_t period;
++	snd_pcm_uframes_t pos;
++	unsigned int pio_off;	/* 0 = no CPU FIFO port */
++	unsigned int pio_burst;
++	bool running;
++	bool warned_null;
++
++	int irq;
++	unsigned long irq_count, err_count, spurious_count;
++	u32 last_status;
++	u32 irq_mask;		/* current MCA_IRQ_MASK value */
++	u32 mclk_cur;		/* last MCLK word written (0 = off) */
++	bool mclk_on;		/* MCLK clock enabled: word written */
++	bool route_on;		/* i2s-switch route applied */
++	/* last stream per direction: a start-up underflow vs recurring ones */
++	struct {
++		ktime_t start_time;
++		s64 first_err_us;	/* first error IRQ after start, -1 = none */
++		u32 first_err_status;
++		u32 stop_status;	/* raw IRQ_STATUS at stop */
++	} last[2];
++	bool mclk_forced;	/* debugfs s8000-mca-mclk */
++	struct mutex dbg_lock;	/* debugfs s8000-mca-mclk */
++	u32 route_ovr[16];	/* parsed "route" parameter */
++	unsigned int route_ovr_len;
++};
++
++static inline void mca_write(struct s8000_mca *mca, u32 off, u32 val)
++{
++	writel_relaxed(val, mca->base + off);
++}
++
++static inline u32 mca_read(struct s8000_mca *mca, u32 off)
++{
++	return readl_relaxed(mca->base + off);
++}
++
++/* --- MCLK control word as a clock ----------------------------------------- */
++
++static struct s8000_mca *hw_to_mca(struct clk_hw *hw)
++{
++	return container_of(hw, struct s8000_mca, mclk_hw);
++}
++
++static int mca_mclk_prepare(struct clk_hw *hw)
++{
++	return pm_runtime_resume_and_get(hw_to_mca(hw)->dev);
++}
++
++static void mca_mclk_unprepare(struct clk_hw *hw)
++{
++	pm_runtime_put(hw_to_mca(hw)->dev);
++}
++
++static u32 mca_mclk_word(struct s8000_mca *mca)
++{
++	return READ_ONCE(mclk_ctl) ?: mca->mclk_ctl;
++}
++
++static int mca_mclk_enable(struct clk_hw *hw)
++{
++	struct s8000_mca *mca = hw_to_mca(hw);
++
++	/* AppleAE2MCA _getMCLKClkCon: nclk/2 (0x18) | output enable (0x40) */
++	mca->mclk_cur = mca_mclk_word(mca);
++	writel(mca->mclk_cur, mca->mclk_reg);
++	mca->mclk_on = true;
++	return 0;
++}
++
++static void mca_mclk_disable(struct clk_hw *hw)
++{
++	struct s8000_mca *mca = hw_to_mca(hw);
++
++	mca->mclk_on = false;
++	if (!mca->mclk_forced) {
++		writel(0, mca->mclk_reg);
++		mca->mclk_cur = 0;
++	}
++}
++
++static unsigned long mca_mclk_recalc_rate(struct clk_hw *hw,
++					  unsigned long parent_rate)
++{
++	return hw_to_mca(hw)->mclk_rate;
++}
++
++static const struct clk_ops mca_mclk_ops = {
++	.prepare = mca_mclk_prepare,
++	.unprepare = mca_mclk_unprepare,
++	.enable = mca_mclk_enable,
++	.disable = mca_mclk_disable,
++	.recalc_rate = mca_mclk_recalc_rate,
++};
++
++/* --- i2s-switch ---------------------------------------------------------- */
++
++/* parse the "route" parameter ("off=val,off=val") into route_ovr */
++static void mca_parse_route(struct s8000_mca *mca)
++{
++	char buf[128], *p, *tok;
++	unsigned int n = 0;
++	u32 off, val;
++
++	strscpy(buf, READ_ONCE(route) ?: "", sizeof(buf));
++	p = buf;
++	while ((tok = strsep(&p, ",")) && n + 1 < ARRAY_SIZE(mca->route_ovr)) {
++		if (sscanf(tok, "%i=%i", &off, &val) != 2 || off >= 0x50 || (off & 3))
++			continue;
++		mca->route_ovr[n++] = off;
++		mca->route_ovr[n++] = val;
++	}
++	mca->route_ovr_len = n;
++}
++
++static void mca_route(struct s8000_mca *mca, bool on)
++{
++	const u32 *r = mca->sw_route;
++	unsigned int i, len = mca->sw_route_len;
++
++	if (!mca->sw)
++		return;
++
++	if (on)
++		mca_parse_route(mca);
++	if (mca->route_ovr_len) {
++		r = mca->route_ovr;
++		len = mca->route_ovr_len;
++	}
++
++	for (i = 0; i + 1 < len; i += 2) {
++		u32 off = r[i], val = r[i + 1];
++
++		if (!on)
++			val = off < I2S_SW_DSPC_OFFSET ? I2S_SW_NODE_DEFAULT :
++			      off == I2S_SW_DSPC_OFFSET ? I2S_SW_DSPC_DEFAULT : 0;
++		regmap_write(mca->sw, off, val);
++	}
++	mca->route_on = on;
++}
++
++/* --- DAI ------------------------------------------------------------------ */
++
++static int mca_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
++{
++	/* iOS runs MCA0 as the clock consumer of the CS42L81. */
++	if ((fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) != SND_SOC_DAIFMT_BC_FC)
++		return -EINVAL;
++	if ((fmt & SND_SOC_DAIFMT_FORMAT_MASK) != SND_SOC_DAIFMT_I2S)
++		return -EINVAL;
++	if ((fmt & SND_SOC_DAIFMT_INV_MASK) != SND_SOC_DAIFMT_NB_NF)
++		return -EINVAL;
++	return 0;
++}
++
++/* AppleAE2MCA::_getFIFODepth, TX direction */
++static u32 mca_tx_depth(struct s8000_mca *mca, unsigned int rate,
++			unsigned int channels)
++{
++	u32 per_ms = round_up(rate * channels / 2000, 4);
++	u32 min = (channels * 2 + 3) & 0x3fc;
++	u32 depth;
++
++	if (per_ms < min)
++		depth = min;
++	else
++		depth = min_t(u32, per_ms, mca->fifo_tx - 3);
++
++	depth &= ~3;
++	return max_t(u32, depth, 4);
++}
++
++static int mca_hw_params(struct snd_pcm_substream *substream,
++			 struct snd_pcm_hw_params *params,
++			 struct snd_soc_dai *dai)
++{
++	struct s8000_mca *mca = snd_soc_dai_get_drvdata(dai);
++	struct snd_dmaengine_dai_dma_data *dma =
++		substream->stream == SNDRV_PCM_STREAM_PLAYBACK ? &mca->dma_tx :
++								 &mca->dma_rx;
++	unsigned int bits = params_width(params);
++	unsigned int slot = params_physical_width(params);
++	unsigned int channels = params_channels(params);
++	unsigned int slots = 2, frame_bits = slot * slots, depth;
++	u32 width_code;
++
++	if (channels != 2)
++		return -EINVAL;
++
++	switch (slot) {
++	case 16: width_code = 1; break;
++	case 32: width_code = 4; break;
++	default: return -EINVAL;
++	}
++
++	/*
++	 * _setIISConfig_v4 for: consumer, MCLK out, I2S, 2 slots. The DAI is
++	 * symmetric, so both directions compute the same values for both
++	 * halves; prepare writes the half (or the block) it owns.
++	 */
++	mca->sample = (32 - bits) << 8 | (32 - bits);
++	depth = mca_tx_depth(mca, params_rate(params), channels);
++	mca->tx_fifo_cfg = depth | (depth - 1) << 16;
++	mca->tx_slots = GENMASK(slots - 1, 0);
++	mca->rx_slots = GENMASK(slots - 1, 0);
++	/* bits 15:8 = data delay (1, I2S); 0x33 base; 0x4 for format 0 */
++	mca->tx_cfg = MCA_TX_CFG_I2S;
++	mca->frame = FIELD_PREP(MCA_FRAME_HALF, frame_bits / 2 - 1) |
++		     FIELD_PREP(MCA_FRAME_WIDTH, width_code) |
++		     FIELD_PREP(MCA_FRAME_SLOTS, slots - 1) |
++		     FIELD_PREP(MCA_FRAME_MCLK_DIV, 0) |
++		     MCA_FRAME_DUTY | MCA_FRAME_FMT;
++
++	dma->addr_width = slot == 16 ? DMA_SLAVE_BUSWIDTH_2_BYTES :
++				       DMA_SLAVE_BUSWIDTH_4_BYTES;
++	/* informational: the SmartIO limit comes from mca_prepare_slave_config */
++	dma->maxburst = substream->stream == SNDRV_PCM_STREAM_PLAYBACK ? depth :
++			MCA_RX_FIFO_CFG_IOS & 0xffff;
++
++	dev_dbg(mca->dev, "sample %#x frame %#x txcfg %#x txfifo %#x\n",
++		mca->sample, mca->frame, mca->tx_cfg, mca->tx_fifo_cfg);
++	return 0;
++}
++
++static u32 mca_dir_causes(struct s8000_mca *mca, bool tx)
++{
++	if (!tx)
++		return MCA_IRQ_RX_CAUSES;
++	return MCA_IRQ_TX_CAUSES | (mca->pio_off ? MCA_IRQ_TX_LOW_WATER : 0);
++}
++
++static void mca_write_tx(struct s8000_mca *mca)
++{
++	mca_write(mca, MCA_TX_FIFO_CFG, mca->tx_fifo_cfg);
++	mca_write(mca, MCA_TX_SLOTS, mca->tx_slots);
++	mca_write(mca, MCA_TX_SLOTS_HI, 0);
++	mca_write(mca, MCA_TX_CFG, mca->tx_cfg & ~MCA_XX_CFG_EN);
++}
++
++static void mca_write_rx(struct s8000_mca *mca)
++{
++	mca_write(mca, MCA_RX_FIFO_CFG, MCA_RX_FIFO_CFG_IOS);
++	mca_write(mca, MCA_RX_SLOTS, mca->rx_slots);
++	mca_write(mca, MCA_RX_SLOTS_HI, 0);
++	mca_write(mca, MCA_RX_CFG, MCA_RX_CFG_I2S & ~MCA_XX_CFG_EN);
++}
++
++/* the whole block, as _setIISConfig_v4: only while no direction is prepared */
++static int mca_init_block(struct s8000_mca *mca)
++{
++	unsigned long flags;
++	u32 val;
++	int ret;
++
++	spin_lock_irqsave(&mca->hw_lock, flags);
++	mca->irq_mask = MCA_IRQ_ALL;
++	spin_unlock_irqrestore(&mca->hw_lock, flags);
++
++	mca_write(mca, MCA_RESET, MCA_RESET_TX | MCA_RESET_RX);
++	ret = readl_relaxed_poll_timeout(mca->base + MCA_RESET, val,
++					 !(val & (MCA_RESET_TX | MCA_RESET_RX)),
++					 MCA_POLL_US, MCA_TIMEOUT_US);
++	if (ret) {
++		dev_err(mca->dev, "reset timed out (%#x)\n", val);
++		return ret;
++	}
++
++	mca_write(mca, MCA_FLUSH, 1);
++	ret = readl_relaxed_poll_timeout(mca->base + MCA_FLUSH, val, !(val & 1),
++					 MCA_POLL_US, MCA_TIMEOUT_US);
++	if (ret) {
++		dev_err(mca->dev, "flush timed out (%#x)\n", val);
++		return ret;
++	}
++
++	mca_write(mca, MCA_IRQ_MASK, MCA_IRQ_ALL);
++	mca_write(mca, MCA_IRQ_STATUS, MCA_IRQ_ALL);
++	mca_write(mca, MCA_SAMPLE, mca->sample);
++	mca_write(mca, MCA_TX_FIFO_CFG, mca->tx_fifo_cfg);
++	mca_write(mca, MCA_RX_FIFO_CFG, MCA_RX_FIFO_CFG_IOS);
++	mca_write(mca, MCA_PAD, 0);
++	mca_write(mca, MCA_TX_SLOTS, mca->tx_slots);
++	mca_write(mca, MCA_TX_SLOTS_HI, 0);
++	mca_write(mca, MCA_RX_SLOTS, mca->rx_slots);
++	mca_write(mca, MCA_RX_SLOTS_HI, 0);
++	mca_write(mca, MCA_TX_CFG, mca->tx_cfg & ~MCA_XX_CFG_EN);
++	mca_write(mca, MCA_RX_CFG, MCA_RX_CFG_I2S & ~MCA_XX_CFG_EN);
++	return 0;
++}
++
++/* one direction while the other is prepared or running: leave the frame */
++static int mca_init_dir(struct s8000_mca *mca, bool tx)
++{
++	u32 bit = tx ? MCA_RESET_TX : MCA_RESET_RX, val;
++	int ret;
++
++	mca_write(mca, MCA_RESET, bit);
++	ret = readl_relaxed_poll_timeout(mca->base + MCA_RESET, val,
++					 !(val & bit), MCA_POLL_US,
++					 MCA_TIMEOUT_US);
++	if (ret) {
++		dev_err(mca->dev, "%s reset timed out (%#x)\n",
++			tx ? "TX" : "RX", val);
++		return ret;
++	}
++
++	mca_write(mca, MCA_SAMPLE, mca->sample);
++	if (tx)
++		mca_write_tx(mca);
++	else
++		mca_write_rx(mca);
++	mca_write(mca, MCA_IRQ_STATUS, tx ? MCA_IRQ_TX_ALL : MCA_IRQ_RX_ALL);
++	return 0;
++}
++
++static int mca_prepare(struct snd_pcm_substream *substream,
++		       struct snd_soc_dai *dai)
++{
++	struct s8000_mca *mca = snd_soc_dai_get_drvdata(dai);
++	int dir = substream->stream;
++	bool tx = dir == SNDRV_PCM_STREAM_PLAYBACK, first;
++	unsigned long flags;
++	int ret;
++
++	/* ASoC serializes prepare/hw_free of the card's streams (pcm_mutex) */
++	spin_lock_irqsave(&mca->hw_lock, flags);
++	first = !(mca->prep_mask & ~BIT(dir));
++	spin_unlock_irqrestore(&mca->hw_lock, flags);
++
++	ret = first ? mca_init_block(mca) : mca_init_dir(mca, tx);
++	if (ret)
++		return ret;
++
++	spin_lock_irqsave(&mca->hw_lock, flags);
++	mca->prep_mask |= BIT(dir);
++	mca->irq_mask &= ~mca_dir_causes(mca, tx);
++	mca_write(mca, MCA_IRQ_MASK, mca->irq_mask);
++	if (first)
++		mca_write(mca, MCA_FRAME, mca->frame);
++	spin_unlock_irqrestore(&mca->hw_lock, flags);
++
++	if (first)
++		mca_route(mca, true);
++	return 0;
++}
++
++static int mca_hw_free(struct snd_pcm_substream *substream,
++		       struct snd_soc_dai *dai)
++{
++	struct s8000_mca *mca = snd_soc_dai_get_drvdata(dai);
++	int dir = substream->stream;
++	unsigned long flags;
++	bool last;
++
++	spin_lock_irqsave(&mca->hw_lock, flags);
++	mca->prep_mask &= ~BIT(dir);
++	last = !mca->prep_mask;
++	if (last) {
++		/* back to the idle state runtime resume sets up: everything masked */
++		mca->irq_mask = MCA_IRQ_ALL;
++		mca_write(mca, MCA_FRAME, 0);
++	} else {
++		mca->irq_mask |= dir == SNDRV_PCM_STREAM_PLAYBACK ?
++				 MCA_IRQ_TX_ALL : MCA_IRQ_RX_ALL;
++	}
++	mca_write(mca, MCA_IRQ_MASK, mca->irq_mask);
++	spin_unlock_irqrestore(&mca->hw_lock, flags);
++
++	if (last)
++		mca_route(mca, false);
++	return 0;
++}
++
++static int mca_trigger(struct snd_pcm_substream *substream, int cmd,
++		       struct snd_soc_dai *dai)
++{
++	struct s8000_mca *mca = snd_soc_dai_get_drvdata(dai);
++	int dir = substream->stream;
++	bool tx = dir == SNDRV_PCM_STREAM_PLAYBACK;
++	u32 reset = tx ? MCA_RESET_TX : MCA_RESET_RX, val;
++	unsigned long flags;
++	int ret;
++
++	switch (cmd) {
++	case SNDRV_PCM_TRIGGER_START:
++	case SNDRV_PCM_TRIGGER_RESUME:
++	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
++		spin_lock_irqsave(&mca->hw_lock, flags);
++		mca->last[dir].start_time = ktime_get();
++		mca->last[dir].first_err_us = -1;
++		mca->last[dir].stop_status = 0;
++		/* the other direction's pending causes are not ours to clear */
++		mca_write(mca, MCA_IRQ_STATUS, !mca->run_mask ? MCA_IRQ_ALL :
++			  tx ? MCA_IRQ_TX_ALL : MCA_IRQ_RX_ALL);
++		if (tx && mca->pio_off) {
++			mca->irq_mask &= ~MCA_IRQ_TX_LOW_WATER;
++			mca_write(mca, MCA_IRQ_MASK, mca->irq_mask);
++		}
++		if (tx)
++			mca_write(mca, MCA_TX_CFG, mca->tx_cfg | MCA_XX_CFG_EN);
++		else
++			mca_write(mca, MCA_RX_CFG, MCA_RX_CFG_I2S | MCA_XX_CFG_EN);
++		mca->run_mask |= BIT(dir);
++		mca_write(mca, MCA_FRAME, mca->frame | MCA_FRAME_RUN);
++		spin_unlock_irqrestore(&mca->hw_lock, flags);
++		return 0;
++	case SNDRV_PCM_TRIGGER_STOP:
++	case SNDRV_PCM_TRIGGER_SUSPEND:
++	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
++		spin_lock_irqsave(&mca->hw_lock, flags);
++		mca->last[dir].stop_status = mca_read(mca, MCA_IRQ_STATUS);
++		if (tx) {
++			/* an empty FIFO would keep TX low-water firing until prepare */
++			mca->irq_mask |= MCA_IRQ_TX_LOW_WATER;
++			mca_write(mca, MCA_IRQ_MASK, mca->irq_mask);
++			mca_write(mca, MCA_TX_CFG, 0);
++		} else {
++			mca_write(mca, MCA_RX_CFG, 0);
++		}
++		mca->run_mask &= ~BIT(dir);
++		if (!mca->run_mask)
++			mca_write(mca, MCA_FRAME, mca->frame);
++		/* TX stops with RESET = 1, RX with RESET = 2 (iOS) */
++		mca_write(mca, MCA_RESET, reset);
++		ret = readl_relaxed_poll_timeout_atomic(mca->base + MCA_RESET,
++							val, !(val & reset), 1,
++							1000);
++		spin_unlock_irqrestore(&mca->hw_lock, flags);
++		if (ret)
++			dev_warn(mca->dev, "%s reset timed out\n",
++				 tx ? "TX" : "RX");
++		return 0;
++	}
++
++	return -EINVAL;
++}
++
++static int mca_dai_probe(struct snd_soc_dai *dai)
++{
++	struct s8000_mca *mca = snd_soc_dai_get_drvdata(dai);
++
++	snd_soc_dai_init_dma_data(dai, &mca->dma_tx,
++				  mca->capture ? &mca->dma_rx : NULL);
++	return 0;
++}
++
++static const struct snd_soc_dai_ops mca_dai_ops = {
++	.probe = mca_dai_probe,
++	.set_fmt = mca_set_fmt,
++	.hw_params = mca_hw_params,
++	.prepare = mca_prepare,
++	.hw_free = mca_hw_free,
++	.trigger = mca_trigger,
++};
++
++/* template; probe drops .capture without a SmartIO "rx" channel */
++static const struct snd_soc_dai_driver mca_dai = {
++	.name = "s8000-mca",
++	.playback = {
++		.stream_name = "Playback",
++		.channels_min = 2,
++		.channels_max = 2,
++		.rates = MCA_RATES,
++		.formats = MCA_FORMATS,
++	},
++	.capture = {
++		.stream_name = "Capture",
++		.channels_min = 2,
++		.channels_max = 2,
++		.rates = MCA_RATES,
++		.formats = MCA_FORMATS,
++	},
++	.ops = &mca_dai_ops,
++	/* one frame (clocks, slot width) for both directions */
++	.symmetric_rate = 1,
++	.symmetric_sample_bits = 1,
++};
++
++/* --- timer / PIO PCM (no SIO DMA) ----------------------------------------- */
++
++static const struct snd_pcm_hardware mca_pcm_hw = {
++	.info = SNDRV_PCM_INFO_INTERLEAVED | SNDRV_PCM_INFO_MMAP |
++		SNDRV_PCM_INFO_MMAP_VALID | SNDRV_PCM_INFO_BLOCK_TRANSFER,
++	.formats = MCA_FORMATS,
++	.rates = MCA_RATES,
++	.rate_min = 8000,
++	.rate_max = 48000,
++	.channels_min = 2,
++	.channels_max = 2,
++	.buffer_bytes_max = 512 * 1024,
++	.period_bytes_min = 256,
++	.period_bytes_max = 64 * 1024,
++	.periods_min = 2,
++	.periods_max = 128,
++};
++
++/* Called with mca->lock held; returns true when a period boundary passed. */
++static bool mca_pio_fill(struct s8000_mca *mca)
++{
++	struct snd_pcm_runtime *rt = mca->substream->runtime;
++	unsigned int ch = rt->channels, n = mca->pio_burst / ch, i, c;
++	snd_pcm_uframes_t old = mca->pos;
++
++	for (i = 0; i < n; i++) {
++		void *frame = rt->dma_area + frames_to_bytes(rt, mca->pos);
++
++		for (c = 0; c < ch; c++) {
++			u32 s;
++
++			if (rt->sample_bits == 16)
++				s = (u16)((s16 *)frame)[c];
++			else
++				s = ((u32 *)frame)[c];
++			writel_relaxed(s, mca->base + mca->pio_off);
++		}
++		if (++mca->pos >= rt->buffer_size)
++			mca->pos = 0;
++	}
++
++	return old / rt->period_size != mca->pos / rt->period_size;
++}
++
++static enum hrtimer_restart mca_timer_fn(struct hrtimer *t)
++{
++	struct s8000_mca *mca = container_of(t, struct s8000_mca, timer);
++	struct snd_pcm_substream *ss;
++	unsigned long flags;
++
++	spin_lock_irqsave(&mca->lock, flags);
++	ss = mca->running ? mca->substream : NULL;
++	if (ss) {
++		mca->pos += ss->runtime->period_size;
++		if (mca->pos >= ss->runtime->buffer_size)
++			mca->pos -= ss->runtime->buffer_size;
++	}
++	spin_unlock_irqrestore(&mca->lock, flags);
++
++	if (!ss)
++		return HRTIMER_NORESTART;
++
++	snd_pcm_period_elapsed(ss);
++	hrtimer_forward_now(t, mca->period);
++	return HRTIMER_RESTART;
++}
++
++static int mca_pcm_open(struct snd_soc_component *component,
++			struct snd_pcm_substream *substream)
++{
++	struct s8000_mca *mca = snd_soc_component_get_drvdata(component);
++
++	snd_soc_set_runtime_hwparams(substream, &mca_pcm_hw);
++	mca->substream = substream;
++
++	if (!mca->pio_off && !mca->warned_null) {
++		dev_warn(mca->dev,
++			 "no SIO DMA and no PIO FIFO port: samples are discarded (clocks and codec still run)\n");
++		mca->warned_null = true;
++	}
++	return 0;
++}
++
++static int mca_pcm_close(struct snd_soc_component *component,
++			 struct snd_pcm_substream *substream)
++{
++	struct s8000_mca *mca = snd_soc_component_get_drvdata(component);
++
++	hrtimer_cancel(&mca->timer);
++	mca->substream = NULL;
++	return 0;
++}
++
++static int mca_pcm_prepare(struct snd_soc_component *component,
++			   struct snd_pcm_substream *substream)
++{
++	struct s8000_mca *mca = snd_soc_component_get_drvdata(component);
++	struct snd_pcm_runtime *rt = substream->runtime;
++
++	mca->pos = 0;
++	mca->period = ns_to_ktime(div_u64((u64)rt->period_size * NSEC_PER_SEC,
++					  rt->rate));
++	return 0;
++}
++
++static int mca_pcm_trigger(struct snd_soc_component *component,
++			   struct snd_pcm_substream *substream, int cmd)
++{
++	struct s8000_mca *mca = snd_soc_component_get_drvdata(component);
++	unsigned long flags;
++
++	switch (cmd) {
++	case SNDRV_PCM_TRIGGER_START:
++	case SNDRV_PCM_TRIGGER_RESUME:
++	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
++		spin_lock_irqsave(&mca->lock, flags);
++		mca->running = true;
++		spin_unlock_irqrestore(&mca->lock, flags);
++		if (!mca->pio_off)
++			hrtimer_start(&mca->timer, mca->period,
++				      HRTIMER_MODE_REL_SOFT);
++		return 0;
++	case SNDRV_PCM_TRIGGER_STOP:
++	case SNDRV_PCM_TRIGGER_SUSPEND:
++	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
++		spin_lock_irqsave(&mca->lock, flags);
++		mca->running = false;
++		spin_unlock_irqrestore(&mca->lock, flags);
++		hrtimer_try_to_cancel(&mca->timer);
++		return 0;
++	}
++
++	return -EINVAL;
++}
++
++static snd_pcm_uframes_t mca_pcm_pointer(struct snd_soc_component *component,
++					 struct snd_pcm_substream *substream)
++{
++	struct s8000_mca *mca = snd_soc_component_get_drvdata(component);
++
++	return READ_ONCE(mca->pos);
++}
++
++static int mca_pcm_new(struct snd_soc_component *component,
++			     struct snd_soc_pcm_runtime *rtd)
++{
++	snd_pcm_set_managed_buffer_all(rtd->pcm, SNDRV_DMA_TYPE_VMALLOC, NULL,
++				       0, 0);
++	return 0;
++}
++
++static const struct snd_soc_component_driver mca_component_pio = {
++	.name = "s8000-mca",
++	.open = mca_pcm_open,
++	.close = mca_pcm_close,
++	.prepare = mca_pcm_prepare,
++	.trigger = mca_pcm_trigger,
++	.pointer = mca_pcm_pointer,
++	.pcm_new = mca_pcm_new,
++	.legacy_dai_naming = 1,
++};
++
++static const struct snd_soc_component_driver mca_component_dma = {
++	.name = "s8000-mca",
++	.legacy_dai_naming = 1,
++};
++
++/* SmartIO queues one command per period; it has 31 tags per endpoint. */
++/*
++ * SmartIO reports the position per completed period (residue granularity
++ * "segment"). The generic dmaengine PCM would flag that as BATCH, but it
++ * skips that logic when the driver supplies its own hardware limits, so
++ * set it here: PipeWire/PulseAudio need it to keep a period of headroom.
++ */
++static const struct snd_pcm_hardware mca_dma_hw = {
++	.info = SNDRV_PCM_INFO_INTERLEAVED | SNDRV_PCM_INFO_MMAP |
++		SNDRV_PCM_INFO_MMAP_VALID | SNDRV_PCM_INFO_BLOCK_TRANSFER |
++		SNDRV_PCM_INFO_BATCH,
++	.formats = MCA_FORMATS,
++	.rates = MCA_RATES,
++	.rate_min = 8000,
++	.rate_max = 48000,
++	.channels_min = 2,
++	.channels_max = 2,
++	.buffer_bytes_max = 128 * 1024,
++	.period_bytes_min = 512,
++	.period_bytes_max = 32 * 1024,
++	.periods_min = 2,
++	.periods_max = 16,
++};
++
++static int mca_prepare_slave_config(struct snd_pcm_substream *substream,
++				    struct snd_pcm_hw_params *params,
++				    struct dma_slave_config *sc)
++{
++	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
++	struct s8000_mca *mca = snd_soc_dai_get_drvdata(snd_soc_rtd_to_cpu(rtd, 0));
++	struct apple_sio_dma_config *cfg = &mca->sio_cfg[substream->stream];
++	unsigned int bytes = params_physical_width(params) / 8;
++	unsigned int per_ms;
++	int ret;
++
++	ret = snd_dmaengine_pcm_prepare_slave_config(substream, params, sc);
++	if (ret)
++		return ret;
++
++	/*
++	 * AppleSmartIODMA shim record as AppleAE2MCA sets it up: transfer
++	 * width from the dma-channels entry (16 or 32 bit; the RX entries
++	 * have the same words), and the FIFO depth it requests for either
++	 * direction: sample width * samples per ms, rounded to 4. The DMA
++	 * driver applies SmartIO's validFIFODepth: TX at least trigger + 4,
++	 * RX at most the trigger (192 B at 48 kHz, under 0x180).
++	 */
++	per_ms = round_up(params_rate(params) * params_channels(params) / 1000, 4);
++	*cfg = (struct apple_sio_dma_config) {
++		.xfer = bytes == 2 ? mca->sio_dt[0] : mca->sio_dt[1],
++		.timeout = mca->sio_dt[2],
++		.fifo = mca->sio_dt[3],
++		.trigger = mca->sio_dt[4],
++		.limit = bytes * per_ms,
++	};
++	sc->peripheral_config = cfg;
++	sc->peripheral_size = sizeof(*cfg);
++	return 0;
++}
++
++static const struct snd_dmaengine_pcm_config mca_dma_config = {
++	.prepare_slave_config = mca_prepare_slave_config,
++	.pcm_hardware = &mca_dma_hw,
++	.prealloc_buffer_size = 128 * 1024,
++};
++
++/* --- IRQ ------------------------------------------------------------------ */
++
++static irqreturn_t mca_irq(int irq, void *data)
++{
++	struct s8000_mca *mca = data;
++	struct snd_pcm_substream *elapsed = NULL;
++	u32 raw, status;
++	int dir;
++
++	spin_lock(&mca->hw_lock);
++	raw = mca_read(mca, MCA_IRQ_STATUS);
++	/*
++	 * Only bits 12:0 are interrupt causes (iOS tests status & 0x1fff and
++	 * logs "spurious intr" otherwise). Bit 31 also reads as set while a
++	 * cause is pending (seen as 0x80000008), so it must not count as
++	 * handled. Otherwise a cause that is masked only in irq_mask, not in
++	 * the hardware mask, is "handled" forever. That IRQ storm is the
++	 * likely cause of the round-4 hard lockup.
++	 */
++	status = raw & MCA_IRQ_ALL & ~mca->irq_mask;
++	if (!status) {
++		/* resync the hardware mask, so a stale open mask cannot storm */
++		mca_write(mca, MCA_IRQ_MASK, mca->irq_mask);
++		mca_write(mca, MCA_IRQ_STATUS, raw & MCA_IRQ_ALL);
++		mca->spurious_count++;
++		mca->last_status = raw;
++		spin_unlock(&mca->hw_lock);
++		return IRQ_NONE;
++	}
++
++	mca_write(mca, MCA_IRQ_STATUS, status);
++	mca->irq_count++;
++	mca->last_status = raw;
++
++	if (status & MCA_IRQ_ERRORS) {
++		/*
++		 * Error bits re-latch every frame while the condition lasts
++		 * (e.g. TX underflow without a data path): count once, mask
++		 * them until the direction's next prepare instead of storming.
++		 */
++		mca->err_count++;
++		for (dir = 0; dir < 2; dir++) {
++			u32 mine = dir == SNDRV_PCM_STREAM_PLAYBACK ?
++				   MCA_IRQ_TX_ALL : MCA_IRQ_RX_ALL;
++
++			if (!(status & mine & MCA_IRQ_ERRORS) ||
++			    mca->last[dir].first_err_us >= 0)
++				continue;
++			mca->last[dir].first_err_us =
++				ktime_us_delta(ktime_get(),
++					       mca->last[dir].start_time);
++			mca->last[dir].first_err_status = raw;
++		}
++		mca->irq_mask |= status & MCA_IRQ_ERRORS;
++		mca_write(mca, MCA_IRQ_MASK, mca->irq_mask);
++		dev_dbg_ratelimited(mca->dev, "irq status %#x, masked\n", status);
++	}
++	spin_unlock(&mca->hw_lock);
++
++	if ((status & MCA_IRQ_TX_LOW_WATER) && mca->pio_off) {
++		spin_lock(&mca->lock);
++		if (mca->running && mca->substream && mca_pio_fill(mca))
++			elapsed = mca->substream;
++		spin_unlock(&mca->lock);
++	}
++
++	/* outside mca->lock: period_elapsed takes the stream lock */
++	if (elapsed)
++		snd_pcm_period_elapsed(elapsed);
++
++	return IRQ_HANDLED;
++}
++
++/* --- runtime PM ----------------------------------------------------------- */
++
++/*
++ * The IRQ is only enabled while the block is powered: the handler reads
++ * MCA registers, and an MMIO access to a power-gated Apple block can hang
++ * the CPU.
++ */
++static int mca_runtime_suspend(struct device *dev)
++{
++	struct s8000_mca *mca = dev_get_drvdata(dev);
++
++	disable_irq(mca->irq);
++	mca_write(mca, MCA_IRQ_MASK, MCA_IRQ_ALL);
++	return 0;
++}
++
++static int mca_runtime_resume(struct device *dev)
++{
++	struct s8000_mca *mca = dev_get_drvdata(dev);
++
++	/*
++	 * The power domain was just switched on, so the MCA may be at its
++	 * reset state, with causes like no-BCLK open in the hardware mask.
++	 * Mask and clear everything before the IRQ is enabled. Prepare
++	 * unmasks what a stream needs.
++	 */
++	mca->irq_mask = MCA_IRQ_ALL;
++	mca_write(mca, MCA_IRQ_MASK, MCA_IRQ_ALL);
++	mca_write(mca, MCA_IRQ_STATUS, MCA_IRQ_ALL);
++	enable_irq(mca->irq);
++	return 0;
++}
++
++static DEFINE_RUNTIME_DEV_PM_OPS(mca_pm_ops, mca_runtime_suspend,
++				 mca_runtime_resume, NULL);
++
++/* --- debugfs: register snapshot for the device test ----------------------- */
++
++/*
++ * No debugfs access changes the power state or touches a suspended block:
++ * the MCA registers are read only while the device is already runtime
++ * active (stream running, or power/control = on). The MCLK word and the
++ * i2s-switch are read back only while the driver itself has them
++ * programmed. Their power domain is not known.
++ */
++static int mca_regs_show(struct seq_file *s, void *unused)
++{
++	struct s8000_mca *mca = dev_get_drvdata(s->private);
++	unsigned int off, val;
++	int dir;
++
++	seq_printf(s, "irqs %lu errors %lu spurious %lu last status %#x irq_mask %#x\n",
++		   mca->irq_count, mca->err_count, mca->spurious_count,
++		   mca->last_status, mca->irq_mask);
++	seq_printf(s, "mclk word %#x (last written)%s%s, route %s\n",
++		   mca->mclk_cur, mca->mclk_on ? ", clock on" : "",
++		   mca->mclk_forced ? ", forced" : "",
++		   mca->route_on ? "applied" : "off");
++	seq_printf(s, "capture %s, prepared %#x running %#x (bit 0 playback, 1 capture)\n",
++		   mca->capture ? "yes" : "no", mca->prep_mask, mca->run_mask);
++	for (dir = 0; dir < 2; dir++) {
++		const char *name = dir == SNDRV_PCM_STREAM_PLAYBACK ?
++				   "playback" : "capture";
++
++		if (mca->last[dir].first_err_us >= 0)
++			seq_printf(s, "last %s stream: first error %lld us after start (status %#x), status at stop %#x\n",
++				   name, mca->last[dir].first_err_us,
++				   mca->last[dir].first_err_status,
++				   mca->last[dir].stop_status);
++		else
++			seq_printf(s, "last %s stream: no error IRQ, status at stop %#x\n",
++				   name, mca->last[dir].stop_status);
++	}
++
++	if (pm_runtime_get_if_active(mca->dev) <= 0) {
++		seq_puts(s, "runtime-suspended: registers not read\n");
++		return 0;
++	}
++
++	for (off = 0; off < 0x100; off += 4)
++		seq_printf(s, "mca+%#05x = %#010x\n", off, mca_read(mca, off));
++	if (mca->mclk_on || mca->mclk_forced)
++		seq_printf(s, "mclk     = %#010x\n", readl(mca->mclk_reg));
++	if (mca->sw && mca->route_on) {
++		for (off = 0; off < 0x50; off += 4) {
++			regmap_read(mca->sw, off, &val);
++			seq_printf(s, "sw+%#04x  = %#010x\n", off, val);
++		}
++	}
++
++	pm_runtime_put(mca->dev);
++	return 0;
++}
++
++/*
++ * debugfs s8000-mca-mclk: "1"/"0" or a raw word forces MCLK for pad tests.
++ * Forcing holds a runtime PM reference, so the MCA domain is on (and its
++ * IRQ masked by runtime resume) before the word is written.
++ */
++static ssize_t mca_mclk_write(struct file *f, const char __user *ubuf,
++			      size_t len, loff_t *ppos)
++{
++	struct s8000_mca *mca = f->private_data;
++	u32 val;
++	int ret;
++
++	ret = kstrtou32_from_user(ubuf, len, 0, &val);
++	if (ret)
++		return ret;
++
++	guard(mutex)(&mca->dbg_lock);
++	if (val && !mca->mclk_forced) {
++		ret = pm_runtime_resume_and_get(mca->dev);
++		if (ret)
++			return ret;
++		mca->mclk_forced = true;
++	}
++	if (val) {
++		mca->mclk_cur = val == 1 ? mca_mclk_word(mca) : val;
++		writel(mca->mclk_cur, mca->mclk_reg);
++	} else if (mca->mclk_forced) {
++		/* back to what the clock wants: its word, or off */
++		mca->mclk_cur = mca->mclk_on ? mca_mclk_word(mca) : 0;
++		writel(mca->mclk_cur, mca->mclk_reg);
++		mca->mclk_forced = false;
++		pm_runtime_put(mca->dev);
++	}
++	return len;
++}
++
++/* no MMIO: reports the last written word */
++static ssize_t mca_mclk_read(struct file *f, char __user *ubuf, size_t len,
++			     loff_t *ppos)
++{
++	struct s8000_mca *mca = f->private_data;
++	char buf[48];
++	int n;
++
++	n = scnprintf(buf, sizeof(buf), "forced %d word %#x\n",
++		      mca->mclk_forced, mca->mclk_cur);
++	return simple_read_from_buffer(ubuf, len, ppos, buf, n);
++}
++
++static const struct file_operations mca_mclk_fops = {
++	.open = simple_open,
++	.read = mca_mclk_read,
++	.write = mca_mclk_write,
++	.llseek = default_llseek,
++};
++
++/* --- probe ---------------------------------------------------------------- */
++
++static int s8000_mca_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct device_node *np = dev->of_node;
++	struct clk_init_data init = {};
++	const char *clk_name = "mca-mclk";
++	struct s8000_mca *mca;
++	u32 ver, fifo;
++	int ret, n;
++
++	mca = devm_kzalloc(dev, sizeof(*mca), GFP_KERNEL);
++	if (!mca)
++		return -ENOMEM;
++	mca->dev = dev;
++	spin_lock_init(&mca->lock);
++	spin_lock_init(&mca->hw_lock);
++	ret = devm_mutex_init(dev, &mca->dbg_lock);
++	if (ret)
++		return ret;
++	platform_set_drvdata(pdev, mca);
++
++	mca->base = devm_platform_ioremap_resource_byname(pdev, "mca");
++	if (IS_ERR(mca->base))
++		return PTR_ERR(mca->base);
++	mca->mclk_reg = devm_platform_ioremap_resource_byname(pdev, "mclk");
++	if (IS_ERR(mca->mclk_reg))
++		return PTR_ERR(mca->mclk_reg);
++
++	mca->sw = syscon_regmap_lookup_by_phandle_optional(np, "apple,i2s-switch");
++	if (IS_ERR(mca->sw))
++		return dev_err_probe(dev, PTR_ERR(mca->sw), "no i2s-switch\n");
++	n = of_property_count_u32_elems(np, "apple,i2s-switch-route");
++	if (mca->sw && n > 0) {
++		mca->sw_route = devm_kcalloc(dev, n, sizeof(u32), GFP_KERNEL);
++		if (!mca->sw_route)
++			return -ENOMEM;
++		of_property_read_u32_array(np, "apple,i2s-switch-route",
++					   mca->sw_route, n);
++		mca->sw_route_len = n;
++	}
++
++	mca->mclk_ctl = 0x58;
++	of_property_read_u32(np, "apple,mclk-control", &mca->mclk_ctl);
++	mca->mclk_rate = 12000000;
++	of_property_read_u32(np, "apple,mclk-frequency", &mca->mclk_rate);
++	of_property_read_u32(np, "apple,pio-fifo-offset", &mca->pio_off);
++	mca->pio_burst = 32;
++	of_property_read_u32(np, "apple,pio-burst", &mca->pio_burst);
++	if (mca->pio_off >= 0x4000 || (mca->pio_off & 3))
++		return dev_err_probe(dev, -EINVAL, "bad apple,pio-fifo-offset\n");
++
++	mca->irq_mask = MCA_IRQ_ALL;
++	mca->last[SNDRV_PCM_STREAM_PLAYBACK].first_err_us = -1;
++	mca->last[SNDRV_PCM_STREAM_CAPTURE].first_err_us = -1;
++	mca->irq = platform_get_irq(pdev, 0);
++	if (mca->irq < 0)
++		return mca->irq;
++	/* enabled by runtime resume, once the hardware mask is set */
++	ret = devm_request_irq(dev, mca->irq, mca_irq, IRQF_NO_AUTOEN,
++			       dev_name(dev), mca);
++	if (ret)
++		return ret;
++
++	hrtimer_setup(&mca->timer, mca_timer_fn, CLOCK_MONOTONIC,
++		      HRTIMER_MODE_REL_SOFT);
++
++	ret = devm_pm_runtime_enable(dev);
++	if (ret)
++		return ret;
++
++	ret = pm_runtime_resume_and_get(dev);
++	if (ret)
++		return dev_err_probe(dev, ret, "power up failed\n");
++	ver = mca_read(mca, MCA_VERSION);
++	fifo = mca_read(mca, MCA_FIFO_SIZE);
++	pm_runtime_put(dev);
++
++	mca->fifo_tx = FIELD_GET(MCA_FIFO_SIZE_TX, fifo);
++	mca->use_dma = of_property_present(np, "dmas") && !nodma;
++	/* the generic PCM fails the card if a DAI stream has no channel */
++	mca->capture = mca->use_dma &&
++		       of_property_match_string(np, "dma-names", "rx") >= 0;
++	dev_info(dev, "MCA version %u, FIFO tx %u rx %u, %s%s\n", ver,
++		 mca->fifo_tx, (u32)FIELD_GET(MCA_FIFO_SIZE_RX, fifo),
++		 mca->use_dma ? "SmartIO DMA" :
++		 mca->pio_off ? "PIO (experimental)" : "timer PCM, no data path",
++		 mca->capture ? ", capture" : "");
++	if (ver != 4 || mca->fifo_tx != 0x40)
++		dev_warn(dev, "expected version 4 / FIFO 0x40 (iOS)\n");
++	if (mca->fifo_tx < 8)
++		mca->fifo_tx = 0x40;
++
++	/* MCLK control word -> codec MCLK */
++	of_property_read_string(np, "clock-output-names", &clk_name);
++	init.name = clk_name;
++	init.ops = &mca_mclk_ops;
++	mca->mclk_hw.init = &init;
++	ret = devm_clk_hw_register(dev, &mca->mclk_hw);
++	if (ret)
++		return ret;
++	ret = devm_of_clk_add_hw_provider(dev, of_clk_hw_simple_get, &mca->mclk_hw);
++	if (ret)
++		return ret;
++
++	/* MCA0 TX in Apple's ADT dma-channels: 0x28 {0x21|0x22, 0, 0x300, 0x180} */
++	mca->sio_dt[0] = 0x21;
++	mca->sio_dt[1] = 0x22;
++	mca->sio_dt[2] = 0;
++	mca->sio_dt[3] = 0x300;
++	mca->sio_dt[4] = 0x180;
++	of_property_read_u32_array(np, "apple,sio-dma-config", mca->sio_dt,
++				   ARRAY_SIZE(mca->sio_dt));
++
++	mca->dai_drv = mca_dai;
++	if (!mca->capture)
++		memset(&mca->dai_drv.capture, 0, sizeof(mca->dai_drv.capture));
++
++	ret = devm_snd_soc_register_component(dev, mca->use_dma ?
++					      &mca_component_dma :
++					      &mca_component_pio,
++					      &mca->dai_drv, 1);
++	if (ret)
++		return ret;
++
++	if (mca->use_dma) {
++		ret = devm_snd_dmaengine_pcm_register(dev, &mca_dma_config, 0);
++		if (ret)
++			return dev_err_probe(dev, ret, "dmaengine PCM failed\n");
++	}
++
++	debugfs_create_devm_seqfile(dev, "s8000-mca-regs", NULL, mca_regs_show);
++	debugfs_create_file("s8000-mca-mclk", 0600, NULL, mca, &mca_mclk_fops);
++	return 0;
++}
++
++static const struct of_device_id s8000_mca_of_match[] = {
++	{ .compatible = "apple,s8000-mca" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, s8000_mca_of_match);
++
++static struct platform_driver s8000_mca_driver = {
++	.driver = {
++		.name = "s8000-mca",
++		.of_match_table = s8000_mca_of_match,
++		.pm = pm_ptr(&mca_pm_ops),
++	},
++	.probe = s8000_mca_probe,
++};
++module_platform_driver(s8000_mca_driver);
++
++MODULE_DESCRIPTION("Apple S8000 (A9) MCA I2S driver");
++MODULE_LICENSE("Dual MIT/GPL");
+diff --git a/sound/soc/codecs/Kconfig b/sound/soc/codecs/Kconfig
+index f9a47e262a77cbba6f18bde10b2d1a8ff2bfe2e8..0c5db937c63466bfb2742a13f1bed23d092fc94f 100644
+--- a/sound/soc/codecs/Kconfig
++++ b/sound/soc/codecs/Kconfig
+@@ -1032,6 +1032,14 @@ config SND_SOC_CS42L73
+ 	tristate "Cirrus Logic CS42L73 CODEC"
+ 	depends on I2C
+ 
++config SND_SOC_CS42L81
++	tristate "Cirrus Logic CS42L81 CODEC (Apple)"
++	depends on SPI_MASTER
++	select REGMAP
++	help
++	  Apple-specific Cirrus Logic CS42L81 codec with integrated speaker
++	  drivers, controlled over SPI (A9 iPad 5).
++
+ config SND_SOC_CS42L83
+ 	tristate "Cirrus Logic CS42L83 CODEC"
+ 	depends on I2C
+diff --git a/sound/soc/codecs/Makefile b/sound/soc/codecs/Makefile
+index 3d122ace75adee2d9b4584e2357e49ed2a30037d..a23e9144d051a6e7636c149b28140dfc0f469a87 100644
+--- a/sound/soc/codecs/Makefile
++++ b/sound/soc/codecs/Makefile
+@@ -94,6 +94,7 @@ snd-soc-cs42l51-i2c-y := cs42l51-i2c.o
+ snd-soc-cs42l52-y := cs42l52.o
+ snd-soc-cs42l56-y := cs42l56.o
+ snd-soc-cs42l73-y := cs42l73.o
++snd-soc-cs42l81-y := cs42l81.o
+ snd-soc-cs42l83-i2c-y := cs42l83-i2c.o
+ snd-soc-cs42l84-y := cs42l84.o
+ snd-soc-cs4234-y := cs4234.o
+@@ -538,6 +539,7 @@ obj-$(CONFIG_SND_SOC_CS42L51_I2C)	+= snd-soc-cs42l51-i2c.o
+ obj-$(CONFIG_SND_SOC_CS42L52)	+= snd-soc-cs42l52.o
+ obj-$(CONFIG_SND_SOC_CS42L56)	+= snd-soc-cs42l56.o
+ obj-$(CONFIG_SND_SOC_CS42L73)	+= snd-soc-cs42l73.o
++obj-$(CONFIG_SND_SOC_CS42L81)	+= snd-soc-cs42l81.o
+ obj-$(CONFIG_SND_SOC_CS42L83)	+= snd-soc-cs42l83-i2c.o
+ obj-$(CONFIG_SND_SOC_CS42L84)	+= snd-soc-cs42l84.o
+ obj-$(CONFIG_SND_SOC_CS4234)	+= snd-soc-cs4234.o
+diff --git a/sound/soc/codecs/cs42l81.c b/sound/soc/codecs/cs42l81.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..f5f840b40a7f2bc77d35be9ff990e9a891635eba
+--- /dev/null
++++ b/sound/soc/codecs/cs42l81.c
+@@ -0,0 +1,1613 @@
++// SPDX-License-Identifier: GPL-2.0-only OR MIT
++/*
++ * Cirrus Logic CS42L81 (Apple 338S-series) codec: speaker and headphone
++ * playback, built-in DMIC capture, headphone jack.
++ *
++ * The CS42L81 is an Apple-specific Cirrus codec with integrated speaker
++ * drivers, used on the A9 iPad 5 (J71t). There is no public datasheet; the
++ * register sequences below were reconstructed from iOS 16.7.10's
++ * AppleCS42L81Audio driver (see docs/audio/playback-path.md and
++ * docs/audio/ds-capture-and-jack.md in linux-a9). Register names are
++ * descriptive guesses.
++ *
++ * Control port: SPI, 16-bit register address (page << 8 | reg), 8-bit
++ * data, framed as   write: 6C page reg 00 val
++ *                   read:  6D page reg 00 xx  (value in the 5th byte)
++ */
++
++#include <linux/bitfield.h>
++#include <linux/clk.h>
++#include <linux/debugfs.h>
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/of.h>
++#include <linux/regmap.h>
++#include <linux/seq_file.h>
++#include <linux/slab.h>
++#include <linux/spi/spi.h>
++#include <linux/uaccess.h>
++#include <linux/workqueue.h>
++#include <sound/jack.h>
++#include <sound/pcm.h>
++#include <sound/pcm_params.h>
++#include <sound/soc.h>
++#include <sound/tlv.h>
++
++#define CS42L81_SPI_WRITE	0x6c
++#define CS42L81_SPI_READ	0x6d
++
++#define CS42L81_DEVID_AB	0x0001	/* reads 0x42 */
++#define CS42L81_DEVID_CD	0x0002	/* reads 0xa8 */
++#define CS42L81_DEVID_E		0x0003	/* reads 0x1x */
++#define CS42L81_REVID		0x0005
++#define CS42L81_PWR_CTL1	0x0006
++#define CS42L81_PWR_CTL1_PDN		BIT(0)
++#define CS42L81_PWR_CTL1_BIT2		BIT(2)
++#define CS42L81_PWR_CTL1_FREEZE		BIT(6)	/* set after PDN_DONE */
++#define CS42L81_PWR_CTL1_REVA0		BIT(7)
++#define CS42L81_PWR_CTL2	0x0007
++/*
++ * Bits 1/3/5 power the bias of the analog mics mic1/mic3/mic4. iOS sets
++ * them only for mics with a "<mic>-bias" or "<mic>-intmic" ADT property,
++ * so on J71t (DMICs only) it never touches them.
++ */
++#define CS42L81_ADC_PWR		0x000d
++/* iOS updateRouting: 7 cleared for output, 6 for input, 5 for either */
++#define CS42L81_PATH_PWR	0x000e
++#define CS42L81_PATH_PWR_DAC_PDN	BIT(7)
++#define CS42L81_PATH_PWR_ADC_PDN	BIT(6)
++#define CS42L81_PATH_PWR_COMMON_PDN	BIT(5)
++#define CS42L81_CLK_CTL		0x000f	/* [3:0] rate code, bit 7 see below */
++/*
++ * iOS enableAudio writes CLK_CTL[7:6,3:0] = 0x80 when the IIS link's
++ * isMaster() is false (codec provides BCLK/LRCK from MCLK, J71t) and 0x0c
++ * when the SoC is clock master (AppleCS42L81Audio flag +0x1ec bit 0 =
++ * !AppleARMIISDevice::isMaster() = !(iisConfig[0] & 1)).
++ */
++#define CS42L81_CLK_CTL_CODEC_MASTER	0x80
++#define CS42L81_CLK_CTL_CODEC_SLAVE	0x0c
++#define CS42L81_ASP_PWR		0x0011	/* bit 7 ASP RX PDN, 6 ASP TX PDN */
++#define CS42L81_ASP_PWR_RX_PDN		BIT(7)
++#define CS42L81_ASP_PWR_TX_PDN		BIT(6)
++#define CS42L81_ASP_CLK		0x0012	/* bit 7 ASP clock master, [3:0] rate */
++/* ASP TX slot n: byte offset in the frame, bit 7 = slot unused (no width) */
++#define CS42L81_ASP_TX_SLOT(n)	(0x0014 + (n))	/* n = 0..9 */
++#define CS42L81_ASP_TX_SLOT_EMPTY	BIT(7)
++/* ASP TX byte-lane enable mask, frame byte 0 = bit 0 of 0x0021 */
++#define CS42L81_ASP_TX_EN(n)	(0x001e + (n))	/* n = 0..3, MSB first */
++#define CS42L81_ASP_RX_SLOT(n)	(0x0022 + (n))	/* n = 0..9 */
++#define CS42L81_INT_STATUS1	0x002e
++#define CS42L81_INT_STATUS2	0x002f
++#define CS42L81_INT_STATUS2_PDN_DONE	BIT(7)
++#define CS42L81_INT_STATUS3	0x0033
++#define CS42L81_INT_STATUS4	0x007b
++#define CS42L81_INT_STATUS5	0x007c
++#define CS42L81_INT_STATUS6	0x0106
++/* ASP TX slot n source: 0x18 = ADC A, 0x1c = ADC B (0x20/0x24 = DMIC2A/B) */
++#define CS42L81_ASP_TX_SRC(n)	(0x0115 + (n))	/* n = 0..9 */
++/* ADC channel n source, same codes as ASP_TX_SRC */
++#define CS42L81_ADC_SRC(n)	(0x011f + (n))	/* n = 0..1 */
++#define CS42L81_SRC_RATE_A	0x0123
++#define CS42L81_ASP_TX_PAIR_RATE(p)	(0x0124 + (p))	/* slot pair p = 0..4 */
++#define CS42L81_ASP_PAIR_RATE(p)	(0x0129 + (p))	/* channel pair p = 0..4 */
++#define CS42L81_ASP_TX_RATE	0x012e
++#define CS42L81_ASP_RX_RATE	0x012f
++#define CS42L81_ASP_CTL		0x0131
++#define CS42L81_OUT_CTL		0x0201
++/*
++ * ADC input select. iOS starts at 0x04 and, per DMIC route, clears bit 2
++ * and toggles 0x40 (dmic1a) / 0x80 (dmic1b); 0xc4 is its no-input value.
++ */
++#define CS42L81_ADC_ROUTE	0x0203
++#define CS42L81_ADC_ROUTE_NONE		0xc4
++#define CS42L81_ADC_ROUTE_DMIC1		0xc0
++#define CS42L81_ADC_CTL_A	0x0204	/* [1:0] ADC A +20 dB boost (inferred) */
++#define CS42L81_ADC_RATE_A	0x0205	/* [3:0] rate, [7:4] analog inputs */
++#define CS42L81_ADC_PGA_A	0x0206	/* analog PGA, 0 for DMICs */
++#define CS42L81_ADC_PGA_B	0x0207
++#define CS42L81_ADC_VOL_A	0x0208	/* signed, 1 dB (inferred), 0x80 mute */
++#define CS42L81_ADC_CTL_B	0x020f
++#define CS42L81_ADC_CTL_C	0x0210	/* [1:0] ADC B boost (inferred) */
++#define CS42L81_ADC_RATE_B	0x0211
++#define CS42L81_ADC_VOL_B	0x0212
++#define CS42L81_ADC_BOOST		GENMASK(1, 0)
++#define CS42L81_ADC_VOL_MUTE		0x80
++/* DMIC1 (1A + 1B) control: bit 7 = iOS control 0x188, [6:4] by rate */
++#define CS42L81_DMIC1_CTL	0x0215
++#define CS42L81_DMIC2_CTL	0x0216
++#define CS42L81_HPCP_CTL	0x0219
++#define CS42L81_DRV_PDN		0x0220	/* bit 5 HP PDN, bit 3 line PDN */
++#define CS42L81_DRV_PDN_HP		BIT(5)
++#define CS42L81_DRV_PDN_LINE		BIT(3)
++#define CS42L81_DRV_CTL1	0x0221
++#define CS42L81_DAC_RATE	0x0222
++#define CS42L81_DRV_CTL2	0x0223
++#define CS42L81_DRV_CTL3	0x0224
++#define CS42L81_SPK_VOL_A	0x0225
++#define CS42L81_SPK_VOL_B	0x0226
++#define CS42L81_HP_VOL_A	0x0227
++#define CS42L81_HP_VOL_B	0x0228
++#define CS42L81_LINE_VOL_A	0x0229
++#define CS42L81_LINE_VOL_B	0x022a
++#define CS42L81_SPK_PDN		0x022e	/* bit 4 speaker B PDN, bit 3 speaker A PDN */
++#define CS42L81_SPK_PDN_A		BIT(3)
++#define CS42L81_SPK_PDN_B		BIT(4)
++#define CS42L81_SPK_RATE	0x022f
++#define CS42L81_DRV_CTL4	0x0230
++#define CS42L81_SPK_MODE	0x0231	/* [5:4] */
++#define CS42L81_SPK_MODE_MASK		GENMASK(5, 4)
++#define CS42L81_MAIN_VOL	0x0232
++#define CS42L81_INT_STATUS7	0x0528
++#define CS42L81_TRIM1		0xc81f
++#define CS42L81_TRIM2		0xc85f
++#define CS42L81_TRIM3		0xc96f
++#define CS42L81_UNLOCK		0x9901
++
++#define CS42L81_VOL_MUTE	0x19	/* digital volume "mute" code */
++#define CS42L81_VOL_OFFSET	0x34	/* control 0 = -102 dB */
++#define CS42L81_VOL_MAX_CTL	228	/* +12 dB */
++#define CS42L81_HP_MUTE		0x40
++
++/* Headphone control: 0.5 dB steps, 0 = -50 dB, 100 = 0 dB, 124 = +12 dB */
++#define CS42L81_HP_VOL_0DB	100
++#define CS42L81_HP_VOL_MAX	124
++#define CS42L81_HP_VOL_DEFAULT	40	/* -30 dB */
++/* iOS keeps the HP charge pump off at or below -9 dB and while settling */
++#define CS42L81_HP_CP_MIN_DB	(-9)
++
++/* Capture control: 1 dB steps (inferred), 0 = -96 dB, 96 = 0 dB, +32 dB max */
++#define CS42L81_ADC_VOL_0DB	96
++#define CS42L81_ADC_VOL_MAX	128
++
++#define CS42L81_PDN_POLL_US	10000
++#define CS42L81_PDN_TIMEOUT_US	1000000	/* iOS: 100 x 10 ms */
++
++/*
++ * Headphone jack (docs/audio/ds-capture-and-jack.md section 3). iOS polls
++ * the plug state on a timer; the codec status bit is not known yet, so
++ * polling is off by default and, without jack_reg, only logs which status
++ * bits change (test T1).
++ */
++static unsigned int jack_poll_ms;
++module_param(jack_poll_ms, uint, 0644);
++MODULE_PARM_DESC(jack_poll_ms,
++		 "poll the codec status registers every N ms (0 = off, min 100)");
++static unsigned int jack_reg;
++module_param(jack_reg, uint, 0644);
++MODULE_PARM_DESC(jack_reg, "status register with the plug bit (0 = unknown, log only)");
++static unsigned int jack_mask;
++module_param(jack_mask, uint, 0644);
++MODULE_PARM_DESC(jack_mask, "plug bit(s) in jack_reg");
++static bool jack_invert;
++module_param(jack_invert, bool, 0644);
++MODULE_PARM_DESC(jack_invert, "plug bit is set while unplugged");
++/* iOS reads control 0x188 with default 1; J71t publishes no such control */
++static bool dmic_bit7 = true;
++module_param(dmic_bit7, bool, 0644);
++MODULE_PARM_DESC(dmic_bit7, "set DMIC1 control (0x0215) bit 7 at capture start");
++
++#define CS42L81_JACK_POLL_MIN_MS	100
++#define CS42L81_JACK_DEBOUNCE		2	/* equal polls before a report */
++
++/* latched (read-to-clear) status registers, as iOS enableAudio clears them */
++static const u16 cs42l81_status_regs[] = {
++	0x002e, 0x002f, 0x0033, 0x007b, 0x007c, 0x0106, 0x0528,
++};
++
++/* ASP TX slot 0/1 and ADC channel 0/1 sources: ADC A (DMIC1A), ADC B (DMIC1B) */
++static const u8 cs42l81_adc_src[2] = { 0x18, 0x1c };
++
++struct cs42l81 {
++	struct device *dev;
++	struct spi_device *spi;
++	struct regmap *regmap;
++	struct clk *mclk;
++	struct gpio_desc *mute_gpio;
++	struct gpio_descs *hs_switch;	/* ext_sw1/2, read only */
++	u8 *xfer_buf;		/* 2 x 5 bytes, DMA-safe */
++
++	unsigned int rate_code;
++	unsigned int slot_bytes;
++	unsigned int spk_vol;	/* control value, 0..vol_max */
++	unsigned int vol_max;
++	bool spk_switch;
++	bool spk_on;
++	bool core_on;
++	bool clk_provider;	/* codec drives BCLK/LRCK (set_fmt) */
++	unsigned int dbg_reg;	/* debugfs cs42l81-reg selection */
++	u32 spk_mode;		/* 2 = stereo speakers (both outputs) */
++
++	/* headphones */
++	unsigned int hp_vol;	/* control value, 0..CS42L81_HP_VOL_MAX */
++	unsigned int hp_switch;
++	bool hp_on;
++	bool hp_settled;	/* 60 ms after the HP driver came up */
++	bool hp_cp_on;		/* charge pump */
++
++	/* capture */
++	unsigned int adc_vol;	/* control value, 0..CS42L81_ADC_VOL_MAX */
++	unsigned int adc_switch;
++	bool adc_on;
++
++	/* jack */
++	struct snd_soc_component *component;
++	struct snd_soc_jack jack;
++	struct delayed_work jack_work;
++	struct mutex status_lock;	/* read-to-clear status vs PDN_DONE poll */
++	struct mutex jack_lock;		/* jack_* below, reports */
++	bool jack_ready;
++	int jack_forced;	/* -1 = detect, else forced state */
++	bool jack_state;	/* last reported */
++	bool jack_pending;
++	unsigned int jack_stable;
++	u8 status_last[ARRAY_SIZE(cs42l81_status_regs)];
++	u8 status_seen[ARRAY_SIZE(cs42l81_status_regs)];
++};
++
++/* --- SPI regmap bus ------------------------------------------------------ */
++
++static int cs42l81_bus_write(void *context, unsigned int reg, unsigned int val)
++{
++	struct cs42l81 *cs = context;
++	u8 *tx = cs->xfer_buf;
++
++	tx[0] = CS42L81_SPI_WRITE;
++	tx[1] = reg >> 8;
++	tx[2] = reg & 0x7f;
++	tx[3] = 0;
++	tx[4] = val;
++
++	return spi_write(cs->spi, tx, 5);
++}
++
++static int cs42l81_bus_read(void *context, unsigned int reg, unsigned int *val)
++{
++	struct cs42l81 *cs = context;
++	u8 *tx = cs->xfer_buf, *rx = cs->xfer_buf + 5;
++	struct spi_transfer t = {
++		.tx_buf = tx,
++		.rx_buf = rx,
++		.len = 5,
++	};
++	int ret;
++
++	tx[0] = CS42L81_SPI_READ;
++	tx[1] = reg >> 8;
++	tx[2] = reg & 0x7f;
++	tx[3] = 0;
++	tx[4] = 0;
++	memset(rx, 0, 5);
++
++	ret = spi_sync_transfer(cs->spi, &t, 1);
++	if (ret)
++		return ret;
++
++	*val = rx[4];
++	return 0;
++}
++
++static const struct regmap_bus cs42l81_bus = {
++	.reg_write = cs42l81_bus_write,
++	.reg_read = cs42l81_bus_read,
++};
++
++static bool cs42l81_valid_reg(struct device *dev, unsigned int reg)
++{
++	/* The register byte is 7 bits wide on the wire. */
++	return !(reg & 0x80);
++}
++
++static const struct regmap_config cs42l81_regmap = {
++	.reg_bits = 16,
++	.val_bits = 8,
++	.max_register = 0xffff,
++	.readable_reg = cs42l81_valid_reg,
++	.writeable_reg = cs42l81_valid_reg,
++	.cache_type = REGCACHE_NONE,
++};
++
++/* --- helpers -------------------------------------------------------------- */
++
++static int cs42l81_rate_code(unsigned int rate)
++{
++	switch (rate) {
++	case 8000:	return 0x1;
++	case 11025:	return 0x2;
++	case 12000:	return 0x4;
++	case 16000:	return 0x5;
++	case 22050:	return 0x6;
++	case 24000:	return 0x8;
++	case 32000:	return 0x9;
++	case 44100:	return 0xa;
++	case 48000:	return 0xc;
++	default:	return -EINVAL;
++	}
++}
++
++static void cs42l81_set_rate(struct cs42l81 *cs)
++{
++	struct regmap *map = cs->regmap;
++	unsigned int c = cs->rate_code;
++
++	/* iOS setSampleRate (vtable +0x650) */
++	regmap_update_bits(map, CS42L81_CLK_CTL, 0x0f, c);
++	regmap_write(map, CS42L81_ASP_TX_RATE, c | c << 4);
++	regmap_write(map, CS42L81_ASP_RX_RATE, c | c << 4);
++	regmap_write(map, CS42L81_SRC_RATE_A, c);
++	regmap_write(map, CS42L81_DAC_RATE, c);
++	regmap_update_bits(map, CS42L81_ADC_RATE_A, 0x0f, c);
++	regmap_update_bits(map, CS42L81_ADC_RATE_B, 0x0f, c);
++	regmap_write(map, CS42L81_SPK_RATE, c);
++}
++
++static void cs42l81_set_asp(struct cs42l81 *cs)
++{
++	struct regmap *map = cs->regmap;
++	unsigned int c = cs->rate_code, b = cs->slot_bytes, n;
++
++	/* Codec drives BCLK/LRCK (MCA0 is the clock consumer). */
++	regmap_write(map, CS42L81_ASP_CLK, 0x80 | c);
++
++	/* ASP RX slot n: byte offset n*b, width b bytes */
++	for (n = 0; n < 10; n++)
++		regmap_write(map, CS42L81_ASP_RX_SLOT(n),
++			     ((n * b) | ((b - 1) << 5)) & 0xff);
++	for (n = 0; n < 5; n++)
++		regmap_write(map, CS42L81_ASP_PAIR_RATE(n), c | c << 4);
++}
++
++static void cs42l81_apply_spk_volume(struct cs42l81 *cs)
++{
++	unsigned int v = CS42L81_VOL_MUTE;
++
++	if (cs->spk_switch)
++		v = (cs->spk_vol + CS42L81_VOL_OFFSET) & 0xff;
++
++	/* Speaker-only state, as iOS: per-speaker volume, main volume muted */
++	regmap_write(cs->regmap, CS42L81_SPK_VOL_A, v);
++	regmap_write(cs->regmap, CS42L81_SPK_VOL_B, v);
++	regmap_write(cs->regmap, CS42L81_MAIN_VOL, CS42L81_VOL_MUTE);
++}
++
++/* --- capture: DMIC1A/1B -> ADC A/B -> ASP TX slots 0/1 -------------------- */
++
++/* iOS updateRouting: 0x0215 = control 0x188 << 7 | divider from the rate */
++static unsigned int cs42l81_dmic_ctl(struct cs42l81 *cs)
++{
++	unsigned int div;
++
++	switch (cs->rate_code) {
++	case 0x1 ... 0x8:
++		div = 0x70;	/* 8..24 kHz */
++		break;
++	case 0x9:
++		div = 0x40;	/* 32 kHz */
++		break;
++	case 0xa:
++	case 0xb:
++		div = 0x10;	/* 44.1 kHz */
++		break;
++	default:
++		div = 0;	/* 48 kHz: iOS writes no divider */
++		break;
++	}
++	return (READ_ONCE(dmic_bit7) ? 0x80 : 0) | div;
++}
++
++/*
++ * iOS DMIC gain (control 0x170, 0x60 = 0 dB): from +12 dB on the ADC
++ * +20 dB boost is on and the digital volume carries the rest.
++ */
++static void cs42l81_apply_adc_volume(struct cs42l81 *cs)
++{
++	struct regmap *map = cs->regmap;
++	int db = (int)cs->adc_vol - CS42L81_ADC_VOL_0DB;
++	unsigned int boost = 0, vol = CS42L81_ADC_VOL_MUTE;
++
++	if (cs->adc_switch) {
++		if (db >= 12) {
++			boost = CS42L81_ADC_BOOST;
++			db -= 20;
++		}
++		vol = db & 0xff;
++	}
++
++	regmap_update_bits(map, CS42L81_ADC_CTL_A, 0x73, boost);
++	regmap_write(map, CS42L81_ADC_PGA_A, 0);
++	regmap_write(map, CS42L81_ADC_PGA_B, 0);
++	regmap_write(map, CS42L81_ADC_VOL_A, vol);
++	regmap_update_bits(map, CS42L81_ADC_CTL_C, 0x43, boost);
++	regmap_write(map, CS42L81_ADC_VOL_B, vol);
++}
++
++/* iOS updateRouting, input slots: ADC A/B in slots 0/1, slots 2..9 unused */
++static void cs42l81_set_asp_tx(struct cs42l81 *cs)
++{
++	struct regmap *map = cs->regmap;
++	unsigned int c = cs->rate_code, b = cs->slot_bytes, n;
++	u32 lanes = GENMASK(2 * b - 1, 0);	/* frame bytes of slots 0/1 */
++
++	for (n = 0; n < 10; n++) {
++		regmap_write(map, CS42L81_ASP_TX_SLOT(n),
++			     n * b | (n < 2 ? 0 : CS42L81_ASP_TX_SLOT_EMPTY));
++		regmap_write(map, CS42L81_ASP_TX_PAIR_RATE(n / 2), c | c << 4);
++		if (n < 2)
++			regmap_write(map, CS42L81_ASP_TX_SRC(n),
++				     cs42l81_adc_src[n]);
++	}
++	/* iOS writes these as one 4-byte burst of the byte-swapped mask */
++	for (n = 0; n < 4; n++)
++		regmap_write(map, CS42L81_ASP_TX_EN(n),
++			     (lanes >> (24 - 8 * n)) & 0xff);
++}
++
++/* iOS updateRouting with the input stream active, routes dmic1a + dmic1b */
++static void cs42l81_capture_power_up(struct cs42l81 *cs)
++{
++	struct regmap *map = cs->regmap;
++	unsigned int ch;
++
++	cs42l81_set_asp_tx(cs);
++	for (ch = 0; ch < 2; ch++) {
++		/* digital input: no analog input select bits */
++		regmap_update_bits(map, CS42L81_ADC_RATE_A, ch ? 0xc0 : 0x30, 0);
++		regmap_write(map, CS42L81_ADC_SRC(ch), cs42l81_adc_src[ch]);
++	}
++	cs42l81_apply_adc_volume(cs);
++	/* CS42L81_ADC_PWR (analog mic bias) stays as it is, as on iOS */
++	regmap_write(map, CS42L81_ADC_ROUTE, CS42L81_ADC_ROUTE_DMIC1);
++	regmap_write(map, CS42L81_ADC_CTL_B, 0x04);
++	regmap_clear_bits(map, CS42L81_ASP_PWR, CS42L81_ASP_PWR_TX_PDN);
++	regmap_set_bits(map, CS42L81_ASP_CTL, 0x01);
++	regmap_write(map, CS42L81_DMIC1_CTL, cs42l81_dmic_ctl(cs));
++	regmap_clear_bits(map, CS42L81_PATH_PWR, CS42L81_PATH_PWR_ADC_PDN |
++			  CS42L81_PATH_PWR_COMMON_PDN);
++	cs->adc_on = true;
++}
++
++/* iOS updateRouting once the input stream is gone; 0x0215 is left as is */
++static void cs42l81_capture_power_down(struct cs42l81 *cs)
++{
++	struct regmap *map = cs->regmap;
++
++	cs->adc_on = false;
++	regmap_write(map, CS42L81_ADC_ROUTE, CS42L81_ADC_ROUTE_NONE);
++	regmap_write(map, CS42L81_ADC_CTL_B, 0x04);
++	regmap_set_bits(map, CS42L81_ASP_PWR, CS42L81_ASP_PWR_TX_PDN);
++	regmap_set_bits(map, CS42L81_PATH_PWR, CS42L81_PATH_PWR_ADC_PDN);
++}
++
++/* --- headphones ------------------------------------------------------------ */
++
++static void cs42l81_hp_cp_on(struct cs42l81 *cs)
++{
++	/* iOS setHeadphoneVolume */
++	regmap_write(cs->regmap, CS42L81_TRIM3, 0x0e);
++	regmap_write(cs->regmap, CS42L81_HPCP_CTL, 0x01);
++	usleep_range(155, 200);		/* iOS IODelay(155) */
++	regmap_write(cs->regmap, CS42L81_TRIM3, 0x1e);
++	cs->hp_cp_on = true;
++}
++
++static void cs42l81_hp_cp_off(struct cs42l81 *cs)
++{
++	/* iOS updateRouting with the headphone route gone */
++	regmap_write(cs->regmap, CS42L81_TRIM3, 0x0e);
++	usleep_range(1000, 2000);
++	regmap_write(cs->regmap, CS42L81_HPCP_CTL, 0x00);
++	cs->hp_cp_on = false;
++}
++
++/*
++ * iOS setHeadphoneVolume without a line out (J71t): the HP driver gain in
++ * 1 dB steps (0x0227, 7-bit signed, 0x40 = mute) plus a 0.5 dB trim in the
++ * digital volume (0x0225). Until the driver has settled, and at or below
++ * -9 dB, the charge pump stays off and the gain is at most -9 dB.
++ */
++static void cs42l81_apply_hp_volume(struct cs42l81 *cs)
++{
++	struct regmap *map = cs->regmap;
++	int g = (int)cs->hp_vol - CS42L81_HP_VOL_0DB;	/* 0.5 dB */
++	int gain = g / 2, trim = g - 2 * gain;
++
++	if (!cs->hp_on)
++		return;
++
++	if (!cs->hp_switch) {
++		regmap_write(map, CS42L81_HP_VOL_A, CS42L81_HP_MUTE);
++		return;
++	}
++
++	regmap_write(map, CS42L81_SPK_VOL_A, trim & 0xff);
++	/* iOS leaves 0x0226 alone here; keep both channels equal (inferred) */
++	regmap_write(map, CS42L81_SPK_VOL_B, trim & 0xff);
++	if (gain > CS42L81_HP_CP_MIN_DB) {
++		if (!cs->hp_settled)
++			gain = CS42L81_HP_CP_MIN_DB;
++		else if (!cs->hp_cp_on)
++			cs42l81_hp_cp_on(cs);
++	}
++	regmap_write(map, CS42L81_HP_VOL_A, gain & 0x7f);
++}
++
++/* --- power sequences (DAPM) ---------------------------------------------- */
++
++static int cs42l81_core_power_up(struct cs42l81 *cs)
++{
++	struct regmap *map = cs->regmap;
++	unsigned int rev, val;
++	int ret;
++
++	ret = clk_prepare_enable(cs->mclk);
++	if (ret) {
++		dev_err(cs->dev, "could not enable MCLK: %d\n", ret);
++		return ret;
++	}
++
++	/* iOS enableAudio (vtable +0x600), cold path */
++	regmap_write(map, CS42L81_UNLOCK, 0xa5);
++	msleep(10);
++	regmap_write(map, CS42L81_UNLOCK, 0x00);
++
++	/* read to clear latched status */
++	mutex_lock(&cs->status_lock);
++	regmap_read(map, CS42L81_INT_STATUS1, &val);
++	regmap_read(map, CS42L81_INT_STATUS2, &val);
++	regmap_read(map, CS42L81_INT_STATUS3, &val);
++	regmap_read(map, CS42L81_INT_STATUS4, &val);
++	regmap_read(map, CS42L81_INT_STATUS5, &val);
++	regmap_read(map, CS42L81_INT_STATUS6, &val);
++	regmap_read(map, CS42L81_INT_STATUS7, &val);
++	mutex_unlock(&cs->status_lock);
++
++	ret = regmap_read(map, CS42L81_REVID, &rev);
++	if (ret)
++		goto err;
++	if (rev == 0xa0)
++		regmap_set_bits(map, CS42L81_PWR_CTL1, CS42L81_PWR_CTL1_REVA0);
++
++	regmap_clear_bits(map, CS42L81_PWR_CTL2, 0x80);
++	regmap_update_bits(map, CS42L81_CLK_CTL, 0xcf,
++			   cs->clk_provider ? CS42L81_CLK_CTL_CODEC_MASTER :
++					      CS42L81_CLK_CTL_CODEC_SLAVE);
++	regmap_clear_bits(map, CS42L81_ASP_CLK, 0xc0);
++	regmap_clear_bits(map, CS42L81_ASP_PWR, 0x10);
++
++	regmap_update_bits(map, CS42L81_PWR_CTL1,
++			   CS42L81_PWR_CTL1_PDN | CS42L81_PWR_CTL1_BIT2,
++			   CS42L81_PWR_CTL1_BIT2);
++
++	regmap_write(map, CS42L81_OUT_CTL, 0xe0);
++	regmap_write(map, CS42L81_HPCP_CTL, 0x00);
++	regmap_write(map, CS42L81_TRIM1, 0xff);
++	regmap_write(map, CS42L81_TRIM2, 0x0f);
++	regmap_write(map, CS42L81_TRIM3, 0x0e);
++	cs->hp_cp_on = false;
++	regmap_set_bits(map, CS42L81_DRV_CTL1, 0x20);
++	regmap_write(map, CS42L81_DRV_CTL2, 0x08);
++	regmap_write(map, CS42L81_DRV_CTL3, 0x09);
++	regmap_set_bits(map, CS42L81_ADC_CTL_A, 0x04);
++	regmap_set_bits(map, CS42L81_ADC_CTL_C, 0x04);
++	regmap_write(map, CS42L81_DRV_CTL4, 0x0c);
++
++	cs42l81_set_rate(cs);
++
++	/* updateRouting: playback-only state */
++	cs42l81_set_asp(cs);
++	regmap_update_bits(map, CS42L81_ADC_PWR, 0x3f, 0);
++	regmap_write(map, CS42L81_ADC_ROUTE, 0xc4);
++	regmap_write(map, CS42L81_ADC_CTL_B, 0x04);
++	regmap_write(map, CS42L81_DRV_CTL2, 0x08);
++	regmap_write(map, CS42L81_DRV_CTL3, 0x09);
++	regmap_update_bits(map, CS42L81_PWR_CTL1, CS42L81_PWR_CTL1_BIT2,
++			   CS42L81_PWR_CTL1_BIT2);
++	regmap_update_bits(map, CS42L81_ASP_PWR, 0xc0, 0x40);
++	regmap_set_bits(map, CS42L81_ASP_CTL, 0x01);
++	regmap_clear_bits(map, CS42L81_PATH_PWR, 0xa0);
++	regmap_set_bits(map, CS42L81_PATH_PWR, 0x40);
++
++	cs->core_on = true;
++	/* latched status after power-up: clock-error bits help the bring-up */
++	{
++		unsigned int st[4] = {};
++
++		mutex_lock(&cs->status_lock);
++		regmap_read(map, CS42L81_INT_STATUS1, &st[0]);
++		regmap_read(map, CS42L81_INT_STATUS2, &st[1]);
++		regmap_read(map, CS42L81_INT_STATUS3, &st[2]);
++		mutex_unlock(&cs->status_lock);
++		regmap_read(map, CS42L81_CLK_CTL, &st[3]);
++		dev_info(cs->dev,
++			 "powered up: rev %#x clk_ctl %#x status 2e=%#x 2f=%#x 33=%#x\n",
++			 rev, st[3], st[0], st[1], st[2]);
++	}
++	return 0;
++
++err:
++	clk_disable_unprepare(cs->mclk);
++	return ret;
++}
++
++static void cs42l81_core_power_down(struct cs42l81 *cs)
++{
++	struct regmap *map = cs->regmap;
++	unsigned int val;
++	int ret;
++
++	/* iOS disableAudio (vtable +0x608) */
++	cs->core_on = false;
++	regmap_write(map, CS42L81_HP_VOL_A, CS42L81_HP_MUTE);
++	regmap_write(map, CS42L81_HP_VOL_B, CS42L81_HP_MUTE);
++	regmap_write(map, CS42L81_LINE_VOL_A, CS42L81_HP_MUTE);
++	regmap_write(map, CS42L81_LINE_VOL_B, CS42L81_HP_MUTE);
++	regmap_write(map, CS42L81_SPK_VOL_A, CS42L81_VOL_MUTE);
++	regmap_write(map, CS42L81_SPK_VOL_B, CS42L81_VOL_MUTE);
++	regmap_write(map, CS42L81_MAIN_VOL, CS42L81_VOL_MUTE);
++	regmap_write(map, CS42L81_DRV_PDN, 0x28);
++	regmap_write(map, CS42L81_SPK_PDN, 0x18);
++
++	/* the jack poll must not consume PDN_DONE (read to clear) */
++	mutex_lock(&cs->status_lock);
++	regmap_read(map, CS42L81_INT_STATUS2, &val);
++	if (val & CS42L81_INT_STATUS2_PDN_DONE)
++		dev_dbg(cs->dev, "PDN_DONE already set before power down\n");
++
++	regmap_update_bits(map, CS42L81_PWR_CTL1,
++			   CS42L81_PWR_CTL1_PDN | CS42L81_PWR_CTL1_BIT2,
++			   CS42L81_PWR_CTL1_PDN | CS42L81_PWR_CTL1_BIT2);
++
++	ret = regmap_read_poll_timeout(map, CS42L81_INT_STATUS2, val,
++				       val & CS42L81_INT_STATUS2_PDN_DONE,
++				       CS42L81_PDN_POLL_US,
++				       CS42L81_PDN_TIMEOUT_US);
++	mutex_unlock(&cs->status_lock);
++	if (ret)
++		dev_warn(cs->dev, "timed out waiting for codec shutdown\n");
++
++	regmap_set_bits(map, CS42L81_PWR_CTL1, CS42L81_PWR_CTL1_FREEZE);
++	msleep(10);
++	regmap_write(map, CS42L81_UNLOCK, 0xa5);
++
++	clk_disable_unprepare(cs->mclk);
++}
++
++static int cs42l81_core_event(struct snd_soc_dapm_widget *w,
++			      struct snd_kcontrol *kcontrol, int event)
++{
++	struct snd_soc_component *component =
++		snd_soc_dapm_to_component(w->dapm);
++	struct cs42l81 *cs = snd_soc_component_get_drvdata(component);
++
++	switch (event) {
++	case SND_SOC_DAPM_PRE_PMU:
++		return cs42l81_core_power_up(cs);
++	case SND_SOC_DAPM_POST_PMD:
++		cs42l81_core_power_down(cs);
++		break;
++	}
++
++	return 0;
++}
++
++static int cs42l81_spk_event(struct snd_soc_dapm_widget *w,
++			     struct snd_kcontrol *kcontrol, int event)
++{
++	struct snd_soc_component *component =
++		snd_soc_dapm_to_component(w->dapm);
++	struct cs42l81 *cs = snd_soc_component_get_drvdata(component);
++	struct regmap *map = cs->regmap;
++	unsigned int pdn = CS42L81_SPK_PDN_A | CS42L81_SPK_PDN_B;
++
++	switch (event) {
++	case SND_SOC_DAPM_PRE_PMU:
++		/*
++		 * iOS never drives speakers and headphones together (it mutes
++		 * the speakers when the headphones take the volume); the jack
++		 * pins keep the two exclusive, this only guards a manual mix.
++		 */
++		if (cs->hp_on) {
++			dev_warn(cs->dev, "headphones active, speakers stay off\n");
++			break;
++		}
++		gpiod_set_value_cansleep(cs->mute_gpio, 1);
++		regmap_update_bits(map, CS42L81_SPK_MODE, CS42L81_SPK_MODE_MASK,
++				   cs->spk_mode == 2 ? 0 : 0x10);
++		regmap_write(map, CS42L81_OUT_CTL, 0xe0);
++		regmap_update_bits(map, CS42L81_DRV_PDN,
++				   CS42L81_DRV_PDN_HP | CS42L81_DRV_PDN_LINE,
++				   CS42L81_DRV_PDN_HP | CS42L81_DRV_PDN_LINE);
++		regmap_update_bits(map, CS42L81_SPK_PDN, pdn,
++				   cs->spk_mode == 2 ? 0 : CS42L81_SPK_PDN_B);
++		msleep(50);
++		cs->spk_on = true;
++		cs42l81_apply_spk_volume(cs);
++		/* iOS waits for the volume ramp: (v + 27) / 2 ms */
++		msleep((cs->spk_vol + 27) / 2);
++		break;
++	case SND_SOC_DAPM_POST_PMU:
++		if (cs->spk_on)
++			gpiod_set_value_cansleep(cs->mute_gpio, 0);
++		break;
++	case SND_SOC_DAPM_PRE_PMD:
++		if (!cs->spk_on)
++			break;
++		gpiod_set_value_cansleep(cs->mute_gpio, 1);
++		cs->spk_on = false;
++		regmap_write(map, CS42L81_SPK_VOL_A, CS42L81_VOL_MUTE);
++		regmap_write(map, CS42L81_SPK_VOL_B, CS42L81_VOL_MUTE);
++		regmap_update_bits(map, CS42L81_SPK_PDN, pdn, pdn);
++		msleep(20);
++		break;
++	}
++
++	return 0;
++}
++
++/* iOS updateRouting: speaker route -> headphone route, and back */
++static int cs42l81_hp_event(struct snd_soc_dapm_widget *w,
++			    struct snd_kcontrol *kcontrol, int event)
++{
++	struct snd_soc_component *component =
++		snd_soc_dapm_to_component(w->dapm);
++	struct cs42l81 *cs = snd_soc_component_get_drvdata(component);
++	struct regmap *map = cs->regmap;
++	unsigned int pdn = CS42L81_SPK_PDN_A | CS42L81_SPK_PDN_B, old = pdn;
++
++	switch (event) {
++	case SND_SOC_DAPM_PRE_PMU:
++		if (cs->spk_on) {
++			dev_warn(cs->dev, "speakers active, headphones stay off\n");
++			break;
++		}
++		gpiod_set_value_cansleep(cs->mute_gpio, 1);
++		regmap_write(map, CS42L81_OUT_CTL, 0xe0);
++		/* HP driver on, line driver off */
++		regmap_update_bits(map, CS42L81_DRV_PDN,
++				   CS42L81_DRV_PDN_HP | CS42L81_DRV_PDN_LINE,
++				   CS42L81_DRV_PDN_LINE);
++		/* speakers off; iOS drops OUT_CTL bit 5 around the change */
++		regmap_read(map, CS42L81_SPK_PDN, &old);
++		if (~old & pdn) {
++			regmap_write(map, CS42L81_OUT_CTL, 0xc0);
++			regmap_update_bits(map, CS42L81_SPK_PDN, pdn, pdn);
++			regmap_write(map, CS42L81_OUT_CTL, 0xe0);
++			msleep(20);
++		}
++		cs->hp_on = true;
++		cs->hp_settled = false;
++		cs42l81_apply_hp_volume(cs);	/* at most -9 dB, pump off */
++		msleep(60);
++		cs->hp_settled = true;
++		cs42l81_apply_hp_volume(cs);
++		break;
++	case SND_SOC_DAPM_PRE_PMD:
++		if (!cs->hp_on)
++			break;
++		cs->hp_on = false;
++		cs->hp_settled = false;
++		regmap_write(map, CS42L81_LINE_VOL_A, CS42L81_HP_MUTE);
++		regmap_write(map, CS42L81_HP_VOL_A, CS42L81_HP_MUTE);
++		regmap_write(map, CS42L81_SPK_VOL_A, CS42L81_VOL_MUTE);
++		regmap_write(map, CS42L81_SPK_VOL_B, CS42L81_VOL_MUTE);
++		regmap_update_bits(map, CS42L81_DRV_PDN,
++				   CS42L81_DRV_PDN_HP | CS42L81_DRV_PDN_LINE,
++				   CS42L81_DRV_PDN_HP | CS42L81_DRV_PDN_LINE);
++		msleep(20);
++		if (cs->hp_cp_on)
++			cs42l81_hp_cp_off(cs);
++		break;
++	}
++
++	return 0;
++}
++
++static int cs42l81_adc_event(struct snd_soc_dapm_widget *w,
++			     struct snd_kcontrol *kcontrol, int event)
++{
++	struct snd_soc_component *component =
++		snd_soc_dapm_to_component(w->dapm);
++	struct cs42l81 *cs = snd_soc_component_get_drvdata(component);
++
++	switch (event) {
++	case SND_SOC_DAPM_PRE_PMU:
++		cs42l81_capture_power_up(cs);
++		break;
++	case SND_SOC_DAPM_POST_PMD:
++		cs42l81_capture_power_down(cs);
++		break;
++	}
++
++	return 0;
++}
++
++/* --- controls ------------------------------------------------------------- */
++
++/* 0.5 dB steps; control 0 = -102 dB. Max is limited by spkr-gain-db. */
++static const DECLARE_TLV_DB_SCALE(cs42l81_spk_tlv, -10200, 50, 0);
++
++static int cs42l81_spk_vol_info(struct snd_kcontrol *kcontrol,
++				struct snd_ctl_elem_info *uinfo)
++{
++	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
++	struct cs42l81 *cs = snd_soc_component_get_drvdata(component);
++
++	uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
++	uinfo->count = 1;
++	uinfo->value.integer.min = 0;
++	uinfo->value.integer.max = cs->vol_max;
++	return 0;
++}
++
++static int cs42l81_spk_vol_get(struct snd_kcontrol *kcontrol,
++			       struct snd_ctl_elem_value *ucontrol)
++{
++	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
++	struct cs42l81 *cs = snd_soc_component_get_drvdata(component);
++
++	ucontrol->value.integer.value[0] = cs->spk_vol;
++	return 0;
++}
++
++static int cs42l81_spk_vol_put(struct snd_kcontrol *kcontrol,
++			       struct snd_ctl_elem_value *ucontrol)
++{
++	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
++	struct cs42l81 *cs = snd_soc_component_get_drvdata(component);
++	long v = ucontrol->value.integer.value[0];
++
++	if (v < 0 || v > cs->vol_max)
++		return -EINVAL;
++	if (v == cs->spk_vol)
++		return 0;
++
++	cs->spk_vol = v;
++	if (cs->spk_on)
++		cs42l81_apply_spk_volume(cs);
++	return 1;
++}
++
++static int cs42l81_spk_sw_get(struct snd_kcontrol *kcontrol,
++			      struct snd_ctl_elem_value *ucontrol)
++{
++	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
++	struct cs42l81 *cs = snd_soc_component_get_drvdata(component);
++
++	ucontrol->value.integer.value[0] = cs->spk_switch;
++	return 0;
++}
++
++static int cs42l81_spk_sw_put(struct snd_kcontrol *kcontrol,
++			      struct snd_ctl_elem_value *ucontrol)
++{
++	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
++	struct cs42l81 *cs = snd_soc_component_get_drvdata(component);
++	bool on = !!ucontrol->value.integer.value[0];
++
++	if (on == cs->spk_switch)
++		return 0;
++
++	cs->spk_switch = on;
++	if (cs->spk_on)
++		cs42l81_apply_spk_volume(cs);
++	return 1;
++}
++
++/* Headphone and capture controls: the soc_mixer_control reg is the field */
++enum {
++	CS42L81_CTL_HP_VOL,
++	CS42L81_CTL_HP_SW,
++	CS42L81_CTL_ADC_VOL,
++	CS42L81_CTL_ADC_SW,
++};
++
++static unsigned int *cs42l81_ctl_field(struct cs42l81 *cs, unsigned int id)
++{
++	switch (id) {
++	case CS42L81_CTL_HP_VOL:
++		return &cs->hp_vol;
++	case CS42L81_CTL_HP_SW:
++		return &cs->hp_switch;
++	case CS42L81_CTL_ADC_VOL:
++		return &cs->adc_vol;
++	default:
++		return &cs->adc_switch;
++	}
++}
++
++static int cs42l81_ctl_get(struct snd_kcontrol *kcontrol,
++			   struct snd_ctl_elem_value *ucontrol)
++{
++	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
++	struct cs42l81 *cs = snd_soc_component_get_drvdata(component);
++	struct soc_mixer_control *mc =
++		(struct soc_mixer_control *)kcontrol->private_value;
++
++	ucontrol->value.integer.value[0] = *cs42l81_ctl_field(cs, mc->reg);
++	return 0;
++}
++
++static int cs42l81_ctl_put(struct snd_kcontrol *kcontrol,
++			   struct snd_ctl_elem_value *ucontrol)
++{
++	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
++	struct cs42l81 *cs = snd_soc_component_get_drvdata(component);
++	struct soc_mixer_control *mc =
++		(struct soc_mixer_control *)kcontrol->private_value;
++	unsigned int *field = cs42l81_ctl_field(cs, mc->reg);
++	long v = ucontrol->value.integer.value[0];
++
++	if (v < 0 || v > mc->max)
++		return -EINVAL;
++	if (v == *field)
++		return 0;
++
++	*field = v;
++	if (mc->reg == CS42L81_CTL_HP_VOL || mc->reg == CS42L81_CTL_HP_SW)
++		cs42l81_apply_hp_volume(cs);
++	else if (cs->adc_on)
++		cs42l81_apply_adc_volume(cs);
++	return 1;
++}
++
++/* HP: 0.5 dB steps from -50 dB. Capture: 1 dB steps from -96 dB (inferred) */
++static const DECLARE_TLV_DB_SCALE(cs42l81_hp_tlv, -5000, 50, 0);
++static const DECLARE_TLV_DB_SCALE(cs42l81_adc_tlv, -9600, 100, 0);
++
++static const struct snd_kcontrol_new cs42l81_controls[] = {
++	{
++		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
++		.name = "Speaker Playback Volume",
++		.access = SNDRV_CTL_ELEM_ACCESS_READWRITE |
++			  SNDRV_CTL_ELEM_ACCESS_TLV_READ,
++		.tlv.p = cs42l81_spk_tlv,
++		.info = cs42l81_spk_vol_info,
++		.get = cs42l81_spk_vol_get,
++		.put = cs42l81_spk_vol_put,
++	},
++	SOC_SINGLE_BOOL_EXT("Speaker Playback Switch", 0,
++			    cs42l81_spk_sw_get, cs42l81_spk_sw_put),
++	SOC_SINGLE_EXT_TLV("Headphone Playback Volume", CS42L81_CTL_HP_VOL, 0,
++			   CS42L81_HP_VOL_MAX, 0, cs42l81_ctl_get,
++			   cs42l81_ctl_put, cs42l81_hp_tlv),
++	SOC_SINGLE_EXT("Headphone Playback Switch", CS42L81_CTL_HP_SW, 0, 1, 0,
++		       cs42l81_ctl_get, cs42l81_ctl_put),
++	SOC_SINGLE_EXT_TLV("Capture Volume", CS42L81_CTL_ADC_VOL, 0,
++			   CS42L81_ADC_VOL_MAX, 0, cs42l81_ctl_get,
++			   cs42l81_ctl_put, cs42l81_adc_tlv),
++	SOC_SINGLE_EXT("Capture Switch", CS42L81_CTL_ADC_SW, 0, 1, 0,
++		       cs42l81_ctl_get, cs42l81_ctl_put),
++};
++
++static const struct snd_soc_dapm_widget cs42l81_widgets[] = {
++	SND_SOC_DAPM_SUPPLY("Core", SND_SOC_NOPM, 0, 0, cs42l81_core_event,
++			    SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
++	SND_SOC_DAPM_AIF_IN("ASPRX", "ASP Playback", 0, SND_SOC_NOPM, 0, 0),
++	SND_SOC_DAPM_OUT_DRV_E("Speaker Amp", SND_SOC_NOPM, 0, 0, NULL, 0,
++			       cs42l81_spk_event,
++			       SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMU |
++			       SND_SOC_DAPM_PRE_PMD),
++	SND_SOC_DAPM_OUT_DRV_E("HP Amp", SND_SOC_NOPM, 0, 0, NULL, 0,
++			       cs42l81_hp_event,
++			       SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_PRE_PMD),
++	SND_SOC_DAPM_OUTPUT("SPKOUT"),
++	SND_SOC_DAPM_OUTPUT("HPOUT"),
++
++	/* the two built-in DMICs (ADT dmic1a-intmic, dmic1b-intmic) */
++	SND_SOC_DAPM_INPUT("DMIC1A"),
++	SND_SOC_DAPM_INPUT("DMIC1B"),
++	SND_SOC_DAPM_ADC_E("ADC", NULL, SND_SOC_NOPM, 0, 0, cs42l81_adc_event,
++			   SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
++	SND_SOC_DAPM_AIF_OUT("ASPTX", "ASP Capture", 0, SND_SOC_NOPM, 0, 0),
++};
++
++static const struct snd_soc_dapm_route cs42l81_routes[] = {
++	{ "ASPRX", NULL, "Core" },
++	{ "Speaker Amp", NULL, "ASPRX" },
++	{ "SPKOUT", NULL, "Speaker Amp" },
++	{ "HP Amp", NULL, "ASPRX" },
++	{ "HPOUT", NULL, "HP Amp" },
++
++	{ "ADC", NULL, "Core" },
++	{ "ADC", NULL, "DMIC1A" },
++	{ "ADC", NULL, "DMIC1B" },
++	{ "ASPTX", NULL, "ADC" },
++};
++
++/* --- DAI ------------------------------------------------------------------ */
++
++static int cs42l81_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
++{
++	/* The codec provides BCLK and LRCK; MCA0 is the consumer (iOS). */
++	if ((fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) != SND_SOC_DAIFMT_CBP_CFP)
++		return -EINVAL;
++	((struct cs42l81 *)snd_soc_component_get_drvdata(dai->component))->clk_provider = true;
++	if ((fmt & SND_SOC_DAIFMT_FORMAT_MASK) != SND_SOC_DAIFMT_I2S)
++		return -EINVAL;
++	if ((fmt & SND_SOC_DAIFMT_INV_MASK) != SND_SOC_DAIFMT_NB_NF)
++		return -EINVAL;
++	return 0;
++}
++
++static int cs42l81_hw_params(struct snd_pcm_substream *substream,
++			     struct snd_pcm_hw_params *params,
++			     struct snd_soc_dai *dai)
++{
++	struct cs42l81 *cs = snd_soc_component_get_drvdata(dai->component);
++	int code = cs42l81_rate_code(params_rate(params));
++	unsigned int width = params_physical_width(params);
++
++	if (code < 0)
++		return code;
++	if (width != 16 && width != 32)
++		return -EINVAL;
++
++	if (code == cs->rate_code && width / 8 == cs->slot_bytes)
++		return 0;
++
++	cs->rate_code = code;
++	cs->slot_bytes = width / 8;
++
++	/* DAPM keeps the core up for pmdown_time after a stream: reapply. */
++	if (cs->core_on) {
++		cs42l81_set_rate(cs);
++		cs42l81_set_asp(cs);
++	}
++	if (cs->adc_on) {
++		cs42l81_set_asp_tx(cs);
++		regmap_write(cs->regmap, CS42L81_DMIC1_CTL, cs42l81_dmic_ctl(cs));
++	}
++	return 0;
++}
++
++static const struct snd_soc_dai_ops cs42l81_dai_ops = {
++	.set_fmt = cs42l81_set_fmt,
++	.hw_params = cs42l81_hw_params,
++};
++
++static struct snd_soc_dai_driver cs42l81_dai = {
++	.name = "cs42l81-asp",
++	.playback = {
++		.stream_name = "ASP Playback",
++		.channels_min = 2,
++		.channels_max = 2,
++		.rates = SNDRV_PCM_RATE_8000 | SNDRV_PCM_RATE_11025 |
++			 SNDRV_PCM_RATE_16000 | SNDRV_PCM_RATE_22050 |
++			 SNDRV_PCM_RATE_32000 | SNDRV_PCM_RATE_44100 |
++			 SNDRV_PCM_RATE_48000,
++		.formats = SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S32_LE,
++	},
++	.capture = {
++		.stream_name = "ASP Capture",
++		.channels_min = 2,
++		.channels_max = 2,
++		.rates = SNDRV_PCM_RATE_8000 | SNDRV_PCM_RATE_11025 |
++			 SNDRV_PCM_RATE_16000 | SNDRV_PCM_RATE_22050 |
++			 SNDRV_PCM_RATE_32000 | SNDRV_PCM_RATE_44100 |
++			 SNDRV_PCM_RATE_48000,
++		.formats = SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S32_LE,
++	},
++	.ops = &cs42l81_dai_ops,
++	/* one ASP clock and one slot width for both directions */
++	.symmetric_rate = 1,
++	.symmetric_sample_bits = 1,
++};
++
++/* --- headphone jack -------------------------------------------------------- */
++
++/*
++ * A plug moves playback from SPKOUT to HPOUT. The pins are switched here,
++ * not as jack pins, because snd_soc_jack_add_pins() would add a "<pin>
++ * Jack" control per pin; userspace looks for "Headphone Jack".
++ */
++static void cs42l81_jack_report(struct cs42l81 *cs, bool plugged)
++{
++	struct snd_soc_dapm_context *dapm =
++		snd_soc_component_to_dapm(cs->component);
++
++	cs->jack_state = plugged;
++	dev_info(cs->dev, "headphones %s\n", plugged ? "plugged" : "unplugged");
++	if (plugged) {
++		snd_soc_dapm_disable_pin(dapm, "SPKOUT");
++		snd_soc_dapm_enable_pin(dapm, "HPOUT");
++	} else {
++		snd_soc_dapm_disable_pin(dapm, "HPOUT");
++		snd_soc_dapm_enable_pin(dapm, "SPKOUT");
++	}
++	snd_soc_dapm_sync(dapm);
++	snd_soc_jack_report(&cs->jack, plugged ? SND_JACK_HEADPHONE : 0,
++			    SND_JACK_HEADPHONE);
++}
++
++/* hs-switch lines (ADT function-ext_sw1/2) are only read, never driven */
++static int cs42l81_hs_switch_str(struct cs42l81 *cs, char *buf, size_t len)
++{
++	unsigned int i;
++	int n = 0;
++
++	for (i = 0; cs->hs_switch && i < cs->hs_switch->ndescs; i++) {
++		struct gpio_desc *d = cs->hs_switch->desc[i];
++
++		n += scnprintf(buf + n, len - n, " ext_sw%u %s=%d", i + 1,
++			       gpiod_get_direction(d) ? "in" : "out",
++			       gpiod_get_raw_value_cansleep(d));
++	}
++	if (!n && len)
++		buf[0] = '\0';
++	return n;
++}
++
++/*
++ * Survey (test T1): log every change of the latched status registers with
++ * the hs-switch levels. With jack_reg/jack_mask set, also debounce that bit
++ * and report it through the jack, whose pins switch HPOUT and SPKOUT.
++ */
++static void cs42l81_jack_work(struct work_struct *work)
++{
++	struct cs42l81 *cs = container_of(to_delayed_work(work),
++					  struct cs42l81, jack_work);
++	unsigned int period = READ_ONCE(jack_poll_ms);
++	unsigned int reg = READ_ONCE(jack_reg), mask = READ_ONCE(jack_mask);
++	unsigned int i, val, det = 0;
++	bool have_det = false, plugged, rearm;
++	char sw[64];
++
++	if (!period)
++		return;
++
++	mutex_lock(&cs->status_lock);
++	for (i = 0; i < ARRAY_SIZE(cs42l81_status_regs); i++) {
++		if (regmap_read(cs->regmap, cs42l81_status_regs[i], &val))
++			continue;
++		cs->status_seen[i] |= val;
++		if (val != cs->status_last[i]) {
++			cs42l81_hs_switch_str(cs, sw, sizeof(sw));
++			dev_info_ratelimited(cs->dev,
++					     "status %04x: %02x -> %02x%s\n",
++					     cs42l81_status_regs[i],
++					     cs->status_last[i], val, sw);
++			cs->status_last[i] = val;
++		}
++		if (cs42l81_status_regs[i] == reg) {
++			det = val;
++			have_det = true;
++		}
++	}
++	mutex_unlock(&cs->status_lock);
++
++	/* reports take the DAPM mutex: never under status_lock */
++	mutex_lock(&cs->jack_lock);
++	if (cs->jack_ready && have_det && mask && cs->jack_forced < 0) {
++		plugged = !!(det & mask) ^ READ_ONCE(jack_invert);
++		if (plugged != cs->jack_pending) {
++			cs->jack_pending = plugged;
++			cs->jack_stable = 1;
++		} else if (cs->jack_stable < CS42L81_JACK_DEBOUNCE) {
++			cs->jack_stable++;
++		}
++		if (cs->jack_stable >= CS42L81_JACK_DEBOUNCE &&
++		    plugged != cs->jack_state)
++			cs42l81_jack_report(cs, plugged);
++	}
++	/* component remove clears jack_ready, then cancels: no requeue after */
++	rearm = cs->jack_ready;
++	mutex_unlock(&cs->jack_lock);
++
++	if (rearm)
++		schedule_delayed_work(&cs->jack_work,
++				      msecs_to_jiffies(max(period,
++							   CS42L81_JACK_POLL_MIN_MS)));
++}
++
++static int cs42l81_component_probe(struct snd_soc_component *component)
++{
++	struct cs42l81 *cs = snd_soc_component_get_drvdata(component);
++	int ret;
++
++	cs->component = component;
++	ret = snd_soc_card_jack_new(component->card, "Headphone Jack",
++				    SND_JACK_HEADPHONE, &cs->jack);
++	if (ret)
++		return dev_err_probe(cs->dev, ret, "cannot create jack\n");
++
++	/*
++	 * Until something reports a plug (the poll, once test T1 names the
++	 * bit, or debugfs cs42l81-jack) the speakers stay selected.
++	 */
++	ret = snd_soc_dapm_disable_pin(snd_soc_component_to_dapm(component),
++				       "HPOUT");
++	if (ret)
++		dev_warn(cs->dev, "cannot deselect the headphones: %d\n", ret);
++
++	mutex_lock(&cs->jack_lock);
++	cs->jack_state = false;
++	cs->jack_pending = false;
++	cs->jack_stable = 0;
++	cs->jack_forced = -1;
++	cs->jack_ready = true;
++	mutex_unlock(&cs->jack_lock);
++	if (READ_ONCE(jack_poll_ms))
++		schedule_delayed_work(&cs->jack_work, 0);
++	return 0;
++}
++
++static void cs42l81_component_remove(struct snd_soc_component *component)
++{
++	struct cs42l81 *cs = snd_soc_component_get_drvdata(component);
++
++	mutex_lock(&cs->jack_lock);
++	cs->jack_ready = false;
++	mutex_unlock(&cs->jack_lock);
++	cancel_delayed_work_sync(&cs->jack_work);
++}
++
++static const struct snd_soc_component_driver cs42l81_component = {
++	.probe = cs42l81_component_probe,
++	.remove = cs42l81_component_remove,
++	.controls = cs42l81_controls,
++	.num_controls = ARRAY_SIZE(cs42l81_controls),
++	.dapm_widgets = cs42l81_widgets,
++	.num_dapm_widgets = ARRAY_SIZE(cs42l81_widgets),
++	.dapm_routes = cs42l81_routes,
++	.num_dapm_routes = ARRAY_SIZE(cs42l81_routes),
++	.endianness = 1,
++};
++
++/* --- debugfs (bring-up) ---------------------------------------------------- */
++
++/*
++ * Every register the driver touches, plus the latched status registers
++ * (0x002e, 0x002f, 0x0033, 0x007b, 0x007c, 0x0106, 0x0528: read to clear).
++ */
++static const u16 cs42l81_dbg_regs[] = {
++	0x0001, 0x0002, 0x0003, 0x0005, 0x0006, 0x0007, 0x000d, 0x000e,
++	0x000f, 0x0011, 0x0012, 0x0014, 0x0015, 0x0016, 0x001e, 0x001f,
++	0x0020, 0x0021, 0x0022, 0x0023, 0x002e, 0x002f, 0x0033, 0x007b,
++	0x007c, 0x0106, 0x0115, 0x0116, 0x011f, 0x0120, 0x0123, 0x0124,
++	0x0129, 0x012e, 0x012f, 0x0131, 0x0201, 0x0203, 0x0204, 0x0205,
++	0x0206, 0x0207, 0x0208, 0x020f, 0x0210, 0x0211, 0x0212, 0x0215,
++	0x0216, 0x0219, 0x0220, 0x0221, 0x0222, 0x0223, 0x0224, 0x0225,
++	0x0226, 0x0227, 0x0228, 0x0229, 0x022e, 0x022f, 0x0230, 0x0231,
++	0x0232, 0x0528, 0x9901, 0xc81f, 0xc85f, 0xc96f,
++};
++
++static int cs42l81_regs_show(struct seq_file *s, void *unused)
++{
++	struct cs42l81 *cs = dev_get_drvdata(s->private);
++	unsigned int i, val;
++
++	seq_printf(s, "core_on %d spk_on %d hp_on %d (cp %d) adc_on %d clk_provider %d rate %#x slot %u\n",
++		   cs->core_on, cs->spk_on, cs->hp_on, cs->hp_cp_on, cs->adc_on,
++		   cs->clk_provider, cs->rate_code, cs->slot_bytes);
++	mutex_lock(&cs->status_lock);
++	for (i = 0; i < ARRAY_SIZE(cs42l81_dbg_regs); i++) {
++		if (regmap_read(cs->regmap, cs42l81_dbg_regs[i], &val))
++			seq_printf(s, "%04x = (err)\n", cs42l81_dbg_regs[i]);
++		else
++			seq_printf(s, "%04x = %02x\n", cs42l81_dbg_regs[i], val);
++	}
++	mutex_unlock(&cs->status_lock);
++	return 0;
++}
++
++/*
++ * cs42l81-jack. Read: poll settings, jack state, the OR of every status
++ * value the poll has seen (cleared by the read) and the hs-switch levels.
++ * Write: "1"/"0" force a plug/unplug report (tests T3/T4 before the status
++ * bit is known), "auto" returns to the poll, "poll" restarts the poll after
++ * jack_poll_ms changed.
++ */
++static int cs42l81_jack_show(struct seq_file *s, void *unused)
++{
++	struct cs42l81 *cs = s->private;
++	unsigned int i;
++	char sw[64];
++
++	seq_printf(s, "poll %u ms, reg %#x mask %#x invert %d\n",
++		   READ_ONCE(jack_poll_ms), READ_ONCE(jack_reg),
++		   READ_ONCE(jack_mask), READ_ONCE(jack_invert));
++	mutex_lock(&cs->jack_lock);
++	seq_printf(s, "jack %s, reported %s\n",
++		   !cs->jack_ready ? "not created" :
++		   cs->jack_forced < 0 ? "auto" :
++		   cs->jack_forced ? "forced plugged" : "forced unplugged",
++		   cs->jack_state ? "plugged" : "unplugged");
++	mutex_unlock(&cs->jack_lock);
++
++	mutex_lock(&cs->status_lock);
++	seq_puts(s, "seen:");
++	for (i = 0; i < ARRAY_SIZE(cs42l81_status_regs); i++) {
++		seq_printf(s, " %04x=%02x", cs42l81_status_regs[i],
++			   cs->status_seen[i]);
++		cs->status_seen[i] = 0;
++	}
++	mutex_unlock(&cs->status_lock);
++
++	cs42l81_hs_switch_str(cs, sw, sizeof(sw));
++	seq_printf(s, "\nhs-switch:%s\n", sw[0] ? sw : " (none)");
++	return 0;
++}
++
++static int cs42l81_jack_open(struct inode *inode, struct file *file)
++{
++	return single_open(file, cs42l81_jack_show, inode->i_private);
++}
++
++static ssize_t cs42l81_jack_write(struct file *f, const char __user *ubuf,
++				  size_t len, loff_t *ppos)
++{
++	struct cs42l81 *cs = ((struct seq_file *)f->private_data)->private;
++	char buf[16] = {}, *cmd;
++	int forced;
++
++	if (len >= sizeof(buf))
++		return -EINVAL;
++	if (copy_from_user(buf, ubuf, len))
++		return -EFAULT;
++	cmd = strim(buf);
++
++	if (!strcmp(cmd, "1") || !strcmp(cmd, "plug"))
++		forced = 1;
++	else if (!strcmp(cmd, "0") || !strcmp(cmd, "unplug"))
++		forced = 0;
++	else if (!strcmp(cmd, "auto"))
++		forced = -1;
++	else if (!strcmp(cmd, "poll"))
++		forced = -2;	/* only restart the poll */
++	else
++		return -EINVAL;
++
++	mutex_lock(&cs->jack_lock);
++	if (!cs->jack_ready) {
++		mutex_unlock(&cs->jack_lock);
++		return -ENODEV;
++	}
++	if (forced != -2) {
++		cs->jack_forced = forced;
++		cs->jack_stable = 0;
++		if (forced >= 0 && forced != cs->jack_state)
++			cs42l81_jack_report(cs, forced);
++	}
++	if (READ_ONCE(jack_poll_ms))
++		mod_delayed_work(system_wq, &cs->jack_work, 0);
++	mutex_unlock(&cs->jack_lock);
++	return len;
++}
++
++static const struct file_operations cs42l81_jack_fops = {
++	.open = cs42l81_jack_open,
++	.read = seq_read,
++	.write = cs42l81_jack_write,
++	.llseek = seq_lseek,
++	.release = single_release,
++};
++
++/* write "REG" to select, "REG VAL" to write; read prints the selection */
++static ssize_t cs42l81_reg_write(struct file *f, const char __user *ubuf,
++				 size_t len, loff_t *ppos)
++{
++	struct cs42l81 *cs = f->private_data;
++	unsigned int reg, val;
++	char buf[32] = {};
++	int n;
++
++	if (len >= sizeof(buf))
++		return -EINVAL;
++	if (copy_from_user(buf, ubuf, len))
++		return -EFAULT;
++	n = sscanf(buf, "%x %x", &reg, &val);
++	if (n < 1 || reg > 0xffff || (reg & 0x80))
++		return -EINVAL;
++	cs->dbg_reg = reg;
++	if (n == 2 && regmap_write(cs->regmap, reg, val & 0xff))
++		return -EIO;
++	return len;
++}
++
++static ssize_t cs42l81_reg_read(struct file *f, char __user *ubuf,
++				size_t len, loff_t *ppos)
++{
++	struct cs42l81 *cs = f->private_data;
++	unsigned int val = 0;
++	char buf[32];
++	int n;
++
++	if (regmap_read(cs->regmap, cs->dbg_reg, &val))
++		return -EIO;
++	n = scnprintf(buf, sizeof(buf), "%04x = %02x\n", cs->dbg_reg, val);
++	return simple_read_from_buffer(ubuf, len, ppos, buf, n);
++}
++
++static const struct file_operations cs42l81_reg_fops = {
++	.open = simple_open,
++	.read = cs42l81_reg_read,
++	.write = cs42l81_reg_write,
++	.llseek = default_llseek,
++};
++
++/* --- probe ---------------------------------------------------------------- */
++
++static void cs42l81_debugfs_remove(void *dentry)
++{
++	debugfs_remove(dentry);
++}
++
++static void cs42l81_cancel_jack_work(void *data)
++{
++	struct cs42l81 *cs = data;
++
++	cancel_delayed_work_sync(&cs->jack_work);
++}
++
++static int cs42l81_check_id(struct cs42l81 *cs)
++{
++	unsigned int id[3] = {}, rev = 0;
++	int ret, i;
++
++	/* MCLK is not known to be needed for the control port; keep it on
++	 * anyway while probing so a negative result is meaningful. */
++	dev_info(cs->dev, "codec ID MCLK enable begin\n");
++	ret = clk_prepare_enable(cs->mclk);
++	dev_info(cs->dev, "codec ID MCLK enable end ret=%d\n", ret);
++	if (ret)
++		return dev_err_probe(cs->dev, ret, "could not enable MCLK\n");
++	dev_info(cs->dev, "codec ID SPI reads begin\n");
++
++	for (i = 0; i < 3; i++) {
++		ret = regmap_read(cs->regmap, CS42L81_DEVID_AB + i, &id[i]);
++		if (ret)
++			break;
++	}
++	if (!ret)
++		ret = regmap_read(cs->regmap, CS42L81_REVID, &rev);
++	dev_info(cs->dev, "codec ID SPI reads end ret=%d; MCLK disable begin\n", ret);
++	clk_disable_unprepare(cs->mclk);
++	dev_info(cs->dev, "codec ID MCLK disable end\n");
++
++	if (ret)
++		return dev_err_probe(cs->dev, ret, "SPI read failed\n");
++
++	if (id[0] != 0x42 || id[1] != 0xa8 || (id[2] & 0xf0) != 0x10)
++		return dev_err_probe(cs->dev, -ENODEV,
++				     "unexpected ID %02x %02x %02x (want 42 a8 1x)\n",
++				     id[0], id[1], id[2]);
++
++	dev_info(cs->dev, "CS42L81 ID %02x%02x%02x rev %#x\n",
++		 id[0], id[1], id[2], rev);
++	return 0;
++}
++
++static int cs42l81_spi_probe(struct spi_device *spi)
++{
++	struct device *dev = &spi->dev;
++	struct cs42l81 *cs;
++	u32 max_db_q8 = 0;
++	int ret;
++
++	dev_info(dev, "codec probe begin\n");
++
++	cs = devm_kzalloc(dev, sizeof(*cs), GFP_KERNEL);
++	if (!cs)
++		return -ENOMEM;
++
++	cs->dev = dev;
++	cs->spi = spi;
++	cs->xfer_buf = devm_kzalloc(dev, 10, GFP_KERNEL);
++	if (!cs->xfer_buf)
++		return -ENOMEM;
++	spi_set_drvdata(spi, cs);
++
++	ret = devm_mutex_init(dev, &cs->status_lock);
++	if (ret)
++		return ret;
++	ret = devm_mutex_init(dev, &cs->jack_lock);
++	if (ret)
++		return ret;
++	INIT_DELAYED_WORK(&cs->jack_work, cs42l81_jack_work);
++	ret = devm_add_action(dev, cs42l81_cancel_jack_work, cs);
++	if (ret)
++		return ret;
++	cs->jack_forced = -1;
++
++	cs->regmap = devm_regmap_init(dev, &cs42l81_bus, cs, &cs42l81_regmap);
++	if (IS_ERR(cs->regmap))
++		return dev_err_probe(dev, PTR_ERR(cs->regmap), "regmap init failed\n");
++
++	cs->mclk = devm_clk_get_optional(dev, "mclk");
++	if (IS_ERR(cs->mclk))
++		return dev_err_probe(dev, PTR_ERR(cs->mclk), "failed to get MCLK\n");
++
++	/* logical 1 = muted; the line itself is active low (inferred) */
++	cs->mute_gpio = devm_gpiod_get_optional(dev, "mute", GPIOD_OUT_HIGH);
++	if (IS_ERR(cs->mute_gpio))
++		return dev_err_probe(dev, PTR_ERR(cs->mute_gpio),
++				     "failed to get mute GPIO\n");
++
++	/*
++	 * Headset switch lines: their direction is not known (iOS may drive
++	 * them), so take them as they are and only read them for the jack log.
++	 * GPIOD_ASIS does not touch the pad.
++	 */
++	cs->hs_switch = devm_gpiod_get_array_optional(dev, "hs-switch",
++						      GPIOD_ASIS);
++	if (IS_ERR(cs->hs_switch)) {
++		if (PTR_ERR(cs->hs_switch) == -EPROBE_DEFER)
++			return -EPROBE_DEFER;
++		dev_warn(dev, "hs-switch GPIOs unavailable: %pe\n", cs->hs_switch);
++		cs->hs_switch = NULL;
++	}
++
++	cs->spk_mode = 2;
++	of_property_read_u32(dev->of_node, "apple,speaker-mode", &cs->spk_mode);
++
++	/*
++	 * apple,max-speaker-gain-db-q8: max speaker gain in 1/256 dB (iOS ADT
++	 * spkr-gain-db is -3.0 dB). Clamp the control there.
++	 */
++	cs->vol_max = CS42L81_VOL_MAX_CTL;
++	if (!of_property_read_u32(dev->of_node, "apple,max-speaker-gain-db-q8",
++				  &max_db_q8)) {
++		int db_x2 = (int)max_db_q8 * 2 / 256;	/* 0.5 dB units */
++		int max = 204 + db_x2;			/* 204 = 0 dB */
++
++		cs->vol_max = clamp(max, 0, CS42L81_VOL_MAX_CTL);
++	}
++	/* Default: -24 dB, quiet but audible */
++	cs->spk_vol = min_t(unsigned int, 204 - 48, cs->vol_max);
++	cs->spk_switch = true;
++	/* the DAI only accepts codec-provided clocks (J71t, as on iOS) */
++	cs->clk_provider = true;
++	cs->rate_code = 0xc;
++	cs->slot_bytes = 2;
++	cs->hp_vol = CS42L81_HP_VOL_DEFAULT;
++	cs->hp_switch = 1;
++	cs->adc_vol = CS42L81_ADC_VOL_0DB;
++	cs->adc_switch = 1;
++
++	ret = cs42l81_check_id(cs);
++	if (ret)
++		return ret;
++
++	debugfs_create_devm_seqfile(dev, "cs42l81-regs", NULL, cs42l81_regs_show);
++	ret = devm_add_action_or_reset(dev, cs42l81_debugfs_remove,
++				       debugfs_create_file("cs42l81-reg", 0600,
++							   NULL, cs,
++							   &cs42l81_reg_fops));
++	if (ret)
++		return ret;
++	ret = devm_add_action_or_reset(dev, cs42l81_debugfs_remove,
++				       debugfs_create_file("cs42l81-jack", 0600,
++							   NULL, cs,
++							   &cs42l81_jack_fops));
++	if (ret)
++		return ret;
++
++	return devm_snd_soc_register_component(dev, &cs42l81_component,
++					       &cs42l81_dai, 1);
++}
++
++static const struct of_device_id cs42l81_of_match[] = {
++	{ .compatible = "cirrus,cs42l81" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, cs42l81_of_match);
++
++static const struct spi_device_id cs42l81_spi_ids[] = {
++	{ "cs42l81" },
++	{ }
++};
++MODULE_DEVICE_TABLE(spi, cs42l81_spi_ids);
++
++static struct spi_driver cs42l81_spi_driver = {
++	.driver = {
++		.name = "cs42l81",
++		.of_match_table = cs42l81_of_match,
++	},
++	.probe = cs42l81_spi_probe,
++	.id_table = cs42l81_spi_ids,
++};
++module_spi_driver(cs42l81_spi_driver);
++
++MODULE_DESCRIPTION("Cirrus Logic CS42L81 codec (Apple iPad 5) driver");
++MODULE_LICENSE("Dual MIT/GPL");

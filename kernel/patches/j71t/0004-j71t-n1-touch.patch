@@ -1,0 +1,1487 @@
+J71t N1 touchscreen
+
+Generated from linux-a9 a9/release 9dbc8612b3b0 by scripts/orchard/j71t-series.py.
+
+diff --git a/drivers/clk/Kconfig b/drivers/clk/Kconfig
+index f9592fd9ec2bb625084e7bca3fa1e63006caea96..8461813b90a366cead96109ae6c6d41af335f28a 100644
+--- a/drivers/clk/Kconfig
++++ b/drivers/clk/Kconfig
+@@ -58,6 +58,14 @@ config LMK04832
+ 	  Say yes here to build support for Texas Instruments' LMK04832 Ultra
+ 	  Low-Noise JESD204B Compliant Clock Jitter Cleaner With Dual Loop PLLs
+ 
++config COMMON_CLK_APPLE_S8000_TOUCH
++	tristate "Apple S8000 touchscreen clock"
++	depends on ARCH_APPLE || COMPILE_TEST
++	depends on OF
++	select MFD_SYSCON
++	help
++	  S8000 PMGR TCLK gate and divider for the J71t N1 touchscreen.
++
+ config COMMON_CLK_APPLE_NCO
+ 	tristate "Clock driver for Apple SoC NCOs"
+ 	depends on ARCH_APPLE || COMPILE_TEST
+diff --git a/drivers/clk/Makefile b/drivers/clk/Makefile
+index b18af485d7f031e0eb002686bcd2000c502ed525..f9b9457f1d0592e627a0e4a19a75fef7c15a0ca1 100644
+--- a/drivers/clk/Makefile
++++ b/drivers/clk/Makefile
+@@ -183,3 +183,4 @@ endif
+ obj-y					+= xilinx/
+ obj-$(CONFIG_ARCH_ZYNQ)			+= zynq/
+ obj-$(CONFIG_COMMON_CLK_ZYNQMP)         += zynqmp/
++obj-$(CONFIG_COMMON_CLK_APPLE_S8000_TOUCH) += clk-apple-s8000-touch.o
+diff --git a/drivers/clk/clk-apple-s8000-touch.c b/drivers/clk/clk-apple-s8000-touch.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..c05353e3ae0e8b561619bb0cacee82ad66706c2b
+--- /dev/null
++++ b/drivers/clk/clk-apple-s8000-touch.c
+@@ -0,0 +1,132 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/* Apple S8000 TCLK function, reconstructed from j71t iOS 16.7.10. */
++#include <linux/bitfield.h>
++#include <linux/clk-provider.h>
++#include <linux/delay.h>
++#include <linux/mfd/syscon.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/regmap.h>
++
++#define TOUCH_DISABLE	BIT(31)
++#define TOUCH_ENABLE	BIT(19)
++#define TOUCH_BUSY	BIT(18)
++#define TOUCH_DIV	GENMASK(9, 0)
++#define TOUCH_OFFSET	0x78000
++#define TOUCH_DIVISOR	(24000000 / 32768)
++
++struct s8000_touch_clock {
++	struct clk_hw hw;
++	struct regmap *regmap;
++	struct device *dev;
++};
++
++#define to_touch_clock(hw) container_of(hw, struct s8000_touch_clock, hw)
++
++static int s8000_touch_clock_prepare(struct clk_hw *hw)
++{
++	struct s8000_touch_clock *clock = to_touch_clock(hw);
++	u32 value;
++	int ret;
++
++	ret = regmap_update_bits(clock->regmap, TOUCH_OFFSET, TOUCH_DISABLE, 0);
++	if (ret)
++		return ret;
++	udelay(8);
++	ret = regmap_update_bits(clock->regmap, TOUCH_OFFSET,
++				 TOUCH_DISABLE | TOUCH_ENABLE | TOUCH_DIV,
++				 TOUCH_ENABLE | TOUCH_DIVISOR);
++	if (!ret)
++		ret = regmap_read_poll_timeout(clock->regmap, TOUCH_OFFSET, value,
++					       !(value & TOUCH_BUSY), 10, 20000);
++	if (ret) {
++		regmap_update_bits(clock->regmap, TOUCH_OFFSET,
++				   TOUCH_ENABLE | TOUCH_DISABLE, TOUCH_DISABLE);
++		dev_err(clock->dev, "touch clock enable failed: %d\n", ret);
++	}
++	return ret;
++}
++
++static void s8000_touch_clock_unprepare(struct clk_hw *hw)
++{
++	struct s8000_touch_clock *clock = to_touch_clock(hw);
++	u32 value;
++	int ret;
++
++	ret = regmap_update_bits(clock->regmap, TOUCH_OFFSET, TOUCH_ENABLE, 0);
++	if (!ret)
++		ret = regmap_read_poll_timeout(clock->regmap, TOUCH_OFFSET, value,
++					       !(value & TOUCH_BUSY), 10, 20000);
++	if (ret)
++		dev_err(clock->dev, "touch clock disable failed: %d\n", ret);
++	regmap_update_bits(clock->regmap, TOUCH_OFFSET, TOUCH_DISABLE, TOUCH_DISABLE);
++	udelay(100);
++}
++
++static unsigned long s8000_touch_clock_recalc_rate(struct clk_hw *hw,
++						unsigned long parent_rate)
++{
++	struct s8000_touch_clock *clock = to_touch_clock(hw);
++	u32 value;
++
++	if (regmap_read(clock->regmap, TOUCH_OFFSET, &value))
++		return 0;
++	value = FIELD_GET(TOUCH_DIV, value);
++	return value ? parent_rate / value : 0;
++}
++
++static const struct clk_ops s8000_touch_clock_ops = {
++	.prepare = s8000_touch_clock_prepare,
++	.unprepare = s8000_touch_clock_unprepare,
++	.recalc_rate = s8000_touch_clock_recalc_rate,
++};
++
++static int s8000_touch_clock_probe(struct platform_device *pdev)
++{
++	struct s8000_touch_clock *clock;
++	struct clk_init_data init = {};
++	const char *parent;
++	u32 offset;
++	int ret;
++
++	clock = devm_kzalloc(&pdev->dev, sizeof(*clock), GFP_KERNEL);
++	if (!clock)
++		return -ENOMEM;
++	clock->dev = &pdev->dev;
++	clock->regmap = syscon_node_to_regmap(pdev->dev.of_node->parent);
++	if (IS_ERR(clock->regmap))
++		return PTR_ERR(clock->regmap);
++	ret = of_property_read_u32_index(pdev->dev.of_node, "reg", 0, &offset);
++	if (ret || offset != TOUCH_OFFSET)
++		return -EINVAL;
++	parent = of_clk_get_parent_name(pdev->dev.of_node, 0);
++	if (!parent)
++		return -EINVAL;
++	init.name = "s8000-touch";
++	init.ops = &s8000_touch_clock_ops;
++	init.flags = CLK_GET_RATE_NOCACHE;
++	init.parent_names = &parent;
++	init.num_parents = 1;
++	clock->hw.init = &init;
++	ret = devm_clk_hw_register(&pdev->dev, &clock->hw);
++	if (ret)
++		return ret;
++	return devm_of_clk_add_hw_provider(&pdev->dev, of_clk_hw_simple_get, &clock->hw);
++}
++
++static const struct of_device_id s8000_touch_clock_match[] = {
++	{ .compatible = "apple,s8000-touch-clock" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, s8000_touch_clock_match);
++static struct platform_driver s8000_touch_clock_driver = {
++	.probe = s8000_touch_clock_probe,
++	.driver = {
++		.name = "apple-s8000-touch-clock",
++		.of_match_table = s8000_touch_clock_match,
++	},
++};
++module_platform_driver(s8000_touch_clock_driver);
++MODULE_DESCRIPTION("Apple S8000 touchscreen clock");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/input/touchscreen/Kconfig b/drivers/input/touchscreen/Kconfig
+index 9b9ae8ac3f7fd3b9e948083fcd05afabdcd69bca..9095f827b33eab627bc57f2984a83f9e62853818 100644
+--- a/drivers/input/touchscreen/Kconfig
++++ b/drivers/input/touchscreen/Kconfig
+@@ -103,6 +103,15 @@ config TOUCHSCREEN_ADC
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called resistive-adc-touch.ko.
+ 
++config TOUCHSCREEN_APPLE_N1
++	tristate "Apple J71t N1 SPI touchscreen"
++	depends on SPI && OF && GPIOLIB && COMMON_CLK
++	depends on REGULATOR
++	select INPUT_MT
++	help
++	  N1 (multi-touch,j72/C1F15,1) touchscreen on Apple J71t.
++	  Requires this unit's firmware and calibration, and legacy A9 SPI.
++
+ config TOUCHSCREEN_APPLE_Z2
+ 	tristate "Apple Z2 touchscreens"
+ 	depends on SPI && (ARCH_APPLE || COMPILE_TEST)
+diff --git a/drivers/input/touchscreen/Makefile b/drivers/input/touchscreen/Makefile
+index bfd9de83389d8833dbe7cc2641cb24493cdf3807..ff2f1cdf12795a09952eb441dbc733d492e83e46 100644
+--- a/drivers/input/touchscreen/Makefile
++++ b/drivers/input/touchscreen/Makefile
+@@ -119,3 +119,5 @@ obj-$(CONFIG_TOUCHSCREEN_IQS5XX)	+= iqs5xx.o
+ obj-$(CONFIG_TOUCHSCREEN_IQS7211)	+= iqs7211.o
+ obj-$(CONFIG_TOUCHSCREEN_ZINITIX)	+= zinitix.o
+ obj-$(CONFIG_TOUCHSCREEN_HIMAX_HX83112B)	+= himax_hx83112b.o
++
++obj-$(CONFIG_TOUCHSCREEN_APPLE_N1) += apple_n1.o
+diff --git a/drivers/input/touchscreen/apple_n1.c b/drivers/input/touchscreen/apple_n1.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..abef066f456318229e333fd8b718164f405c6e3f
+--- /dev/null
++++ b/drivers/input/touchscreen/apple_n1.c
+@@ -0,0 +1,1188 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Apple N1 touchscreen (J71t, C1F15,1).
++ * Protocol reconstructed from this unit's iOS 16.7.10 software. See the
++ * linux-a9 docs/touch/n1-protocol.md for addresses and evidence boundaries.
++ * The HBPP boot protocol and byte-stream runtime protocol are distinct.
++ */
++#include <linux/bitmap.h>
++#include <linux/clk.h>
++#include <linux/delay.h>
++#include <linux/firmware.h>
++#include <linux/gpio/consumer.h>
++#include <linux/input.h>
++#include <linux/input/mt.h>
++#include <linux/input/touchscreen.h>
++#include <linux/interrupt.h>
++#include <linux/jiffies.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/pm.h>
++#include <linux/pinctrl/consumer.h>
++#include <linux/property.h>
++#include <linux/regulator/consumer.h>
++#include <linux/spi/spi.h>
++#include <linux/unaligned.h>
++#include <linux/workqueue.h>
++
++#define N1_XFER_MAX	65536
++#define N1_FRAME_MAX	4096
++#define N1_REPORT_MAX	512
++#define N1_CAL_SIZE	1024
++#define N1_SLOTS	32
++#define N1_RETRIES	5
++
++/* Staged owner-run tests: 1=HBPP/identity, 2=boot/descriptors, 3=evdev. */
++static unsigned int boot_stage = 3;
++module_param(boot_stage, uint, 0644);
++MODULE_PARM_DESC(boot_stage, "1=identity, 2=firmware/descriptors, 3=touchscreen (on next probe)");
++static bool trace;
++module_param(trace, bool, 0644);
++MODULE_PARM_DESC(trace, "Log up to 64 boot/control exchanges and eight runtime headers per probe");
++
++struct apple_n1 {
++	struct spi_device *spi;
++	struct gpio_desc *reset;
++	struct gpio_desc *ldo;
++	struct gpio_desc *atn;
++	struct regulator *vdd;
++	struct clk *clk;
++	struct pinctrl *pins;
++	struct pinctrl_state *sync_on;
++	struct pinctrl_state *sync_off;
++	struct input_dev *input;
++	struct touchscreen_properties props;
++	u8 *tx;
++	u8 *rx;
++	u16 max_packet;
++	s16 x_min, x_max, y_min, y_max;
++	u8 sequence;
++	unsigned int traced_frames;
++	unsigned int traced_controls;
++	size_t control_length;
++	unsigned long last_wake;
++	bool wake_valid;
++	bool powered;
++	bool irq_requested;
++	/* Serialize IRQ, recovery and PM; one disable-depth count at most. */
++	struct mutex lock;
++	struct delayed_work recovery_work;
++	unsigned int irq_errors;
++	unsigned int recovery_attempts;
++	bool irq_masked;
++	bool suspended;
++};
++
++static u32 n1_sum(const u8 *data, size_t len)
++{
++	u32 sum = 0;
++
++	while (len--)
++		sum += *data++;
++	return sum;
++}
++
++/* Apple bootloader's 32-bit encoding: high byte of low halfword first. */
++static void n1_put32(u8 *p, u32 value)
++{
++	p[0] = value >> 8;
++	p[1] = value;
++	p[2] = value >> 24;
++	p[3] = value >> 16;
++}
++
++static u32 n1_get32(const u8 *p)
++{
++	return (u32)p[2] << 24 | (u32)p[3] << 16 | (u32)p[0] << 8 | p[1];
++}
++
++/* All callers use heap-backed shared buffers; never SPI from the stack.
++ * The A9 controller's PIO implementation has a deadline per transfer.
++ */
++static int n1_xfer(struct apple_n1 *n1, size_t len)
++{
++	struct spi_transfer transfer = {
++		.tx_buf = n1->tx,
++		.rx_buf = n1->rx,
++		.len = len,
++		.bits_per_word = 8,
++	};
++
++	if (!len || len > N1_XFER_MAX)
++		return -EMSGSIZE;
++	memset(n1->rx, 0, len);
++	return spi_sync_transfer(n1->spi, &transfer, 1);
++}
++
++/* Never pass firmware or calibration payloads to these diagnostic helpers. */
++static void n1_dump_error(struct apple_n1 *n1, const char *phase,
++			  const u8 *packet, size_t len)
++{
++	size_t offset;
++
++	for (offset = 0; offset < len; offset += 32)
++		dev_err(&n1->spi->dev, "%s rx[%zu/%zu]: %*ph\n", phase,
++			offset, len, (int)min_t(size_t, 32, len - offset), packet + offset);
++}
++
++static int n1_control_xfer(struct apple_n1 *n1, const char *phase, size_t len)
++{
++	bool log = READ_ONCE(trace) && n1->traced_controls < 64;
++	int ret;
++
++	n1->control_length = len;
++	if (log) {
++		n1->traced_controls++;
++		dev_info(&n1->spi->dev, "trace %s tx[%zu]: %*ph\n", phase,
++			 len, (int)min_t(size_t, len, 32), n1->tx);
++	}
++	ret = n1_xfer(n1, len);
++	if (ret)
++		dev_err(&n1->spi->dev, "%s transfer (%zu bytes) failed: %d\n",
++			phase, len, ret);
++	if (log)
++		dev_info(&n1->spi->dev, "trace %s rx[%zu] ret=%d: %*ph\n", phase,
++			 len, ret, (int)min_t(size_t, len, 32), n1->rx);
++	return ret;
++}
++
++static int n1_check_control(struct apple_n1 *n1, u8 command, u8 id, size_t len)
++{
++	u16 received = get_unaligned_le16(n1->rx + len - 2);
++	u16 calculated = n1_sum(n1->rx, len - 2);
++
++	if (n1->rx[0] == command && received == calculated)
++		return 0;
++	dev_err(&n1->spi->dev,
++		"control %02x/%02x %s mismatch: echo=%02x expected=%02x checksum=%04x calculated=%04x\n",
++		command, id, n1->rx[0] != command ? "echo" : "checksum",
++		n1->rx[0], command, received, calculated);
++	n1_dump_error(n1, "control", n1->rx, len);
++	return -EBADMSG;
++}
++
++static int n1_ack(struct apple_n1 *n1, u16 *reply)
++{
++	int ret;
++
++	n1->tx[0] = 0x1a;
++	n1->tx[1] = 0xa1;
++	ret = n1_control_xfer(n1, "HBPP ACK", 2);
++	if (!ret)
++		*reply = get_unaligned_be16(n1->rx);
++	return ret;
++}
++
++static int n1_send_blob(struct apple_n1 *n1, size_t len)
++{
++	u16 reply;
++	int ret, attempt;
++	u8 *packet;
++
++	/* ATN_ACK uses tx[0:2], preserve the whole packet for a bounded retry. */
++	packet = kmemdup(n1->tx, len, GFP_KERNEL);
++	if (!packet)
++		return -ENOMEM;
++	for (attempt = 0; attempt < N1_RETRIES; attempt++) {
++		memcpy(n1->tx, packet, len);
++		ret = n1_xfer(n1, len);
++		if (!ret) {
++			ret = n1_ack(n1, &reply);
++			if (!ret && reply == 0x4bc1)
++				break;
++			if (!ret) {
++				dev_err(&n1->spi->dev,
++					"upload %zu bytes attempt %d/%u: ACK=%04x expected=4bc1 rx=%*ph\n",
++					len, attempt + 1, N1_RETRIES, reply, 2, n1->rx);
++				ret = -EPROTO;
++			}
++		}
++		usleep_range(1000, 2000);
++	}
++	kfree(packet);
++	return ret;
++}
++
++static int n1_read_register(struct apple_n1 *n1, u32 address, u32 *value)
++{
++	static const u8 result_command[] = {
++		0x1a, 0xa1, 0x18, 0xe1, 0x18, 0xe1, 0x18, 0xe1,
++	};
++	int ret;
++
++	put_unaligned_le16(0x731c, n1->tx);
++	n1_put32(n1->tx + 2, address);
++	put_unaligned_be16(n1_sum(n1->tx + 2, 4), n1->tx + 6);
++	ret = n1_control_xfer(n1, "register request", 8);
++	if (ret)
++		return ret;
++	memcpy(n1->tx, result_command, sizeof(result_command));
++	ret = n1_control_xfer(n1, "register result", sizeof(result_command));
++	if (!ret)
++		*value = n1_get32(n1->rx + 2);
++	return ret;
++}
++
++static int n1_write_register(struct apple_n1 *n1, u32 address, u32 value)
++{
++	u16 reply;
++	int ret;
++
++	put_unaligned_le16(0x331e, n1->tx);
++	n1_put32(n1->tx + 2, address);
++	n1_put32(n1->tx + 6, 0xffffffff);
++	n1_put32(n1->tx + 10, value);
++	put_unaligned_be16(n1_sum(n1->tx + 2, 12), n1->tx + 14);
++	ret = n1_control_xfer(n1, "register write", 16);
++	if (ret)
++		return ret;
++	ret = n1_ack(n1, &reply);
++	if (ret)
++		return ret;
++	if (reply == 0x4ad1)
++		return 0;
++	dev_err(&n1->spi->dev, "register %#x ACK=%04x expected=4ad1 rx=%*ph\n",
++		address, reply, 2, n1->rx);
++	return -EPROTO;
++}
++
++static bool n1_hbpp_word(u16 word)
++{
++	switch (word) {
++	case 0x18e1: case 0x1aa1: case 0x1f01: case 0x4879:
++	case 0x4969: case 0x4ad1: case 0x4bc1:
++		return true;
++	default:
++		return false;
++	}
++}
++
++static int n1_boot_nop(struct apple_n1 *n1)
++{
++	int i;
++
++	put_unaligned_le16(0xa11a, n1->tx);
++	for (i = 2; i < 16; i += 2)
++		put_unaligned_le16(0xe118, n1->tx + i);
++	return n1_xfer(n1, 16);
++}
++
++static int n1_check_hbpp(struct apple_n1 *n1)
++{
++	int ret;
++
++	ret = n1_boot_nop(n1);
++	if (ret)
++		return ret;
++	if (!n1_hbpp_word(get_unaligned_be16(n1->rx)) ||
++	    !n1_hbpp_word(get_unaligned_be16(n1->rx + 2))) {
++		dev_err(&n1->spi->dev, "HBPP not detected: %*ph\n", 4, n1->rx);
++		return -ENODEV;
++	}
++	return 0;
++}
++
++static int n1_validate_firmware(const struct firmware *fw)
++{
++	size_t payload;
++
++	if (fw->size != 57016 || memcmp(fw->data, "\x18\xe1\x30\x01", 4))
++		return -EINVAL;
++	payload = get_unaligned_be16(fw->data + 4) * 4;
++	if (payload + 16 != fw->size || n1_get32(fw->data + 6) ||
++	    get_unaligned_be16(fw->data + 10) != n1_sum(fw->data + 4, 6) ||
++	    n1_get32(fw->data + 12 + payload) != n1_sum(fw->data + 12, payload))
++		return -EBADMSG;
++	return 0;
++}
++
++static int n1_upload_calibration(struct apple_n1 *n1, const u8 *data)
++{
++	size_t offset, length, i;
++	int ret;
++
++	/* N1 shared Z2 calibration download, maximum payload 0x3f0. */
++	for (offset = 0; offset < N1_CAL_SIZE; offset += length) {
++		length = min_t(size_t, N1_CAL_SIZE - offset, 0x3f0);
++		put_unaligned_le16(0xe118, n1->tx);
++		put_unaligned_le16(0x0130, n1->tx + 2);
++		put_unaligned_be16(length / 4, n1->tx + 4);
++		n1_put32(n1->tx + 6, 0x10009000 + offset);
++		put_unaligned_be16(n1_sum(n1->tx + 4, 6), n1->tx + 10);
++		for (i = 0; i < length; i += 2) {
++			n1->tx[12 + i] = data[offset + i + 1];
++			n1->tx[13 + i] = data[offset + i];
++		}
++		n1_put32(n1->tx + 12 + length, n1_sum(data + offset, length));
++		ret = n1_send_blob(n1, length + 16);
++		if (ret)
++			return ret;
++	}
++	return 0;
++}
++
++static int n1_calibrate(struct apple_n1 *n1, u32 version)
++{
++	const struct { u32 address, value; } registers[] = {
++		{ 0x10003060, 6089 },
++		{ 0x1000305c, 0x20 },
++		{ 0x10003058, 6 },
++		{ 0x10003000, version == 0x434d11a0 ? 2 : 3 },
++		{ 0x10003518, 1 },
++	};
++	u32 apu;
++	u16 reply;
++	int i, ret;
++
++	dev_info(&n1->spi->dev, "calibrating controller %#x, const-cal=%u\n",
++		 version, version == 0x434d11a0 ? 2 : 3);
++	for (i = 0; i < ARRAY_SIZE(registers); i++) {
++		ret = n1_write_register(n1, registers[i].address, registers[i].value);
++		if (ret) {
++			dev_err(&n1->spi->dev, "calibration register %#x failed: %d\n",
++				registers[i].address, ret);
++			return ret;
++		}
++	}
++	ret = n1_read_register(n1, 0x10003800, &apu);
++	if (ret)
++		return ret;
++	dev_dbg(&n1->spi->dev, "SPI_APU_EN=%#x\n", apu);
++	put_unaligned_le16(0x011f, n1->tx);
++	ret = n1_control_xfer(n1, "calibration request", 2);
++	if (ret)
++		return ret;
++	msleep(65);
++	ret = n1_ack(n1, &reply);
++	if (!ret)
++		dev_info(&n1->spi->dev, "calibration transport complete, status %#x\n", reply);
++	/* Apple's N1 path checks transport only; do not invent a success word. */
++	return ret;
++}
++
++static int n1_execute(struct apple_n1 *n1)
++{
++	int ret;
++
++	put_unaligned_le16(0x531d, n1->tx);
++	n1_put32(n1->tx + 2, 0x10003400);
++	put_unaligned_le32(0x100, n1->tx + 6);
++	put_unaligned_be16(n1_sum(n1->tx + 2, 8), n1->tx + 10);
++	ret = n1_control_xfer(n1, "firmware execute", 12);
++	if (!ret) {
++		msleep(40);
++		/* bootloadTimerFiredHandler waits another 2ms before discovery. */
++		usleep_range(2000, 3000);
++	}
++	return ret;
++}
++
++static int n1_wake(struct apple_n1 *n1)
++{
++	int ret;
++
++	/* N1 suppresses duplicate wake packets within 100ms. */
++	if (n1->wake_valid && time_before(jiffies, n1->last_wake + msecs_to_jiffies(100)))
++		return 0;
++	memset(n1->tx, 0, 16);
++	n1->tx[0] = 0xee;
++	put_unaligned_le16(0xee, n1->tx + 14);
++	ret = n1_control_xfer(n1, "runtime wake", 16);
++	if (!ret) {
++		n1->last_wake = jiffies;
++		n1->wake_valid = true;
++		usleep_range(2000, 3000);
++	}
++	return ret;
++}
++
++static int n1_command16(struct apple_n1 *n1, u8 command, u8 argument)
++{
++	int ret;
++
++	ret = n1_wake(n1);
++	if (ret)
++		return ret;
++	memset(n1->tx, 0, 16);
++	n1->tx[0] = command;
++	n1->tx[1] = argument;
++	put_unaligned_le16(n1_sum(n1->tx, 14), n1->tx + 14);
++	ret = n1_control_xfer(n1, "control request", 16);
++	if (ret)
++		return ret;
++	/* E2 repeats immediately; E3 has the configured control-read delay. */
++	if (command == 0xe3)
++		udelay(25);
++	ret = n1_control_xfer(n1, "control response", 16);
++	if (ret)
++		return ret;
++	return n1_check_control(n1, command, argument, 16);
++}
++
++/* data has N1_REPORT_MAX bytes; accept descriptor extensions Apple ignores. */
++static int n1_get_report_once(struct apple_n1 *n1, u8 id, u8 *data, size_t minimum)
++{
++	u16 length, checksum;
++	size_t transfer_length;
++	u8 command;
++	int ret;
++
++	ret = n1_command16(n1, 0xe3, id);
++	if (ret)
++		return ret;
++	length = get_unaligned_le16(n1->rx + 3);
++	if (n1->rx[2] || length < minimum || length > N1_REPORT_MAX) {
++		dev_err(&n1->spi->dev,
++			"report %02x info: status=%02x length=%u expected=%zu..%u\n",
++			id, n1->rx[2], length, minimum, N1_REPORT_MAX);
++		n1_dump_error(n1, "report info", n1->rx, 16);
++		return -EPROTO;
++	}
++	ret = n1_wake(n1);
++	if (ret)
++		return ret;
++	command = length < 12 ? 0xe6 : 0xe7;
++	transfer_length = length < 12 ? 16 : length + 5;
++	memset(n1->tx, 0, max_t(size_t, 16, transfer_length));
++	n1->tx[0] = command;
++	n1->tx[1] = id;
++	put_unaligned_le16(length, n1->tx + 3);
++	checksum = n1_sum(n1->tx, 5);
++	put_unaligned_le16(checksum, n1->tx + 14);
++	ret = n1_control_xfer(n1, "report request", 16);
++	if (ret)
++		return ret;
++	udelay(25);
++	n1->tx[2] = 1;
++	/* Stage two preserves stage one's checksum, despite changing byte 2. */
++	if (command == 0xe7) {
++		n1->tx[14] = 0;
++		n1->tx[15] = 0;
++		put_unaligned_le16(checksum, n1->tx + transfer_length - 2);
++	}
++	ret = n1_control_xfer(n1, "report response", transfer_length);
++	if (ret)
++		return ret;
++	ret = n1_check_control(n1, command, id, transfer_length);
++	if (ret)
++		return ret;
++	memcpy(data, n1->rx + 3, length);
++	return 0;
++}
++
++static int n1_get_report(struct apple_n1 *n1, u8 id, u8 *data, size_t minimum)
++{
++	int ret, attempt;
++
++	/* iOS delays every GET invocation by 2ms and retries corrupt replies.
++	 * Use one aggregate budget instead of its nested E3/GET retry budgets.
++	 * Transport timeouts and valid unsupported/malformed descriptors abort.
++	 */
++	for (attempt = 0; attempt < N1_RETRIES; attempt++) {
++		usleep_range(2000, 3000);
++		ret = n1_get_report_once(n1, id, data, minimum);
++		if (ret != -EBADMSG)
++			return ret;
++		dev_err(&n1->spi->dev, "report %02x attempt %d/%u failed: %d\n",
++			id, attempt + 1, N1_RETRIES, ret);
++		if (attempt + 1 < N1_RETRIES)
++			usleep_range(1000, 2000);
++	}
++	return ret;
++}
++
++static int n1_discover(struct apple_n1 *n1)
++{
++	u8 family, sensor[5], descriptor[N1_REPORT_MAX];
++	const u8 *surface = descriptor;
++	int ret, attempt;
++
++	for (attempt = 0; attempt < 4; attempt++) {
++		ret = n1_command16(n1, 0xe2, 0);
++		if (!ret)
++			break;
++		dev_err(&n1->spi->dev, "E2 discovery attempt %d/4 failed: %d\n",
++			attempt + 1, ret);
++		usleep_range(3000, 4000);
++	}
++	if (ret)
++		return ret;
++	n1->max_packet = get_unaligned_le16(n1->rx + 3);
++	if (n1->rx[2] != 1 || n1->max_packet < 16 || n1->max_packet > N1_FRAME_MAX) {
++		dev_err(&n1->spi->dev, "E2 interface=%u expected=1 max-packet=%u expected=16..%u\n",
++			n1->rx[2], n1->max_packet, N1_FRAME_MAX);
++		n1_dump_error(n1, "device info", n1->rx, 16);
++		return -EPROTO;
++	}
++	ret = n1_get_report(n1, 0xd1, descriptor, 1);
++	if (ret)
++		return ret;
++	family = descriptor[0];
++	ret = n1_get_report(n1, 0xd3, descriptor, sizeof(sensor));
++	if (ret)
++		return ret;
++	memcpy(sensor, descriptor, sizeof(sensor));
++	if (sensor[0] != 1) {
++		dev_err(&n1->spi->dev, "D3 endianness=%u expected=1\n", sensor[0]);
++		n1_dump_error(n1, "D3", n1->rx, n1->control_length);
++		return -EPROTO;
++	}
++	ret = n1_get_report(n1, 0xd0, descriptor, 8);
++	if (ret)
++		return ret;
++	ret = n1_get_report(n1, 0xa1, descriptor, 6);
++	if (ret)
++		return ret;
++	ret = n1_get_report(n1, 0xd9, descriptor, 16);
++	if (ret)
++		return ret;
++	/* Values from the live J71t descriptor, not display pixels. */
++	if (get_unaligned_le32(surface) != 14745 ||
++	    get_unaligned_le32(surface + 4) != 19657) {
++		dev_err(&n1->spi->dev, "D9 surface identity mismatch, expected 14745x19657\n");
++		n1_dump_error(n1, "D9", n1->rx, n1->control_length);
++		return -EPROTO;
++	}
++	n1->x_min = (s16)get_unaligned_le16(surface + 8);
++	n1->y_min = (s16)get_unaligned_le16(surface + 10);
++	n1->x_max = (s16)get_unaligned_le16(surface + 12);
++	n1->y_max = (s16)get_unaligned_le16(surface + 14);
++	if (n1->x_min >= n1->x_max || n1->y_min >= n1->y_max) {
++		dev_err(&n1->spi->dev, "D9 invalid edges: x=%d..%d y=%d..%d\n",
++			n1->x_min, n1->x_max, n1->y_min, n1->y_max);
++		n1_dump_error(n1, "D9", n1->rx, n1->control_length);
++		return -EPROTO;
++	}
++	dev_info(&n1->spi->dev,
++		 "N1 ready: interface 1, max packet %u, family %u, %ux%u, FW %#x, surface 14745x19657\n",
++		 n1->max_packet, family, sensor[1], sensor[2],
++		 get_unaligned_be16(sensor + 3));
++	return 0;
++}
++
++static int n1_parse_contacts(struct apple_n1 *n1, const u8 *report, size_t length)
++{
++	DECLARE_BITMAP(ids, 256);
++	size_t offset, stride, count, i;
++	const u8 *finger;
++	int slot, x, y;
++	bool active;
++
++	if (!length)
++		return -EPROTO;
++	/* Classic reports dispatched by MTClassicPacketParser; no HID wrapper. */
++	if (report[0] != 0x43 && report[0] != 0x44 && report[0] != 0x45)
++		return 0;
++	if (length < 22)
++		return -EPROTO;
++	stride = report[17];
++	count = report[16];
++	offset = report[2] + get_unaligned_le16(report + 14);
++	if (report[2] < 22 || offset > length || count > N1_SLOTS ||
++	    (count && (stride < 20 || stride > 64 || count > (length - offset) / stride)))
++		return -EPROTO;
++	bitmap_zero(ids, 256);
++	/* Validate the entire report before changing input slots. */
++	for (i = 0; i < count; i++) {
++		finger = report + offset + i * stride;
++		if (test_and_set_bit(finger[0], ids))
++			return -EPROTO;
++	}
++	for (i = 0; i < count; i++) {
++		finger = report + offset + i * stride;
++		slot = input_mt_get_slot_by_key(n1->input, finger[0]);
++		if (slot < 0)
++			continue;
++		active = finger[1] == 3 || finger[1] == 4;
++		input_mt_slot(n1->input, slot);
++		if (!input_mt_report_slot_state(n1->input, MT_TOOL_FINGER, active))
++			continue;
++		x = (s16)get_unaligned_le16(finger + 4);
++		y = (s16)get_unaligned_le16(finger + 6);
++		touchscreen_report_pos(n1->input, &n1->props,
++				       clamp(x, n1->x_min, n1->x_max) - n1->x_min,
++				       clamp(y, n1->y_min, n1->y_max) - n1->y_min, true);
++		input_report_abs(n1->input, ABS_MT_TOUCH_MAJOR,
++				 get_unaligned_le16(finger + 12));
++		input_report_abs(n1->input, ABS_MT_TOUCH_MINOR,
++				 get_unaligned_le16(finger + 14));
++		input_report_abs(n1->input, ABS_MT_ORIENTATION,
++				 (s16)get_unaligned_le16(finger + 16));
++		input_report_abs(n1->input, ABS_MT_PRESSURE,
++				 stride >= 28 ? get_unaligned_le16(finger + 26) : 0);
++	}
++	input_mt_sync_frame(n1->input);
++	input_sync(n1->input);
++	return 0;
++}
++
++/* Returns 1 for a consumed frame, 0 for an empty controller, or an errno. */
++static int n1_read_frame(struct apple_n1 *n1, bool report_events)
++{
++	u16 length, payload_length;
++	size_t wire_length;
++	int ret;
++
++	memset(n1->tx, 0, 16);
++	n1->tx[0] = 0xeb;
++	n1->tx[1] = n1->sequence;
++	put_unaligned_le16(n1_sum(n1->tx, 14), n1->tx + 14);
++	ret = n1_xfer(n1, 16);
++	if (ret)
++		return ret;
++	if ((n1->rx[0] & 0xf0) != 0xe0 ||
++	    get_unaligned_le16(n1->rx + 14) != (u16)n1_sum(n1->rx, 14))
++		return -EBADMSG;
++	length = get_unaligned_le16(n1->rx + 1);
++	if (!length)
++		return 0;
++	wire_length = length + 5;
++	/* E2's max-packet semantics are not proven for N1. Bound by our actual
++	 * buffers, as Apple's N1 PIO path does, rather than the legacy limit.
++	 */
++	if (length < 2 || wire_length > N1_FRAME_MAX)
++		return -EMSGSIZE;
++	memset(n1->tx, 0, max_t(size_t, 16, wire_length));
++	n1->tx[0] = 0xeb;
++	n1->tx[1] = n1->sequence;
++	n1->tx[2] = 1;
++	put_unaligned_le16(n1_sum(n1->tx, 14), n1->tx + wire_length - 2);
++	ret = n1_xfer(n1, wire_length);
++	if (ret)
++		return ret;
++	if ((n1->rx[0] != 0xea && n1->rx[0] != 0xeb) ||
++	    (n1_sum(n1->rx, 5) & 0xff))
++		return -EBADMSG;
++	payload_length = get_unaligned_le16(n1->rx + 2);
++	if (payload_length < 2 || payload_length > length ||
++	    get_unaligned_le16(n1->rx + wire_length - 2) !=
++	    (u16)n1_sum(n1->rx + 5, payload_length - 2))
++		return -EBADMSG;
++	n1->sequence = n1->sequence == 1 ? 2 : 1;
++	if (READ_ONCE(trace) && n1->traced_frames < 8 && payload_length > 2) {
++		n1->traced_frames++;
++		dev_info(&n1->spi->dev, "frame %u, %u payload bytes: %*ph\n",
++			 n1->traced_frames, payload_length - 2,
++			 min_t(unsigned int, payload_length - 2, 32), n1->rx + 5);
++	}
++	if (report_events && payload_length > 2) {
++		ret = n1_parse_contacts(n1, n1->rx + 5, payload_length - 2);
++		if (ret)
++			return ret;
++	}
++	return 1;
++}
++
++static void n1_release_contacts(struct apple_n1 *n1)
++{
++	int i;
++
++	if (!n1->input)
++		return;
++	for (i = 0; i < N1_SLOTS; i++) {
++		input_mt_slot(n1->input, i);
++		input_mt_report_slot_state(n1->input, MT_TOOL_FINGER, false);
++	}
++	input_mt_sync_frame(n1->input);
++	input_sync(n1->input);
++}
++
++static int n1_irq_frame(struct apple_n1 *n1)
++{
++	int attempt, ret, asserted;
++
++	/* Retry while this falling-edge IRQ is masked: a failed read may leave
++	 * ATN asserted, so waiting for another falling edge would lose recovery.
++	 */
++	for (attempt = 0; attempt < 3; attempt++) {
++		ret = n1_read_frame(n1, true);
++		if (ret > 0)
++			return ret;
++		if (!ret) {
++			asserted = gpiod_get_value_cansleep(n1->atn);
++			if (!asserted)
++				return 0;
++			ret = asserted < 0 ? asserted : -EPROTO;
++		}
++		usleep_range(1000, 2000);
++	}
++	return ret;
++}
++
++static void n1_mask_irq(struct apple_n1 *n1)
++{
++	if (!n1->irq_masked) {
++		disable_irq_nosync(n1->spi->irq);
++		n1->irq_masked = true;
++	}
++}
++
++static int n1_drain(struct apple_n1 *n1)
++{
++	int i, ret;
++
++	for (i = 0; i < 8; i++) {
++		ret = n1_read_frame(n1, true);
++		if (ret <= 0)
++			break;
++	}
++	if (ret < 0 || i == 8)
++		return ret < 0 ? ret : -EOVERFLOW;
++	ret = gpiod_get_value_cansleep(n1->atn);
++	return ret > 0 ? -EBUSY : ret;
++}
++
++/* Called with lock held and ATN IRQ masked, only while SPI is available. */
++static int n1_rearm(struct apple_n1 *n1)
++{
++	int ret;
++
++	n1->wake_valid = false;
++	ret = n1_wake(n1);
++	if (!ret)
++		ret = n1_drain(n1);
++	if (ret) {
++		dev_warn(&n1->spi->dev, "runtime drain failed %d; trying discovery once\n", ret);
++		n1_release_contacts(n1);
++		/* Runtime init only: never reset, reload firmware or calibration. */
++		n1->sequence = 1;
++		ret = n1_discover(n1);
++		if (!ret)
++			ret = n1_drain(n1);
++	}
++	if (ret)
++		return ret;
++
++	n1->irq_errors = 0;
++	if (n1->irq_masked) {
++		n1->irq_masked = false;
++		enable_irq(n1->spi->irq);
++	}
++	dev_info(&n1->spi->dev, "N1 runtime wake/drain complete; IRQ rearmed\n");
++	return 0;
++}
++
++static void n1_queue_recovery(struct apple_n1 *n1)
++{
++	if (n1->recovery_attempts < 3)
++		schedule_delayed_work(&n1->recovery_work, msecs_to_jiffies(1000));
++	else
++		dev_err(&n1->spi->dev, "N1 recovery budget exhausted; rebind to recover\n");
++}
++
++static void n1_recovery_work(struct work_struct *work)
++{
++	struct apple_n1 *n1 = container_of(to_delayed_work(work),
++					  struct apple_n1, recovery_work);
++	int ret;
++
++	mutex_lock(&n1->lock);
++	if (!n1->suspended && n1->irq_requested && n1->recovery_attempts < 3) {
++		n1->recovery_attempts++;
++		ret = n1_rearm(n1);
++		dev_info(&n1->spi->dev, "N1 recovery %u/3 result %d\n",
++			 n1->recovery_attempts, ret);
++		if (ret)
++			n1_queue_recovery(n1);
++	}
++	mutex_unlock(&n1->lock);
++}
++
++static irqreturn_t n1_irq(int irq, void *data)
++{
++	struct apple_n1 *n1 = data;
++	int ret, i, asserted;
++
++	mutex_lock(&n1->lock);
++	if (n1->suspended || n1->irq_masked)
++		goto out;
++
++	/* A stuck ATN cannot monopolize the IRQ thread. */
++	for (i = 0; i < 8; i++) {
++		ret = n1_irq_frame(n1);
++		if (ret <= 0)
++			break;
++		asserted = gpiod_get_value_cansleep(n1->atn);
++		if (asserted < 0) {
++			ret = asserted;
++			break;
++		}
++		if (!asserted)
++			break;
++	}
++	if (ret < 0 || i == 8) {
++		n1_release_contacts(n1);
++		n1->irq_errors++;
++		dev_err_ratelimited(&n1->spi->dev, "frame/ATN error %d (count %u); IRQ masked\n",
++				    ret < 0 ? ret : -EOVERFLOW, n1->irq_errors);
++		n1_mask_irq(n1);
++		n1_queue_recovery(n1);
++	} else {
++		n1->irq_errors = 0;
++	}
++out:
++	mutex_unlock(&n1->lock);
++	return IRQ_HANDLED;
++}
++
++static void n1_power_off(struct apple_n1 *n1)
++{
++	if (!n1->powered)
++		return;
++	gpiod_set_value_cansleep(n1->reset, 1);
++	if (pinctrl_select_state(n1->pins, n1->sync_off))
++		dev_warn(&n1->spi->dev, "failed to stop display-sync pin\n");
++	clk_disable_unprepare(n1->clk);
++	gpiod_set_value_cansleep(n1->ldo, 0);
++	regulator_disable(n1->vdd);
++	n1->powered = false;
++}
++
++static int n1_power_on(struct apple_n1 *n1)
++{
++	int ret;
++
++	dev_info(&n1->spi->dev, "N1 power/reset begin (reset asserted, LDO off)\n");
++	/* Ensure a real reset interval even after a retained/panic entry. */
++	usleep_range(5000, 6000);
++	ret = regulator_enable(n1->vdd);
++	if (ret)
++		return ret;
++	gpiod_set_value_cansleep(n1->ldo, 1);
++	/* afterPowerOn(): enable-CS helper's pre-delay, then TCLK and wake. */
++	usleep_range(5000, 6000);
++	ret = clk_prepare_enable(n1->clk);
++	if (ret) {
++		gpiod_set_value_cansleep(n1->ldo, 0);
++		regulator_disable(n1->vdd);
++		return ret;
++	}
++	n1->powered = true;
++	usleep_range(15000, 17000);
++	put_unaligned_le16(0xc119, n1->tx);
++	ret = n1_xfer(n1, 2);
++	if (ret)
++		goto fail;
++	usleep_range(10000, 12000);
++	ret = pinctrl_select_state(n1->pins, n1->sync_on);
++	if (ret)
++		goto fail;
++	/* The 16-byte HBPP NOP transaction also leaves S_CLK high for reset. */
++	ret = n1_boot_nop(n1);
++	if (ret)
++		goto fail;
++	gpiod_set_value_cansleep(n1->reset, 0);
++	usleep_range(15000, 17000);
++	return 0;
++fail:
++	n1_power_off(n1);
++	return ret;
++}
++
++static int n1_probe(struct spi_device *spi)
++{
++	struct device *dev = &spi->dev;
++	const struct firmware *fw = NULL, *calibration = NULL;
++	struct apple_n1 *n1;
++	const char *name, *cal_name;
++	const u8 *cal_data = NULL;
++	u8 *dt_calibration;
++	u32 version;
++	unsigned int stage = READ_ONCE(boot_stage);
++	int ret, count, i;
++
++	dev_info(dev, "N1 probe begin stage=%u\n", stage);
++	if (stage < 1 || stage > 3)
++		return -EINVAL;
++	n1 = devm_kzalloc(dev, sizeof(*n1), GFP_KERNEL);
++	if (!n1)
++		return -ENOMEM;
++	n1->spi = spi;
++	n1->sequence = 1;
++	n1->tx = devm_kmalloc(dev, N1_XFER_MAX, GFP_KERNEL);
++	n1->rx = devm_kmalloc(dev, N1_XFER_MAX, GFP_KERNEL);
++	if (!n1->tx || !n1->rx)
++		return -ENOMEM;
++	spi_set_drvdata(spi, n1);
++	mutex_init(&n1->lock);
++	INIT_DELAYED_WORK(&n1->recovery_work, n1_recovery_work);
++	n1->irq_masked = true;
++	spi->bits_per_word = 8;
++	/* N1 configureSPI overrides the ADT +12 word delay from 5000ns to 0. */
++	spi->word_delay.value = 0;
++	spi->word_delay.unit = SPI_DELAY_UNIT_USECS;
++	ret = spi_setup(spi);
++	if (ret)
++		return ret;
++	n1->reset = devm_gpiod_get(dev, "reset", GPIOD_OUT_HIGH);
++	if (IS_ERR(n1->reset))
++		return dev_err_probe(dev, PTR_ERR(n1->reset), "reset GPIO\n");
++	n1->ldo = devm_gpiod_get(dev, "ldo", GPIOD_OUT_LOW);
++	if (IS_ERR(n1->ldo))
++		return dev_err_probe(dev, PTR_ERR(n1->ldo), "LDO GPIO\n");
++	n1->atn = devm_gpiod_get(dev, "attn", GPIOD_IN);
++	if (IS_ERR(n1->atn))
++		return dev_err_probe(dev, PTR_ERR(n1->atn), "ATN GPIO\n");
++	n1->vdd = devm_regulator_get(dev, "vdd");
++	if (IS_ERR(n1->vdd))
++		return dev_err_probe(dev, PTR_ERR(n1->vdd), "analog supply\n");
++	n1->clk = devm_clk_get(dev, NULL);
++	if (IS_ERR(n1->clk))
++		return dev_err_probe(dev, PTR_ERR(n1->clk), "reference clock\n");
++	n1->pins = devm_pinctrl_get(dev);
++	if (IS_ERR(n1->pins))
++		return dev_err_probe(dev, PTR_ERR(n1->pins), "display-sync pinctrl\n");
++	n1->sync_on = pinctrl_lookup_state(n1->pins, "sync-on");
++	if (IS_ERR(n1->sync_on))
++		return dev_err_probe(dev, PTR_ERR(n1->sync_on), "sync-on state\n");
++	n1->sync_off = pinctrl_lookup_state(n1->pins, "sync-off");
++	if (IS_ERR(n1->sync_off))
++		return dev_err_probe(dev, PTR_ERR(n1->sync_off), "sync-off state\n");
++	dev_info(dev, "N1 resources ready; loading firmware/calibration\n");
++	if (stage >= 2) {
++		ret = device_property_read_string(dev, "firmware-name", &name);
++		if (ret)
++			return ret;
++		/* Never use the sysfs fallback: a missing file must fail immediately. */
++		ret = request_firmware_direct(&fw, name, dev);
++		if (ret)
++			return dev_err_probe(dev, ret, "N1 firmware %s\n", name);
++		ret = n1_validate_firmware(fw);
++		if (ret) {
++			dev_err(dev, "invalid N1 firmware %s: %d\n", name, ret);
++			goto release_firmware;
++		}
++		if (device_property_present(dev, "apple,n1-calibration")) {
++			count = device_property_count_u8(dev, "apple,n1-calibration");
++			if (count != N1_CAL_SIZE) {
++				ret = -EINVAL;
++				goto release_firmware;
++			}
++			dt_calibration = devm_kmalloc(dev, N1_CAL_SIZE, GFP_KERNEL);
++			if (!dt_calibration) {
++				ret = -ENOMEM;
++				goto release_firmware;
++			}
++			ret = device_property_read_u8_array(dev, "apple,n1-calibration",
++						 dt_calibration, N1_CAL_SIZE);
++			if (ret)
++				goto release_firmware;
++			cal_data = dt_calibration;
++		} else {
++			ret = device_property_read_string(dev, "apple,calibration-firmware", &cal_name);
++			if (ret)
++				goto release_firmware;
++			ret = request_firmware_direct(&calibration, cal_name, dev);
++			if (ret) {
++				dev_err(dev, "N1 calibration %s: %d\n", cal_name, ret);
++				goto release_firmware;
++			}
++			if (calibration->size != N1_CAL_SIZE) {
++				ret = -EINVAL;
++				goto release_firmware;
++			}
++			cal_data = calibration->data;
++		}
++		if (!memchr_inv(cal_data, 0, N1_CAL_SIZE) ||
++		    !memchr_inv(cal_data, 0xff, N1_CAL_SIZE)) {
++			ret = -EINVAL;
++			goto release_firmware;
++		}
++	}
++	ret = n1_power_on(n1);
++	if (ret)
++		goto release_firmware;
++	dev_info(dev, "N1 power/reset complete; HBPP begin\n");
++	ret = n1_check_hbpp(n1);
++	if (ret)
++		goto power_off;
++	ret = n1_read_register(n1, 0x10008ffc, &version);
++	if (ret)
++		goto power_off;
++	if (!version || version == 0xffffffff) {
++		ret = -ENODEV;
++		goto power_off;
++	}
++	dev_info(dev, "HBPP detected; N1 controller %#x (stage %u)\n", version, stage);
++	if (stage == 1)
++		goto power_off;
++	dev_info(dev, "N1 calibration upload begin\n");
++	ret = n1_upload_calibration(n1, cal_data);
++	if (ret)
++		goto power_off;
++	dev_info(dev, "N1 firmware upload begin\n");
++	memcpy(n1->tx, fw->data, fw->size);
++	ret = n1_send_blob(n1, fw->size);
++	if (ret)
++		goto power_off;
++	dev_info(dev, "uploaded 1024-byte MtCl and 57016-byte C1F15,1 firmware\n");
++	/* Apple's calibration stage reads the version after the image upload. */
++	ret = n1_read_register(n1, 0x10008ffc, &version);
++	if (ret)
++		goto power_off;
++	ret = n1_calibrate(n1, version);
++	if (ret)
++		goto power_off;
++	dev_info(dev, "N1 execute begin\n");
++	ret = n1_execute(n1);
++	if (ret)
++		goto power_off;
++	dev_info(dev, "N1 discovery begin\n");
++	ret = n1_discover(n1);
++	if (ret || stage == 2)
++		goto power_off;
++	n1->input = devm_input_allocate_device(dev);
++	if (!n1->input) {
++		ret = -ENOMEM;
++		goto power_off;
++	}
++	n1->input->name = "Apple N1 Touchscreen";
++	n1->input->id.bustype = BUS_SPI;
++	input_set_capability(n1->input, EV_KEY, BTN_TOUCH);
++	input_set_abs_params(n1->input, ABS_MT_POSITION_X, 0, n1->x_max - n1->x_min, 0, 0);
++	input_set_abs_params(n1->input, ABS_MT_POSITION_Y, 0, n1->y_max - n1->y_min, 0, 0);
++	input_set_abs_params(n1->input, ABS_MT_TOUCH_MAJOR, 0, 65535, 0, 0);
++	input_set_abs_params(n1->input, ABS_MT_TOUCH_MINOR, 0, 65535, 0, 0);
++	input_set_abs_params(n1->input, ABS_MT_ORIENTATION, -32768, 32767, 0, 0);
++	input_set_abs_params(n1->input, ABS_MT_PRESSURE, 0, 65535, 0, 0);
++	/* Classic N1 coordinates/ellipse axes are hundredths of a millimetre. */
++	input_abs_set_res(n1->input, ABS_MT_POSITION_X, 100);
++	input_abs_set_res(n1->input, ABS_MT_POSITION_Y, 100);
++	input_abs_set_res(n1->input, ABS_MT_TOUCH_MAJOR, 100);
++	input_abs_set_res(n1->input, ABS_MT_TOUCH_MINOR, 100);
++	touchscreen_parse_properties(n1->input, true, &n1->props);
++	ret = input_mt_init_slots(n1->input, N1_SLOTS, INPUT_MT_DIRECT | INPUT_MT_DROP_UNUSED);
++	if (ret)
++		goto power_off;
++	ret = input_register_device(n1->input);
++	if (ret)
++		goto power_off;
++	ret = devm_request_threaded_irq(dev, spi->irq, NULL, n1_irq,
++				       IRQF_ONESHOT | IRQF_NO_AUTOEN, dev_name(dev), n1);
++	if (ret)
++		goto power_off;
++	n1->irq_requested = true;
++	/* Drain old boot/runtime reports before accepting interrupts. */
++	for (i = 0; i < 8; i++) {
++		ret = n1_read_frame(n1, false);
++		if (ret <= 0)
++			break;
++	}
++	if (ret < 0 || i == 8) {
++		if (!ret || i == 8)
++			ret = -EOVERFLOW;
++		goto power_off;
++	}
++	ret = gpiod_get_value_cansleep(n1->atn);
++	if (ret) {
++		if (ret > 0)
++			ret = -EBUSY;
++		dev_err(dev, "ATN did not deassert after bounded initial drain\n");
++		goto power_off;
++	}
++	n1->irq_masked = false;
++	enable_irq(spi->irq);
++	dev_info(dev, "touchscreen reporting enabled (inverted-y=%u)\n", n1->props.invert_y);
++	goto release_firmware;
++
++power_off:
++	n1_power_off(n1);
++release_firmware:
++	release_firmware(calibration);
++	release_firmware(fw);
++	if (ret)
++		dev_err(dev, "N1 stage %u failed: %d (reset asserted)\n", stage, ret);
++	return ret;
++}
++
++static void n1_remove(struct spi_device *spi)
++{
++	struct apple_n1 *n1 = spi_get_drvdata(spi);
++
++	dev_info(&spi->dev, "N1 stop begin irq=%u powered=%u\n",
++		 n1->irq_requested, n1->powered);
++	mutex_lock(&n1->lock);
++	n1->suspended = true;
++	if (n1->irq_requested)
++		n1_mask_irq(n1);
++	mutex_unlock(&n1->lock);
++	cancel_delayed_work_sync(&n1->recovery_work);
++	if (n1->irq_requested) {
++		devm_free_irq(&spi->dev, spi->irq, n1);
++		n1->irq_requested = false;
++	}
++	n1_release_contacts(n1);
++	n1_power_off(n1);
++	dev_info(&spi->dev, "N1 stopped; reset asserted\n");
++}
++
++static int n1_suspend(struct device *dev)
++{
++	struct apple_n1 *n1 = dev_get_drvdata(dev);
++
++	if (!n1->irq_requested)
++		return 0;
++	mutex_lock(&n1->lock);
++	n1->suspended = true;
++	n1_mask_irq(n1);
++	mutex_unlock(&n1->lock);
++	/* No thread/work may transfer after the SPI parent/domain suspends. */
++	synchronize_irq(n1->spi->irq);
++	cancel_delayed_work_sync(&n1->recovery_work);
++	n1_release_contacts(n1);
++	dev_info(dev, "N1 suspended: IRQ quiesced, firmware/rails retained\n");
++	return 0;
++}
++
++static int n1_resume(struct device *dev)
++{
++	struct apple_n1 *n1 = dev_get_drvdata(dev);
++	int ret;
++
++	if (!n1->irq_requested)
++		return 0;
++	/* Normal resume runs after the SPI parent and genpd have resumed. */
++	mutex_lock(&n1->lock);
++	n1->suspended = false;
++	n1->irq_errors = 0;
++	ret = n1_rearm(n1);
++	if (ret) {
++		dev_err(dev, "N1 resume failed %d; IRQ stays masked for bounded recovery\n", ret);
++		n1_queue_recovery(n1);
++	}
++	mutex_unlock(&n1->lock);
++	return 0;
++}
++
++static DEFINE_SIMPLE_DEV_PM_OPS(n1_pm_ops, n1_suspend, n1_resume);
++
++static const struct of_device_id n1_of_match[] = {
++	{ .compatible = "apple,j71t-n1" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, n1_of_match);
++
++static const struct spi_device_id n1_spi_ids[] = {
++	{ "j71t-n1" },
++	{ }
++};
++MODULE_DEVICE_TABLE(spi, n1_spi_ids);
++
++static struct spi_driver n1_driver = {
++	.driver = {
++		.name = "apple-n1",
++		.of_match_table = n1_of_match,
++		.pm = pm_sleep_ptr(&n1_pm_ops),
++	},
++	.probe = n1_probe,
++	.remove = n1_remove,
++	.shutdown = n1_remove,
++	.id_table = n1_spi_ids,
++};
++module_spi_driver(n1_driver);
++
++MODULE_DESCRIPTION("Apple J71t N1 SPI touchscreen");
++MODULE_AUTHOR("linux-a9 contributors");
++MODULE_LICENSE("GPL");
++MODULE_FIRMWARE("apple/j71t-n1.bin");
++MODULE_FIRMWARE("apple/j71t-n1-calibration.bin");
+diff --git a/drivers/regulator/Kconfig b/drivers/regulator/Kconfig
+index 89789ac7a786c8c4c4a750cdcaa27a205762ac18..68dbc6f5fdcd4d755029e4300965ef407d4bf9f4 100644
+--- a/drivers/regulator/Kconfig
++++ b/drivers/regulator/Kconfig
+@@ -66,6 +66,13 @@ config REGULATOR_NETLINK_EVENTS
+ 
+ 	  If unsure, say no.
+ 
++config REGULATOR_APPLE_D2365_TOUCH
++	tristate "Apple D2365 touchscreen analog supply"
++	depends on OF && REGMAP
++	help
++	  Enable-only D2365 analog touch supply at register 0x031c bit zero.
++	  The parent apple,i2c-pmic must provide the register map.
++
+ config REGULATOR_88PG86X
+ 	tristate "Marvell 88PG86X voltage regulators"
+ 	depends on I2C
+diff --git a/drivers/regulator/Makefile b/drivers/regulator/Makefile
+index 5a764cec8df834de6f7775574e4bbd1d4dd8f6ef..be362a9f1830da967805958e884fe34b3fafb190 100644
+--- a/drivers/regulator/Makefile
++++ b/drivers/regulator/Makefile
+@@ -220,3 +220,4 @@ obj-$(CONFIG_REGULATOR_WM8400) += wm8400-regulator.o
+ obj-$(CONFIG_REGULATOR_WM8994) += wm8994-regulator.o
+ 
+ ccflags-$(CONFIG_REGULATOR_DEBUG) += -DDEBUG
++obj-$(CONFIG_REGULATOR_APPLE_D2365_TOUCH) += apple-d2365-touch.o
+diff --git a/drivers/regulator/apple-d2365-touch.c b/drivers/regulator/apple-d2365-touch.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..2c42a32d11b846337841b699913516afaa4c5d8e
+--- /dev/null
++++ b/drivers/regulator/apple-d2365-touch.c
+@@ -0,0 +1,60 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/* D2365 pmuL(0x21f): enable-only analog touch supply. */
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/regmap.h>
++#include <linux/regulator/driver.h>
++#include <linux/regulator/of_regulator.h>
++
++static const struct regulator_ops d2365_touch_ops = {
++	.enable = regulator_enable_regmap,
++	.disable = regulator_disable_regmap,
++	.is_enabled = regulator_is_enabled_regmap,
++};
++
++static const struct regulator_desc d2365_touch_desc = {
++	.name = "d2365-touch-analog",
++	.type = REGULATOR_VOLTAGE,
++	.owner = THIS_MODULE,
++	.ops = &d2365_touch_ops,
++	.enable_reg = 0x031c,
++	.enable_mask = BIT(0),
++};
++
++static int d2365_touch_probe(struct platform_device *pdev)
++{
++	struct regulator_config config = {};
++	struct regulator_dev *regulator;
++	u32 address;
++	int ret;
++
++	ret = of_property_read_u32_index(pdev->dev.of_node, "reg", 0, &address);
++	if (ret || address != d2365_touch_desc.enable_reg)
++		return -EINVAL;
++	config.dev = &pdev->dev;
++	config.of_node = pdev->dev.of_node;
++	config.regmap = dev_get_regmap(pdev->dev.parent, NULL);
++	if (!config.regmap)
++		return dev_err_probe(&pdev->dev, -EPROBE_DEFER, "PMIC register map unavailable\n");
++	config.init_data = of_get_regulator_init_data(&pdev->dev, config.of_node,
++						    &d2365_touch_desc);
++	regulator = devm_regulator_register(&pdev->dev, &d2365_touch_desc, &config);
++	return PTR_ERR_OR_ZERO(regulator);
++}
++
++static const struct of_device_id d2365_touch_match[] = {
++	{ .compatible = "apple,d2365-touch-analog" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, d2365_touch_match);
++static struct platform_driver d2365_touch_driver = {
++	.probe = d2365_touch_probe,
++	.driver = {
++		.name = "apple-d2365-touch",
++		.of_match_table = d2365_touch_match,
++	},
++};
++module_platform_driver(d2365_touch_driver);
++MODULE_DESCRIPTION("D2365 touchscreen analog power switch");
++MODULE_LICENSE("GPL");

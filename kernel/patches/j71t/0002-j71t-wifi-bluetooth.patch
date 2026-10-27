@@ -1,0 +1,922 @@
+BCM4355 Wi-Fi and Bluetooth for J71t
+
+Generated from linux-a9 a9/release 9dbc8612b3b0 by scripts/orchard/j71t-series.py.
+
+diff --git a/Documentation/devicetree/bindings/net/bluetooth/brcm,bluetooth.yaml b/Documentation/devicetree/bindings/net/bluetooth/brcm,bluetooth.yaml
+index 95501e858e6f824030f304d283eeb3e3be0e4294..0a2bf4fb37dc528b04331e8be0ba90ed695e711d 100644
+--- a/Documentation/devicetree/bindings/net/bluetooth/brcm,bluetooth.yaml
++++ b/Documentation/devicetree/bindings/net/bluetooth/brcm,bluetooth.yaml
+@@ -15,6 +15,10 @@ description:
+ properties:
+   compatible:
+     oneOf:
++      - const: apple,j71t-bcm4355-bt
++      - items:
++          - const: apple,j172-bcm4355c1-bt
++          - const: brcm,bcm4355c1-bt
+       - items:
+           - enum:
+               - infineon,cyw43439-bt
+@@ -29,6 +33,7 @@ properties:
+           - brcm,bcm43438-bt
+           - brcm,bcm4345c5
+           - brcm,bcm43540-bt
++          - brcm,bcm4355c1-bt
+           - brcm,bcm4335a0
+           - brcm,bcm4349-bt
+           - cypress,cyw4373a0-bt
+diff --git a/Documentation/devicetree/bindings/serial/samsung_uart.yaml b/Documentation/devicetree/bindings/serial/samsung_uart.yaml
+index 75ac2a08f2576cfa99ea1df2898a2fed6ea916f8..68542bd1b4d94599743c4789b5e95fc1bf0298c3 100644
+--- a/Documentation/devicetree/bindings/serial/samsung_uart.yaml
++++ b/Documentation/devicetree/bindings/serial/samsung_uart.yaml
+@@ -30,7 +30,11 @@ properties:
+           - samsung,exynos8895-uart
+       - items:
+           - enum:
+-              - samsung,exynos2200-uart
++              - apple,s8000-uart
++              - apple,t8010-uart
++          - const: apple,s5l-uart
++      - items:
++          - const: samsung,exynos2200-uart
+           - const: google,gs101-uart
+       - items:
+           - enum:
+diff --git a/drivers/bluetooth/btbcm.c b/drivers/bluetooth/btbcm.c
+index 463d59890befe51c31bbb8135b1d2198ec47b17f..0e7d811512e63e2e7672f665f2bdb47eb828ae7a 100644
+--- a/drivers/bluetooth/btbcm.c
++++ b/drivers/bluetooth/btbcm.c
+@@ -11,6 +11,7 @@
+ #include <linux/firmware.h>
+ #include <linux/dmi.h>
+ #include <linux/of.h>
++#include <linux/property.h>
+ #include <linux/string.h>
+ #include <linux/unaligned.h>
+ 
+@@ -30,6 +31,8 @@
+ #define BDADDR_BCM4330B1 (&(bdaddr_t) {{0x00, 0x00, 0x00, 0xb1, 0x30, 0x43}})
+ #define BDADDR_BCM4334B0 (&(bdaddr_t) {{0x00, 0x00, 0x00, 0xb0, 0x34, 0x43}})
+ #define BDADDR_BCM4345C5 (&(bdaddr_t) {{0xac, 0x1f, 0x00, 0xc5, 0x45, 0x43}})
++#define BDADDR_BCM4355C0 (&(bdaddr_t) {{0xac, 0x1f, 0x00, 0xc0, 0x55, 0x43}})
++#define BDADDR_BCM4355C1 (&(bdaddr_t) {{0x93, 0x76, 0x00, 0xc1, 0x55, 0x43}})
+ #define BDADDR_BCM43341B (&(bdaddr_t) {{0xac, 0x1f, 0x00, 0x1b, 0x34, 0x43}})
+ 
+ #define BCM_FW_NAME_LEN			64
+@@ -120,6 +123,12 @@ int btbcm_check_bdaddr(struct hci_dev *hdev)
+ 	 *
+ 	 * The address AA:AA:AA:AA:AA:AA indicates a BCM43430A1 controller
+ 	 * with no configured address.
++	 *
++	 * The address 43:55:C0:00:1F:AC indicates a BCM4355C0 controller
++	 * with no configured address.
++	 *
++	 * The address 43:55:C1:00:76:93 indicates a BCM4355C1 controller
++	 * with no configured address.
+ 	 */
+ 	if (!bacmp(&bda->bdaddr, BDADDR_BCM20702A0) ||
+ 	    !bacmp(&bda->bdaddr, BDADDR_BCM20702A1) ||
+@@ -128,6 +137,8 @@ int btbcm_check_bdaddr(struct hci_dev *hdev)
+ 	    !bacmp(&bda->bdaddr, BDADDR_BCM4330B1) ||
+ 	    !bacmp(&bda->bdaddr, BDADDR_BCM4334B0) ||
+ 	    !bacmp(&bda->bdaddr, BDADDR_BCM4345C5) ||
++	    !bacmp(&bda->bdaddr, BDADDR_BCM4355C0) ||
++	    !bacmp(&bda->bdaddr, BDADDR_BCM4355C1) ||
+ 	    !bacmp(&bda->bdaddr, BDADDR_BCM43430A0) ||
+ 	    !bacmp(&bda->bdaddr, BDADDR_BCM43430A1) ||
+ 	    !bacmp(&bda->bdaddr, BDADDR_BCM43341B)) {
+@@ -269,7 +280,7 @@ int btbcm_patchram(struct hci_dev *hdev, const struct firmware *fw)
+ }
+ EXPORT_SYMBOL(btbcm_patchram);
+ 
+-static int btbcm_reset(struct hci_dev *hdev)
++int btbcm_reset(struct hci_dev *hdev)
+ {
+ 	struct sk_buff *skb;
+ 
+@@ -287,6 +298,7 @@ static int btbcm_reset(struct hci_dev *hdev)
+ 
+ 	return 0;
+ }
++EXPORT_SYMBOL_GPL(btbcm_reset);
+ 
+ static struct sk_buff *btbcm_read_local_name(struct hci_dev *hdev)
+ {
+@@ -500,6 +512,7 @@ static const struct bcm_subver_table bcm_uart_subver_table[] = {
+ 	{ 0x4606, "BCM4324B5"	},	/* 002.006.006 */
+ 	{ 0x6109, "BCM4335C0"	},	/* 003.001.009 */
+ 	{ 0x610c, "BCM4354"	},	/* 003.001.012 */
++	{ 0x6214, "BCM4355C1"	},	/* 003.002.020 */
+ 	{ 0x2122, "BCM4343A0"	},	/* 001.001.034 */
+ 	{ 0x2209, "BCM43430A1"  },	/* 001.002.009 */
+ 	{ 0x6119, "BCM4345C0"	},	/* 003.001.025 */
+@@ -668,7 +681,11 @@ int btbcm_initialize(struct hci_dev *hdev, bool *fw_load_done, bool use_autobaud
+ 	fw_name_count++;
+ 
+ 	for (i = 0; i < fw_name_count; i++) {
+-		err = firmware_request_nowarn(&fw, fw_name[i], &hdev->dev);
++		/* J71t RAM boots have no firmware helper; fail each name fast. */
++		if (board_name && !strcmp(board_name, "apple,j71t"))
++			err = request_firmware_direct(&fw, fw_name[i], &hdev->dev);
++		else
++			err = firmware_request_nowarn(&fw, fw_name[i], &hdev->dev);
+ 		if (err == 0) {
+ 			bt_dev_info(hdev, "%s '%s' Patch",
+ 				    hw_name ? hw_name : "BCM", fw_name[i]);
+@@ -694,6 +711,91 @@ int btbcm_initialize(struct hci_dev *hdev, bool *fw_load_done, bool use_autobaud
+ }
+ EXPORT_SYMBOL_GPL(btbcm_initialize);
+ 
++/* Public identities are in HCI byte order here; the firmware file is BMac. */
++static bool btbcm_j71t_bdaddr_valid(const bdaddr_t *addr)
++{
++	return bacmp(addr, BDADDR_ANY) && !(addr->b[5] & 1);
++}
++
++static int btbcm_j71t_set_bdaddr(struct hci_dev *hdev)
++{
++	struct fwnode_handle *fwnode;
++	struct hci_rp_read_bd_addr *rp;
++	const struct firmware *fw;
++	struct sk_buff *skb;
++	const char *source;
++	bdaddr_t addr;
++	int err;
++
++	if (!hdev->dev.parent ||
++	    !of_device_is_compatible(hdev->dev.parent->of_node,
++				     "apple,j71t-bcm4355-bt"))
++		return 0;
++
++	fwnode = dev_fwnode(hdev->dev.parent);
++	if (fwnode_property_count_u8(fwnode, "local-bd-address") == sizeof(addr) &&
++	    !fwnode_property_read_u8_array(fwnode, "local-bd-address",
++					   (u8 *)&addr, sizeof(addr))) {
++		if (hci_test_quirk(hdev, HCI_QUIRK_BDADDR_PROPERTY_BROKEN)) {
++			bdaddr_t swapped;
++
++			baswap(&swapped, &addr);
++			bacpy(&addr, &swapped);
++		}
++	} else {
++		bacpy(&addr, BDADDR_ANY);
++	}
++
++	source = "device-tree";
++	if (!btbcm_j71t_bdaddr_valid(&addr)) {
++		/* Direct loading cannot stall a RAM boot in the sysfs fallback. */
++		err = request_firmware_direct(&fw, "apple/j71t-BMac.bin",
++					      &hdev->dev);
++		if (err) {
++			bt_dev_err(hdev, "BCM: No valid J71t device address (%d)", err);
++			return err;
++		}
++		if (fw->size != sizeof(addr)) {
++			release_firmware(fw);
++			return -EINVAL;
++		}
++		/* Resolved iOS BMac is stored in display/network byte order. */
++		baswap(&addr, (const bdaddr_t *)fw->data);
++		release_firmware(fw);
++		if (!btbcm_j71t_bdaddr_valid(&addr))
++			return -EINVAL;
++		source = "private BMac";
++	}
++
++	/* Program after the last Patchram reset, before the default-address check. */
++	err = btbcm_set_bdaddr(hdev, &addr);
++	if (err)
++		return err;
++
++	skb = __hci_cmd_sync(hdev, HCI_OP_READ_BD_ADDR, 0, NULL,
++			     HCI_INIT_TIMEOUT);
++	if (IS_ERR(skb))
++		return PTR_ERR(skb);
++	if (skb->len != sizeof(*rp)) {
++		kfree_skb(skb);
++		return -EIO;
++	}
++	rp = (struct hci_rp_read_bd_addr *)skb->data;
++	err = rp->status || bacmp(&rp->bdaddr, &addr) ? -EIO : 0;
++	kfree_skb(skb);
++	if (err) {
++		bt_dev_err(hdev, "BCM: J71t device address readback failed");
++		return err;
++	}
++
++	/* Keep MGMT reconfiguration consistent with the checked controller state. */
++	bacpy(&hdev->public_addr, &addr);
++	hci_clear_quirk(hdev, HCI_QUIRK_INVALID_BDADDR);
++	hci_clear_quirk(hdev, HCI_QUIRK_USE_BDADDR_PROPERTY);
++	bt_dev_info(hdev, "BCM: Using %s device address (%pMR)", source, &addr);
++	return 0;
++}
++
+ int btbcm_finalize(struct hci_dev *hdev, bool *fw_load_done, bool use_autobaud_mode)
+ {
+ 	int err;
+@@ -705,6 +807,10 @@ int btbcm_finalize(struct hci_dev *hdev, bool *fw_load_done, bool use_autobaud_m
+ 			return err;
+ 	}
+ 
++	err = btbcm_j71t_set_bdaddr(hdev);
++	if (err)
++		return err;
++
+ 	btbcm_check_bdaddr(hdev);
+ 
+ 	hci_set_quirk(hdev, HCI_QUIRK_STRICT_DUPLICATE_FILTER);
+diff --git a/drivers/bluetooth/btbcm.h b/drivers/bluetooth/btbcm.h
+index b4cb24231a202e2e1458a8b8376d2a07d440ad18..c46b8096cdad79ae143c2f0372fe573145419234 100644
+--- a/drivers/bluetooth/btbcm.h
++++ b/drivers/bluetooth/btbcm.h
+@@ -52,6 +52,7 @@ struct bcm_set_pcm_format_params {
+ #if IS_ENABLED(CONFIG_BT_BCM)
+ 
+ int btbcm_check_bdaddr(struct hci_dev *hdev);
++int btbcm_reset(struct hci_dev *hdev);
+ int btbcm_set_bdaddr(struct hci_dev *hdev, const bdaddr_t *bdaddr);
+ int btbcm_patchram(struct hci_dev *hdev, const struct firmware *fw);
+ int btbcm_read_pcm_int_params(struct hci_dev *hdev,
+@@ -72,6 +73,11 @@ static inline int btbcm_check_bdaddr(struct hci_dev *hdev)
+ 	return -EOPNOTSUPP;
+ }
+ 
++static inline int btbcm_reset(struct hci_dev *hdev)
++{
++	return -EOPNOTSUPP;
++}
++
+ static inline int btbcm_set_bdaddr(struct hci_dev *hdev, const bdaddr_t *bdaddr)
+ {
+ 	return -EOPNOTSUPP;
+diff --git a/drivers/bluetooth/hci_bcm.c b/drivers/bluetooth/hci_bcm.c
+index 9a103db7e3558b2db8154a3860a6bd002afab569..d991d62cba2059a4b6a22673e758d68ee23a59da 100644
+--- a/drivers/bluetooth/hci_bcm.c
++++ b/drivers/bluetooth/hci_bcm.c
+@@ -53,6 +53,10 @@
+  * struct bcm_device_data - device specific data
+  * @no_early_set_baudrate: Disallow set baudrate before driver setup()
+  * @drive_rts_on_open: drive RTS signal on ->open() when platform requires it
++ * @wake_before_power_cycle: assert BT_WAKE before cycling BT_REG_ON on powerup
++ * @set_baudrate_before_patch: switch to operational speed before Patchram
++ * @broken_read_transmit_power: controller cannot read LE min/max TX power
++ * @fixup_le_adv_report_evt_type: controller uses reserved advertising bits
+  * @no_uart_clock_set: UART clock set command for >3Mbps mode is unavailable
+  * @max_autobaud_speed: max baudrate supported by device in autobaud mode
+  * @max_speed: max baudrate supported
+@@ -60,6 +64,10 @@
+ struct bcm_device_data {
+ 	bool	no_early_set_baudrate;
+ 	bool	drive_rts_on_open;
++	bool	wake_before_power_cycle;
++	bool	set_baudrate_before_patch;
++	bool	broken_read_transmit_power;
++	bool	fixup_le_adv_report_evt_type;
+ 	bool	no_uart_clock_set;
+ 	u32	max_autobaud_speed;
+ 	u32	max_speed;
+@@ -104,6 +112,10 @@ struct bcm_device_data {
+  * @is_suspended: whether flow control is currently disabled
+  * @no_early_set_baudrate: don't set_baudrate before setup()
+  * @drive_rts_on_open: drive RTS signal on ->open() when platform requires it
++ * @wake_before_power_cycle: assert BT_WAKE before cycling BT_REG_ON on powerup
++ * @set_baudrate_before_patch: switch to operational speed before Patchram
++ * @broken_read_transmit_power: controller cannot read LE min/max TX power
++ * @fixup_le_adv_report_evt_type: controller uses reserved advertising bits
+  * @no_uart_clock_set: UART clock set command for >3Mbps mode is unavailable
+  * @pcm_int_params: keep the initial PCM configuration
+  * @use_autobaud_mode: start Bluetooth device in autobaud mode
+@@ -145,6 +157,10 @@ struct bcm_device {
+ #endif
+ 	bool			no_early_set_baudrate;
+ 	bool			drive_rts_on_open;
++	bool			wake_before_power_cycle;
++	bool			set_baudrate_before_patch;
++	bool			broken_read_transmit_power;
++	bool			fixup_le_adv_report_evt_type;
+ 	bool			no_uart_clock_set;
+ 	bool			use_autobaud_mode;
+ 	u8			pcm_int_params[5];
+@@ -277,6 +293,24 @@ static int bcm_gpio_set_power(struct bcm_device *dev, bool powered)
+ 			goto err_lpo_clk_disable;
+ 	}
+ 
++	if (powered && dev->wake_before_power_cycle) {
++		err = dev->set_device_wakeup(dev, true);
++		if (err)
++			goto err_power_cycle;
++
++		err = dev->set_shutdown(dev, false);
++		if (err)
++			goto err_power_cycle;
++
++		usleep_range(100000, 120000);
++
++		err = dev->set_shutdown(dev, true);
++		if (err)
++			goto err_power_cycle;
++
++		goto wait_power;
++	}
++
+ 	err = dev->set_shutdown(dev, powered);
+ 	if (err)
+ 		goto err_txco_clk_disable;
+@@ -297,6 +331,7 @@ static int bcm_gpio_set_power(struct bcm_device *dev, bool powered)
+ 					       dev->supplies);
+ 	}
+ 
++wait_power:
+ 	/* wait for device to power on and come out of reset */
+ 	usleep_range(100000, 120000);
+ 
+@@ -304,6 +339,10 @@ static int bcm_gpio_set_power(struct bcm_device *dev, bool powered)
+ 
+ 	return 0;
+ 
++err_power_cycle:
++	dev->set_shutdown(dev, false);
++	dev->set_device_wakeup(dev, false);
++	goto err_txco_clk_disable;
+ err_revert_shutdown:
+ 	dev->set_shutdown(dev, !powered);
+ err_txco_clk_disable:
+@@ -582,6 +621,7 @@ static int bcm_setup(struct hci_uart *hu)
+ {
+ 	struct bcm_data *bcm = hu->priv;
+ 	bool fw_load_done = false;
++	bool baudrate_set_before_patch;
+ 	bool use_autobaud_mode = (bcm->dev ? bcm->dev->use_autobaud_mode : 0);
+ 	unsigned int speed;
+ 	int err;
+@@ -591,6 +631,30 @@ static int bcm_setup(struct hci_uart *hu)
+ 	hu->hdev->set_diag = bcm_set_diag;
+ 	hu->hdev->set_bdaddr = btbcm_set_bdaddr;
+ 
++	if (bcm->dev && bcm->dev->broken_read_transmit_power)
++		hci_set_quirk(hu->hdev,
++			      HCI_QUIRK_BROKEN_READ_TRANSMIT_POWER);
++
++	if (bcm->dev && bcm->dev->fixup_le_adv_report_evt_type)
++		hci_set_quirk(hu->hdev,
++			      HCI_QUIRK_FIXUP_LE_ADV_REPORT_EVT_TYPE);
++
++	baudrate_set_before_patch = bcm->dev &&
++				   bcm->dev->set_baudrate_before_patch &&
++				   bcm->dev->oper_speed;
++	if (baudrate_set_before_patch) {
++		err = btbcm_reset(hu->hdev);
++		if (err)
++			return err;
++
++		speed = bcm->dev->oper_speed;
++		err = bcm_set_baudrate(hu, speed);
++		if (err)
++			return err;
++
++		host_set_baudrate(hu, speed);
++	}
++
+ 	err = btbcm_initialize(hu->hdev, &fw_load_done, use_autobaud_mode);
+ 	if (err)
+ 		return err;
+@@ -1226,6 +1290,7 @@ static int bcm_of_probe(struct bcm_device *bdev)
+ {
+ 	bdev->use_autobaud_mode = device_property_read_bool(bdev->dev,
+ 							    "brcm,requires-autobaud-mode");
++	device_property_read_u32(bdev->dev, "current-speed", &bdev->init_speed);
+ 	device_property_read_u32(bdev->dev, "max-speed", &bdev->oper_speed);
+ 	device_property_read_u8_array(bdev->dev, "brcm,bt-pcm-int-params",
+ 				      bdev->pcm_int_params, 5);
+@@ -1549,6 +1614,13 @@ static int bcm_serdev_probe(struct serdev_device *serdev)
+ 		bcmdev->max_autobaud_speed = data->max_autobaud_speed;
+ 		bcmdev->no_early_set_baudrate = data->no_early_set_baudrate;
+ 		bcmdev->drive_rts_on_open = data->drive_rts_on_open;
++		bcmdev->wake_before_power_cycle = data->wake_before_power_cycle;
++		bcmdev->set_baudrate_before_patch =
++			data->set_baudrate_before_patch;
++		bcmdev->broken_read_transmit_power =
++			data->broken_read_transmit_power;
++		bcmdev->fixup_le_adv_report_evt_type =
++			data->fixup_le_adv_report_evt_type;
+ 		bcmdev->no_uart_clock_set = data->no_uart_clock_set;
+ 		if (data->max_speed && bcmdev->oper_speed > data->max_speed)
+ 			bcmdev->oper_speed = data->max_speed;
+@@ -1569,6 +1641,20 @@ static struct bcm_device_data bcm4354_device_data = {
+ 	.no_early_set_baudrate = true,
+ };
+ 
++static struct bcm_device_data bcm4355_device_data = {
++	.no_early_set_baudrate = true,
++	.drive_rts_on_open = true,
++};
++
++static struct bcm_device_data bcm4355_j172_device_data = {
++	.no_early_set_baudrate = true,
++	.wake_before_power_cycle = true,
++	.set_baudrate_before_patch = true,
++	/* Also required by the J71t BCM4355C0 controller. */
++	.broken_read_transmit_power = true,
++	.fixup_le_adv_report_evt_type = true,
++};
++
+ static struct bcm_device_data bcm43438_device_data = {
+ 	.drive_rts_on_open = true,
+ };
+@@ -1592,6 +1678,12 @@ static const struct of_device_id bcm_bluetooth_of_match[] = {
+ 	{ .compatible = "brcm,bcm43438-bt", .data = &bcm43438_device_data },
+ 	{ .compatible = "brcm,bcm4349-bt", .data = &bcm43438_device_data },
+ 	{ .compatible = "brcm,bcm43540-bt", .data = &bcm4354_device_data },
++	/* A9 module revision is selected by ROM and board-specific firmware. */
++	{ .compatible = "apple,j71t-bcm4355-bt",
++	  .data = &bcm4355_j172_device_data },
++	{ .compatible = "apple,j172-bcm4355c1-bt",
++	  .data = &bcm4355_j172_device_data },
++	{ .compatible = "brcm,bcm4355c1-bt", .data = &bcm4355_device_data },
+ 	{ .compatible = "brcm,bcm4335a0" },
+ 	{ .compatible = "cypress,cyw4373a0-bt", .data = &cyw4373a0_device_data },
+ 	{ .compatible = "infineon,cyw55572-bt", .data = &cyw55572_device_data },
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/feature.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/feature.c
+index 488364ef8ff2a1f2dfd92386cec9f50b4f90c5cd..63cc18694755de0c0832c4c518cd629c8866d05f 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/feature.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/feature.c
+@@ -104,6 +104,33 @@ static const struct brcmf_feat_fwfeat brcmf_feat_fwfeat_map[] = {
+ 	{ "01-d2cbb8fd", BIT(BRCMF_FEAT_MONITOR_FMT_HW_RX_HDR) },
+ };
+ 
++/* Features a given firmware build advertises but can't actually do */
++static const struct brcmf_feat_fwfeat brcmf_feat_fwfeat_disable_map[] = {
++	/*
++	 * Apple iOS 16 BCM4355 C0 "FearA" firmware (9.44.205.0.3.50.46):
++	 * answers the "p2p" iovar but fails "p2p_da_override" with -52, so
++	 * every P2P device creation fails. Apple uses AWDL, not Wi-Fi P2P.
++	 */
++	{ "01-9787ef4d", BIT(BRCMF_FEAT_P2P) },
++};
++
++static void brcmf_feat_firmware_disables(struct brcmf_pub *drv)
++{
++	const struct brcmf_feat_fwfeat *e;
++	int i, j;
++
++	for (i = 0; i < ARRAY_SIZE(brcmf_feat_fwfeat_disable_map); i++) {
++		e = &brcmf_feat_fwfeat_disable_map[i];
++		if (strcmp(e->fwid, drv->fwver))
++			continue;
++		for (j = 0; j < BRCMF_FEAT_LAST; j++)
++			if (e->feat_flags & drv->feat_flags & BIT(j))
++				brcmf_info("firmware %s: disabling feature %s\n",
++					   e->fwid, brcmf_feat_names[j]);
++		drv->feat_flags &= ~e->feat_flags;
++	}
++}
++
+ static void brcmf_feat_firmware_overrides(struct brcmf_pub *drv)
+ {
+ 	const struct brcmf_feat_fwfeat *e;
+@@ -343,6 +370,7 @@ void brcmf_feat_attach(struct brcmf_pub *drvr)
+ 
+ 	brcmf_feat_wlc_version_overrides(drvr);
+ 	brcmf_feat_firmware_overrides(drvr);
++	brcmf_feat_firmware_disables(drvr);
+ 
+ 	brcmf_fwvid_feat_attach(ifp);
+ 
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/of.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/of.c
+index 03efae36a0b2d3e7eb2264799e31b4906efaf920..3dd4a640602f5a0af22048014911d242a82881a2 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/of.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/of.c
+@@ -121,13 +121,21 @@ int brcmf_of_probe(struct device *dev, enum brcmf_bus_type bus_type,
+ 
+ 	brcmf_dbg(INFO, "%s LPO clock\n", clk ? "enable" : "no");
+ 
++	/*
++	 * The binding allows the country code map on the PCIe compatibles
++	 * (pci14e4,*) too, and without one the firmware never leaves its
++	 * NVRAM default country (e.g. "XZ") when cfg80211 sets a country.
++	 */
++	if (np) {
++		err = brcmf_of_get_country_codes(dev, settings);
++		if (err)
++			brcmf_err("failed to get OF country code map (err=%d)\n",
++				  err);
++	}
++
+ 	if (!np || !of_device_is_compatible(np, "brcm,bcm4329-fmac"))
+ 		return 0;
+ 
+-	err = brcmf_of_get_country_codes(dev, settings);
+-	if (err)
+-		brcmf_err("failed to get OF country code map (err=%d)\n", err);
+-
+ 	err = of_get_mac_address(np, settings->mac);
+ 	if (err == -EPROBE_DEFER)
+ 		return err;
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/pcie.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/pcie.c
+index 55f4d7b970f28787f89534838f00248ace00cfee..e4f8216a51446e58bc2a5b66a2758392b765acb9 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/pcie.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/pcie.c
+@@ -2676,6 +2676,16 @@ static int brcmf_pcie_pm_leave_D3(struct device *dev)
+ 	devinfo = bus->bus_priv.pcie->devinfo;
+ 	brcmf_dbg(PCIE, "Enter, dev=%p, bus=%p\n", dev, bus);
+ 
++	/*
++	 * The host bridge cut the device off because its link did not come
++	 * back. Any BAR access now could stall the CPU, so stay down; with the
++	 * bus down, firmware commands and transmits are refused early.
++	 */
++	if (pci_dev_is_disconnected(devinfo->pdev)) {
++		brcmf_err(bus, "device lost over suspend, staying down\n");
++		return -ENODEV;
++	}
++
+ 	/* Check if device is still up and running, if so we are ready */
+ 	if (brcmf_pcie_read_reg32(devinfo, devinfo->reginfo->intmask) != 0) {
+ 		brcmf_dbg(PCIE, "Try to wakeup device....\n");
+diff --git a/drivers/tty/serdev/core.c b/drivers/tty/serdev/core.c
+index 7500efcdfc218b0f14bfa6bf44105950ee6a8bd1..2901574bd1af24dc650f0628a5fe3a73e5afa3ca 100644
+--- a/drivers/tty/serdev/core.c
++++ b/drivers/tty/serdev/core.c
+@@ -351,6 +351,18 @@ int serdev_device_set_parity(struct serdev_device *serdev,
+ }
+ EXPORT_SYMBOL_GPL(serdev_device_set_parity);
+ 
++int serdev_device_set_stopbits(struct serdev_device *serdev,
++			       enum serdev_stopbits stopbits)
++{
++	struct serdev_controller *ctrl = serdev->ctrl;
++
++	if (!ctrl || !ctrl->ops->set_stopbits)
++		return -EOPNOTSUPP;
++
++	return ctrl->ops->set_stopbits(ctrl, stopbits);
++}
++EXPORT_SYMBOL_GPL(serdev_device_set_stopbits);
++
+ void serdev_device_wait_until_sent(struct serdev_device *serdev, long timeout)
+ {
+ 	struct serdev_controller *ctrl = serdev->ctrl;
+diff --git a/drivers/tty/serdev/serdev-ttyport.c b/drivers/tty/serdev/serdev-ttyport.c
+index bab1b143b8a68d486cec17890e0eda0bddc47be1..5acb898a7a900cef7d1ad5fa298de23b559c5570 100644
+--- a/drivers/tty/serdev/serdev-ttyport.c
++++ b/drivers/tty/serdev/serdev-ttyport.c
+@@ -207,6 +207,33 @@ static int ttyport_set_parity(struct serdev_controller *ctrl,
+ 	return 0;
+ }
+ 
++static int ttyport_set_stopbits(struct serdev_controller *ctrl,
++				enum serdev_stopbits stopbits)
++{
++	struct serport *serport = serdev_controller_get_drvdata(ctrl);
++	struct tty_struct *tty = serport->tty;
++	struct ktermios ktermios = tty->termios;
++
++	switch (stopbits) {
++	case SERDEV_STOPBITS_1:
++		ktermios.c_cflag &= ~CSTOPB;
++		break;
++	case SERDEV_STOPBITS_2:
++		ktermios.c_cflag |= CSTOPB;
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	tty_set_termios(tty, &ktermios);
++
++	if ((tty->termios.c_cflag & CSTOPB) !=
++	    (ktermios.c_cflag & CSTOPB))
++		return -EINVAL;
++
++	return 0;
++}
++
+ static void ttyport_wait_until_sent(struct serdev_controller *ctrl, long timeout)
+ {
+ 	struct serport *serport = serdev_controller_get_drvdata(ctrl);
+@@ -255,6 +282,7 @@ static const struct serdev_controller_ops ctrl_ops = {
+ 	.close = ttyport_close,
+ 	.set_flow_control = ttyport_set_flow_control,
+ 	.set_parity = ttyport_set_parity,
++	.set_stopbits = ttyport_set_stopbits,
+ 	.set_baudrate = ttyport_set_baudrate,
+ 	.wait_until_sent = ttyport_wait_until_sent,
+ 	.get_tiocm = ttyport_get_tiocm,
+diff --git a/drivers/tty/serial/samsung_tty.c b/drivers/tty/serial/samsung_tty.c
+index 63d0232dffc20367222a6784ca0db154db438b71..485059f95077a4fb9affc0de53019319b3a1765d 100644
+--- a/drivers/tty/serial/samsung_tty.c
++++ b/drivers/tty/serial/samsung_tty.c
+@@ -22,6 +22,7 @@
+  */
+ 
+ #include <linux/console.h>
++#include <linux/bitfield.h>
+ #include <linux/clk.h>
+ #include <linux/cpufreq.h>
+ #include <linux/delay.h>
+@@ -65,6 +66,11 @@
+ /* flag to ignore all characters coming in */
+ #define RXSTAT_DUMMY_READ (0x10000000)
+ 
++#define T8010_UBRDIV_DIV	GENMASK(15, 0)
++#define T8010_UBRDIV_OSR	GENMASK(19, 16)
++#define T8010_MAX_OVERSAMPLING	16
++#define T8010_MIN_OVERSAMPLING	4
++
+ enum s3c24xx_port_type {
+ 	TYPE_S3C6400,
+ 	TYPE_APPLE_S5L,
+@@ -96,6 +102,7 @@ struct s3c24xx_serial_drv_data {
+ 	const struct s3c24xx_uart_info	info;
+ 	const struct s3c2410_uartcfg	def_cfg;
+ 	const unsigned int		fifosize[UART_NR];
++	bool				has_ubrdiv_oversampling;
+ };
+ 
+ struct s3c24xx_uart_dma {
+@@ -1370,6 +1377,7 @@ static unsigned int s3c24xx_serial_getclk(struct s3c24xx_uart_port *ourport,
+ 			u8 *clk_num)
+ {
+ 	const struct s3c24xx_uart_info *info = ourport->info;
++	const struct s3c24xx_serial_drv_data *drv_data = ourport->drv_data;
+ 	struct clk *clk;
+ 	unsigned long rate;
+ 	unsigned int baud, quot, best_quot = 0;
+@@ -1407,13 +1415,40 @@ static unsigned int s3c24xx_serial_getclk(struct s3c24xx_uart_port *ourport,
+ 			 * is easy enough to recalculate.
+ 			 */
+ 
+-			quot = div / 16;
++			quot = div / 16 - 1;
+ 			baud = rate / div;
++		} else if (drv_data->has_ubrdiv_oversampling) {
++			unsigned int oversampling;
++			unsigned int divisor;
++
++			oversampling = min_t(unsigned long,
++					     T8010_MAX_OVERSAMPLING,
++					     rate / req_baud);
++			if (oversampling < T8010_MIN_OVERSAMPLING) {
++				clk_put(clk);
++				continue;
++			}
++
++			divisor = DIV_ROUND_CLOSEST(rate,
++						    (unsigned long)oversampling *
++						    req_baud);
++			if (!divisor ||
++			    divisor > FIELD_MAX(T8010_UBRDIV_DIV) + 1) {
++				clk_put(clk);
++				continue;
++			}
++
++			baud = rate / (divisor * oversampling);
++			quot = FIELD_PREP(T8010_UBRDIV_DIV, divisor - 1) |
++				FIELD_PREP(T8010_UBRDIV_OSR,
++					   T8010_MAX_OVERSAMPLING -
++					   oversampling);
+ 		} else {
+-			quot = (rate + (8 * req_baud)) / (16 * req_baud);
++			quot = DIV_ROUND_CLOSEST(rate,
++						 16UL * req_baud);
+ 			baud = rate / (quot * 16);
++			quot--;
+ 		}
+-		quot--;
+ 
+ 		calc_deviation = abs(req_baud - baud);
+ 
+@@ -2279,6 +2314,8 @@ static void
+ s3c24xx_serial_get_options(struct uart_port *port, int *baud,
+ 			   int *parity, int *bits)
+ {
++	const struct s3c24xx_serial_drv_data *drv_data =
++		to_ourport(port)->drv_data;
+ 	struct clk *clk;
+ 	unsigned long rate;
+ 	u32 ulcon, ucon, ubrdiv;
+@@ -2331,7 +2368,19 @@ s3c24xx_serial_get_options(struct uart_port *port, int *baud,
+ 		else
+ 			rate = 1;
+ 
+-		*baud = rate / (16 * (ubrdiv + 1));
++		if (drv_data->has_ubrdiv_oversampling) {
++			unsigned int divisor;
++			unsigned int oversampling;
++
++			divisor = FIELD_GET(T8010_UBRDIV_DIV, ubrdiv) + 1;
++			oversampling = T8010_MAX_OVERSAMPLING -
++				FIELD_GET(T8010_UBRDIV_OSR, ubrdiv);
++			if (oversampling < T8010_MIN_OVERSAMPLING)
++				oversampling = T8010_MAX_OVERSAMPLING;
++			*baud = rate / (oversampling * divisor);
++		} else {
++			*baud = rate / (16 * (ubrdiv + 1));
++		}
+ 		dev_dbg(port->dev, "calculated baud %d\n", *baud);
+ 	}
+ }
+@@ -2558,9 +2607,37 @@ static const struct s3c24xx_serial_drv_data s5l_serial_drv_data = {
+ 		.ufcon		= S3C2410_UFCON_DEFAULT,
+ 	},
+ };
++
++static const struct s3c24xx_serial_drv_data t8010_serial_drv_data = {
++	.info = {
++		.name		= "Apple T8010 UART",
++		.type		= TYPE_APPLE_S5L,
++		.port_type	= PORT_8250,
++		.iotype		= UPIO_MEM32,
++		.fifosize	= 16,
++		.rx_fifomask	= S3C2410_UFSTAT_RXMASK,
++		.rx_fifoshift	= S3C2410_UFSTAT_RXSHIFT,
++		.rx_fifofull	= S3C2410_UFSTAT_RXFULL,
++		.tx_fifofull	= S3C2410_UFSTAT_TXFULL,
++		.tx_fifomask	= S3C2410_UFSTAT_TXMASK,
++		.tx_fifoshift	= S3C2410_UFSTAT_TXSHIFT,
++		.def_clk_sel	= S3C2410_UCON_CLKSEL0,
++		.num_clks	= 1,
++		.clksel_mask	= 0,
++		.clksel_shift	= 0,
++		.ucon_mask	= APPLE_S5L_UCON_MASK,
++	},
++	.def_cfg = {
++		.ucon		= APPLE_S5L_UCON_DEFAULT,
++		.ufcon		= S3C2410_UFCON_DEFAULT,
++	},
++	.has_ubrdiv_oversampling = true,
++};
+ #define S5L_SERIAL_DRV_DATA (&s5l_serial_drv_data)
++#define T8010_SERIAL_DRV_DATA (&t8010_serial_drv_data)
+ #else
+ #define S5L_SERIAL_DRV_DATA NULL
++#define T8010_SERIAL_DRV_DATA NULL
+ #endif
+ 
+ #if defined(CONFIG_ARCH_ARTPEC)
+@@ -2610,6 +2687,9 @@ static const struct platform_device_id s3c24xx_serial_driver_ids[] = {
+ 	}, {
+ 		.name		= "s5l-uart",
+ 		.driver_data	= (kernel_ulong_t)S5L_SERIAL_DRV_DATA,
++	}, {
++		.name		= "t8010-uart",
++		.driver_data	= (kernel_ulong_t)T8010_SERIAL_DRV_DATA,
+ 	}, {
+ 		.name		= "exynos850-uart",
+ 		.driver_data	= (kernel_ulong_t)EXYNOS850_SERIAL_DRV_DATA,
+@@ -2639,6 +2719,10 @@ static const struct of_device_id s3c24xx_uart_dt_match[] = {
+ 		.data = EXYNOS5433_SERIAL_DRV_DATA },
+ 	{ .compatible = "apple,s5l-uart",
+ 		.data = S5L_SERIAL_DRV_DATA },
++	{ .compatible = "apple,s8000-uart",
++		.data = T8010_SERIAL_DRV_DATA },
++	{ .compatible = "apple,t8010-uart",
++		.data = T8010_SERIAL_DRV_DATA },
+ 	{ .compatible = "samsung,exynos850-uart",
+ 		.data = EXYNOS850_SERIAL_DRV_DATA },
+ 	{ .compatible = "axis,artpec8-uart",
+diff --git a/include/linux/serdev.h b/include/linux/serdev.h
+index b6c3d957ec1558321be244818c6222c45f77f263..94ab14b6642e532cf7aab41491c1e3fb9c2e8dc1 100644
+--- a/include/linux/serdev.h
++++ b/include/linux/serdev.h
+@@ -74,6 +74,11 @@ enum serdev_parity {
+ 	SERDEV_PARITY_ODD,
+ };
+ 
++enum serdev_stopbits {
++	SERDEV_STOPBITS_1,
++	SERDEV_STOPBITS_2,
++};
++
+ /*
+  * serdev controller structures
+  */
+@@ -84,6 +89,8 @@ struct serdev_controller_ops {
+ 	void (*close)(struct serdev_controller *);
+ 	void (*set_flow_control)(struct serdev_controller *, bool);
+ 	int (*set_parity)(struct serdev_controller *, enum serdev_parity);
++	int (*set_stopbits)(struct serdev_controller *ctrl,
++			    enum serdev_stopbits stopbits);
+ 	unsigned int (*set_baudrate)(struct serdev_controller *, unsigned int);
+ 	void (*wait_until_sent)(struct serdev_controller *, long);
+ 	int (*get_tiocm)(struct serdev_controller *);
+@@ -253,6 +260,7 @@ static inline int serdev_device_set_tiocm(struct serdev_device *serdev, int set,
+ {
+ 	return -EOPNOTSUPP;
+ }
++
+ static inline int serdev_device_break_ctl(struct serdev_device *serdev, int break_state)
+ {
+ 	return -EOPNOTSUPP;
+@@ -294,6 +302,8 @@ static inline int serdev_device_set_rts(struct serdev_device *serdev, bool enabl
+ 
+ int serdev_device_set_parity(struct serdev_device *serdev,
+ 			     enum serdev_parity parity);
++int serdev_device_set_stopbits(struct serdev_device *serdev,
++			       enum serdev_stopbits stopbits);
+ 
+ /*
+  * serdev hooks into TTY core
+diff --git a/include/net/bluetooth/hci.h b/include/net/bluetooth/hci.h
+index 1641d879dbda997604518207ffd5dd4b02c7bf04..a5d3c759a54bafc3bc8e05db1050773ae7f7238f 100644
+--- a/include/net/bluetooth/hci.h
++++ b/include/net/bluetooth/hci.h
+@@ -359,6 +359,16 @@ enum {
+ 	 */
+ 	HCI_QUIRK_FIXUP_LE_EXT_ADV_REPORT_PHY,
+ 
++	/*
++	 * When this quirk is set, reserved upper bits in the Event_Type field
++	 * of LE Advertising Report events are discarded. This is required for
++	 * some Apple/Broadcom controllers which use those bits for vendor flags.
++	 *
++	 * This quirk can be set before hci_register_dev is called or during the
++	 * hdev->setup vendor callback.
++	 */
++	HCI_QUIRK_FIXUP_LE_ADV_REPORT_EVT_TYPE,
++
+ 	/* When this quirk is set, the HCI_OP_READ_VOICE_SETTING command is
+ 	 * skipped. This is required for a subset of the CSR controller clones
+ 	 * which erroneously claim to support it.
+@@ -2937,6 +2947,7 @@ struct hci_ev_le_conn_complete {
+ #define LE_ADV_NONCONN_IND	0x03
+ #define LE_ADV_SCAN_RSP		0x04
+ #define LE_ADV_INVALID		0x05
++#define LE_ADV_EVT_TYPE_MASK	0x0f
+ 
+ /* Legacy event types in extended adv report */
+ #define LE_LEGACY_ADV_IND		0x0013
+diff --git a/net/bluetooth/hci_event.c b/net/bluetooth/hci_event.c
+index 2f5e21ff975294b300536301ab84be37b5a4918a..ad374f76ecf4338cd8716fc6fa8c084b9cdeb7e4 100644
+--- a/net/bluetooth/hci_event.c
++++ b/net/bluetooth/hci_event.c
+@@ -6453,6 +6453,7 @@ static void hci_le_adv_report_evt(struct hci_dev *hdev, void *data,
+ 
+ 	while (ev->num--) {
+ 		struct hci_ev_le_advertising_info *info;
++		u8 evt_type;
+ 		s8 rssi;
+ 
+ 		info = hci_le_ev_skb_pull(hdev, skb,
+@@ -6467,9 +6468,14 @@ static void hci_le_adv_report_evt(struct hci_dev *hdev, void *data,
+ 
+ 		hci_store_wake_reason(hdev, &info->bdaddr, info->bdaddr_type);
+ 
++		evt_type = info->type;
++		if (hci_test_quirk(hdev,
++				   HCI_QUIRK_FIXUP_LE_ADV_REPORT_EVT_TYPE))
++			evt_type &= LE_ADV_EVT_TYPE_MASK;
++
+ 		if (info->length <= max_adv_len(hdev)) {
+ 			rssi = info->data[info->length];
+-			process_adv_report(hdev, info->type, &info->bdaddr,
++			process_adv_report(hdev, evt_type, &info->bdaddr,
+ 					   info->bdaddr_type, NULL, 0,
+ 					   HCI_ADV_PHY_1M, 0, rssi,
+ 					   info->data, info->length, false,
+diff --git a/net/bluetooth/hci_sync.c b/net/bluetooth/hci_sync.c
+index ffd7b37e740184feb9cc327933feb3d4540708a1..6a13318ba11d00c59811a2da3589676ba67fa8ed 100644
+--- a/net/bluetooth/hci_sync.c
++++ b/net/bluetooth/hci_sync.c
+@@ -5190,11 +5190,13 @@ static int hci_init_sync(struct hci_dev *hdev)
+ 	return 0;
+ }
+ 
+-#define HCI_QUIRK_BROKEN(_quirk, _desc) { HCI_QUIRK_BROKEN_##_quirk, _desc }
++#define HCI_QUIRK_BROKEN(_quirk, _desc) \
++	{ HCI_QUIRK_BROKEN_##_quirk, _desc, false }
+ 
+ static const struct {
+ 	unsigned long quirk;
+ 	const char *desc;
++	bool quiet;
+ } hci_broken_table[] = {
+ 	HCI_QUIRK_BROKEN(LOCAL_COMMANDS,
+ 			 "HCI Read Local Supported Commands not supported"),
+@@ -5204,9 +5206,9 @@ static const struct {
+ 	HCI_QUIRK_BROKEN(ERR_DATA_REPORTING,
+ 			 "HCI Read Default Erroneous Data Reporting command is "
+ 			 "advertised, but not supported."),
+-	HCI_QUIRK_BROKEN(READ_TRANSMIT_POWER,
+-			 "HCI Read Transmit Power Level command is advertised, "
+-			 "but not supported."),
++	/* This established workaround still blocks the unsupported command. */
++	{ HCI_QUIRK_BROKEN_READ_TRANSMIT_POWER,
++	  "HCI Read Transmit Power Level command is advertised, but not supported.", true },
+ 	HCI_QUIRK_BROKEN(FILTER_CLEAR_ALL,
+ 			 "HCI Set Event Filter command not supported."),
+ 	HCI_QUIRK_BROKEN(ENHANCED_SETUP_SYNC_CONN,
+@@ -5250,7 +5252,11 @@ static int hci_dev_setup_sync(struct hci_dev *hdev)
+ 		ret = hdev->setup(hdev);
+ 
+ 	for (i = 0; i < ARRAY_SIZE(hci_broken_table); i++) {
+-		if (hci_test_quirk(hdev, hci_broken_table[i].quirk))
++		if (!hci_test_quirk(hdev, hci_broken_table[i].quirk))
++			continue;
++		if (hci_broken_table[i].quiet)
++			bt_dev_dbg(hdev, "%s", hci_broken_table[i].desc);
++		else
+ 			bt_dev_warn(hdev, "%s", hci_broken_table[i].desc);
+ 	}
+ 

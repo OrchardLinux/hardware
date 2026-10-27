@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+kernel_build='' headers='' output=''
+while (($#)); do
+  case "$1" in
+    --kernel-build) kernel_build=$2; shift 2;;
+    --headers) headers=$2; shift 2;;
+    --output) output=$2; shift 2;;
+    *) echo "Unknown argument: $1" >&2; exit 2;;
+  esac
+done
+# The J71t kernel patches carry the complete board device tree; no overlays.
+base="$kernel_build/arch/arm64/boot/dts/apple/s8003-j71t.dtb"
+if [[ ! -f "$base" || ! -d "$headers" || -z "$output" || -e "$output" ]]; then
+  echo 'Usage: ./kernel/devicetree/j71t/build --kernel-build KERNEL_OUTPUT --headers KERNEL_SOURCE/include --output J71T.dtb' >&2
+  exit 2
+fi
+actual=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$base")
+expected=4431de33114dc1678fc96560a7cfb205a83430a30b9d6cffe4cf72d3735f3b31
+[[ "$actual" == "$expected" ]] || { echo "J71t DTB differs: $actual" >&2; exit 1; }
+mkdir -p "$(dirname "$output")"
+cp "$base" "$output"
+echo "DTB: $output (SHA-256 $actual)"
