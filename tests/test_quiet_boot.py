@@ -1,6 +1,10 @@
 """Shared discovery must not accidentally inherit distro artwork."""
 import hashlib
 import json
+import os
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
 import tempfile
 import unittest
@@ -10,6 +14,19 @@ import orchard_hardware
 
 
 class QuietBoot(unittest.TestCase):
+    def test_published_launcher_requires_paired_cli(self):
+        workflow = (Path(__file__).resolve().parents[1] / '.github/workflows/launcher.yml').read_text()
+        script = textwrap.dedent(workflow.split("          python - <<'PY'\n", 1)[1].split('          PY\n', 1)[0])
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'out/launcher'
+            output.mkdir(parents=True)
+            for name in ('boot.toml', 'j71b-launcher.boot.toml'):
+                (output / name).write_text('min_orchard = "0.1.8"\nprotocol = 1\n')
+            subprocess.run([sys.executable, '-c', script], cwd=directory,
+                           env={**os.environ, 'CLI_TAG': 'v0.1.10'}, check=True)
+            for path in output.iterdir():
+                self.assertEqual(path.read_text(), 'min_orchard = "0.1.10"\nprotocol = 1\n')
+
     def test_receipt_binds_both_components_and_current_patches(self):
         here = Path(orchard_hardware.__file__).parent / 'boot/quiet'
         files = {role: {'bytes': 1, 'sha256': role * 8} for role in ('loader', 'pongo')}

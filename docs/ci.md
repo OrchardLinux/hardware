@@ -56,7 +56,7 @@ Run `.github/workflows/launcher.yml` manually after the image releases exist. Se
 - A Minimal Linux tag (supplies its signed Alpine base and compatible root).
 - Optionally an Omarchy A tag, built with the same kernel/modules/runtime.
 
-The producer validates component inventories, quiet-patch receipts, root streams and kernel/runtime compatibility. It refuses incompatible roots rather than advertising unsupported installations.
+The producer validates component inventories, quiet-patch receipts, root streams and kernel/runtime compatibility. It refuses incompatible roots rather than advertising unsupported installations. For the J71b update, rebuild both Minimal Linux and Omarchy A with hardware/CLI v0.1.10 and include both new roots. Before checksumming and attesting, the workflow sets both launcher manifests' `min_orchard` to the selected CLI tag so older host firmware recipes are rejected before preparation.
 
 By default the workflow only uploads `shared-launcher-assets`. Explicitly enable `attach_assets` to attach new assets to the selected hardware release. This never overwrites existing assets, changes the latest-release selection, or publishes a draft. The wheel/component checksums stay immutable; launcher assets have a separate `launcher.SHA256SUMS`.
 
