@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-2.0-only
+[Unit]
+Description=Cascadia BCM4334 Wi-Fi power-cycle recovery
+Requires=p105-platform.service
+After=p105-platform.service systemd-udev-trigger.service
+Before=NetworkManager.service p105-hardware.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/p105/wifi-chip
+RemainAfterExit=yes
+TimeoutStartSec=90
+TimeoutStopSec=5
+StandardOutput=journal
+StandardError=journal

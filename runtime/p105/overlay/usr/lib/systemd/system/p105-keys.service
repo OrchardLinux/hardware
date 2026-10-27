@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-2.0-only
+[Unit]
+Description=Cascadia P105 buttons and backlight
+Requires=p105-platform.service
+After=p105-platform.service p105-touch.service
+Before=p105-hardware.target
+
+[Service]
+Type=exec
+ExecStart=/usr/libexec/p105/p105-keys --desktop-home
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=5
+StandardOutput=journal
+StandardError=journal

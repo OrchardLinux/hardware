@@ -1,0 +1,44 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# Hardware-only part of Cascadia initramfs/usr/bin/wifi, chip_cycle/need_chip.
+# NetworkManager owns association, DHCP and DNS in the installed root.
+set -u
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin
+EHCI=36400000.usb
+EHCI_DRV=/sys/bus/platform/drivers/ehci-platform
+
+chip_present() {
+    # Accept the interface after a udev rename as well as its kernel wlan0 name.
+    for net in /sys/class/net/*; do
+        # brcmfmac's netdev parent is the USB device, whose driver is "usb".
+        # cfg80211 marks the actual wireless interface with a phy80211 link.
+        if [ -e "$net/phy80211" ] || [ -d "$net/wireless" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+chip_cycle() {
+    [ ! -e "$EHCI_DRV/$EHCI" ] || printf '%s\n' "$EHCI" > "$EHCI_DRV/unbind"
+    sleep 1
+    printf '%s\n' "$EHCI" > "$EHCI_DRV/bind"
+}
+
+tries=0
+i=0
+while ! chip_present; do
+    if [ "$i" -ge 30 ]; then
+        if [ "$tries" -ge 2 ]; then
+            echo 'P105: BCM4334 interface absent after two power cycles' >&2
+            exit 1
+        fi
+        echo 'P105: BCM4334 absent; cycling its EHCI host'
+        chip_cycle || exit 1
+        tries=$((tries + 1))
+        i=0
+    fi
+    sleep 0.5
+    i=$((i + 1))
+done
+echo 'P105: BCM4334 wireless interface present'

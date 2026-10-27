@@ -1,0 +1,5 @@
+cascadia_url=https://github.com/rzxvx/Project-Cascadia.git
+cascadia_commit=c20b85ebb951c704d7e3a664c378dde8276e3928
+linux_url=https://github.com/torvalds/linux.git
+linux_commit=adc218676eef25575469234709c2d87185ca223a
+linux_tag=v6.12

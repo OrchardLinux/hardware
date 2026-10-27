@@ -1,0 +1,17 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# switch_root enters this as PID 1. systemd owns the installed-system lifecycle.
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+export HOME=/root USER=root LOGNAME=root TERM=linux
+if [ "$$" -ne 1 ]; then
+    echo "p105: systemd-init must run as PID 1" >&2
+    exit 1
+fi
+if [ ! -x /usr/lib/systemd/systemd ] || [ ! -x /run/p105-rescue/busybox ]; then
+    echo "P105: prepared systemd root is incomplete" > /dev/kmsg
+    while :; do
+        /usr/libexec/p105/busybox.static sh -i </dev/ttyGS0 >/dev/ttyGS0 2>&1
+        /usr/libexec/p105/busybox.static sleep 1
+    done
+fi
+exec /usr/lib/systemd/systemd "$@"

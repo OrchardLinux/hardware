@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-2.0-only
+[Unit]
+Description=Cascadia P105 calibrated touchscreen
+Requires=p105-platform.service
+After=p105-platform.service systemd-udev-trigger.service
+Before=p105-hardware.target
+
+[Service]
+Type=exec
+ExecStart=/usr/libexec/p105/z2-boot -c /usr/lib/firmware/mtcal.bin /usr/lib/firmware/P105.mtprops
+Restart=no
+TimeoutStopSec=5
+StandardOutput=journal
+StandardError=journal
