@@ -45,6 +45,7 @@ def files(modules_dir: Path, policy_dir: Path):
                            ('archive.py', 'archive.py'), ('handoff.py', 'handoff.py'),
                            ('staging.py', 'staging.py'), ('ssh_access.py', 'ssh_access.py'),
                            ('storage.py', 'storage.py'), ('identity.py', 'identity.py'),
+                           ('root_cache.py', 'root_cache.py'),
                            ('launch.py', 'launch.py')):
         result[prefix + target] = ((PROJECT / 'runtime/j71b' / source).read_bytes(), 0o755)
     result[prefix + 'adt.py'] = ((PROJECT / 'apple/adt.py').read_bytes(), 0o644)

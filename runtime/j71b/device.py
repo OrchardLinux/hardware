@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 """Versioned device-side installation API. Hardware/storage details stay here."""
 import base64
+from contextlib import ExitStack
 import fcntl
 import hashlib
 import io
@@ -21,6 +22,7 @@ import staging
 import ssh_access
 import storage
 import identity
+import root_cache
 from image_policy import (verify_privileges, verify_session_access, ready,
                           validate_root, validate_handoff, diagnostics as image_diagnostics,
                           stop_diagnostics, DIAGNOSTICS_EXECUTABLE)
@@ -130,7 +132,8 @@ def status(_):
             'diagnostics': not ssh_access.revoked(config()['release']),
             'installation_attempted': (RUN / 'prepare.started').exists(),
             'formatting': json.loads((RUN / 'format.json').read_text()) if (RUN / 'format.json').exists() else None,
-            'capabilities': ['abort']}
+            'capabilities': ['abort'] + (['root-image-cache-v1']
+                                        if config().get('mode', 'installer') == 'installer' else [])}
 
 
 REBOOT_MESSAGE = 'A fresh recovery boot is required.\nPut the iPad in DFU mode, then run: orchard install'
@@ -462,6 +465,8 @@ def directory_usage(path):
 
 
 def destination(request):
+    if type(request.get('cache_root', False)) is not bool:
+        raise ValueError('cache_root must be a boolean')
     partition = selected(request)
     name = root_name(request['directory'])
     mount_target(partition)
@@ -480,12 +485,60 @@ def destination(request):
         space = os.statvfs(ROOT)
         image = config()['root']
         needed_inodes = image.get('members', 65536) + 1024
+        needed_bytes = capacity_needed(image)
+        cache_reclaimable = cache_inodes = 0
+        if request.get('cache_root', False):
+            emit('phase', phase='verifying-root-cache')
+            with root_cache.Cache(ROOT) as cache, cache.verified(image) as cached:
+                cache_reclaimable, cache_inodes = cache.pending_usage()
+                if cached is None:
+                    needed_bytes += root_cache.allocation(image, space.f_frsize)
+                    needed_inodes += 2
         return {'directory': name, 'exists': exists, 'identity': identity,
                 'free_bytes': space.f_bavail * space.f_frsize,
-                'reclaimable_bytes': reclaimable, 'needed_bytes': capacity_needed(image),
-                'inodes_sufficient': space.f_favail + reclaimed_inodes >= needed_inodes}
+                'reclaimable_bytes': reclaimable, 'needed_bytes': needed_bytes,
+                'cache_reclaimable_bytes': cache_reclaimable,
+                'inodes_sufficient': space.f_favail + reclaimed_inodes + cache_inodes >= needed_inodes}
     finally:
         unmount_target(partition)
+
+
+def cache_image(request):
+    image = config()['root']
+    root_cache.key(image)
+    if (request.get('sha256') != image['sha256'] or
+            type(request.get('bytes')) is not int or request['bytes'] != image['bytes']):
+        raise ValueError('Root stream differs from this recovery release')
+    return image
+
+
+def root_cache_status(request):
+    if state().get('phase') != 'prepare' or state().get('status') != 'complete':
+        raise ValueError('Hardware preparation is not complete')
+    image = cache_image(request)
+    partition = selected(request)
+    root_name(request['directory'])
+    mount_target(partition)
+    try:
+        emit('phase', phase='verifying-root-cache')
+        with root_cache.Cache(ROOT) as cache, cache.verified(image) as source:
+            return {'cached': source is not None, 'sha256': image['sha256'], 'bytes': image['bytes']}
+    finally:
+        unmount_target(partition)
+
+
+def extract_root(source, temporary, release, phase):
+    image = release['root']
+    emit('phase', phase=phase)
+    result = extract(source, temporary, size=image['bytes'], sha256=image['sha256'],
+                     expanded_limit=image['expanded_bytes'], compression=image['compression'])
+    emit('phase', phase='finalize')
+    if (temporary / 'lib').readlink().as_posix() != 'usr/lib':
+        raise ValueError('Root library layout differs')
+    validate_root(temporary, release)
+    verify_privileges(temporary)
+    verify_session_access(temporary)
+    return result
 
 
 def install(request):
@@ -495,17 +548,34 @@ def install(request):
     name = root_name(request['directory'])
     release = config()
     image = release['root']
-    if request['sha256'] != image['sha256'] or request['bytes'] != image['bytes']:
-        raise ValueError('Root stream differs from this recovery release')
-    existing = destination(request)
+    cache_mode = request.get('root_cache')
+    if 'root_cache' in request and (type(cache_mode) is not str or cache_mode not in ('reuse', 'store')):
+        raise ValueError('root_cache must be reuse or store')
+    cache_image(request)
+    if type(request.get('cache_root', False)) is not bool:
+        raise ValueError('cache_root must be a boolean')
+    # The install mode, not the UI estimate, determines additional space. Reuse
+    # is verified again on the final writable mount, before any root deletion.
+    existing = destination({**request, 'cache_root': False})
     if existing['identity'] != request.get('destination_identity'):
         raise ValueError('Destination changed since confirmation')
     if existing['exists'] and request.get('replace') is not True:
         raise ValueError('Replacement was not explicitly confirmed')
     mount_target(partition)
     try:
-        if (existing['free_bytes'] + existing['reclaimable_bytes'] < capacity_needed(image)
-                or not existing['inodes_sufficient']):
+        space = os.statvfs(ROOT)
+        needed_bytes = capacity_needed(image)
+        needed_inodes = image.get('members', 65536) + 1024
+        pending_bytes = pending_inodes = 0
+        if cache_mode:
+            with root_cache.Cache(ROOT) as cache:
+                pending_bytes, pending_inodes = cache.pending_usage()
+            if cache_mode == 'store':
+                needed_bytes += root_cache.allocation(image, space.f_frsize)
+                needed_inodes += 2
+        _, reclaimed_inodes = directory_usage(ROOT / name)
+        if (space.f_bavail * space.f_frsize + existing['reclaimable_bytes'] + pending_bytes < needed_bytes
+                or space.f_favail + reclaimed_inodes + pending_inodes < needed_inodes):
             raise ValueError('Insufficient space or free inodes; nothing was deleted')
     finally:
         unmount_target(partition)
@@ -514,40 +584,60 @@ def install(request):
     # Persist the mount identity in RAM before enabling any filesystem writes.
     atomic(RUN / 'installation.json', {'target': partition, 'directory': name,
                                        'staging': temporary.name, 'status': 'incomplete',
-                                       'replacement_started': existing['exists']})
+                                       'replacement_started': False})
     mount_target(partition, writable=True)
-    target = ROOT / name
-    if target.is_symlink():
-        raise ValueError('Destination became a symlink during installation')
-    if existing['exists']:
-        info = target.stat()
-        if [info.st_dev, info.st_ino, info.st_mtime_ns, info.st_ctime_ns] != existing['identity']:
-            raise ValueError('Destination changed before deletion')
-        directory_usage(target)  # Reject nested mounts immediately before deletion.
-        emit('phase', phase='deleting-destination')
-        shutil.rmtree(target)
-        command('sync')
-    elif target.exists():
-        raise ValueError('Destination appeared before installation')
-    space = os.statvfs(ROOT)
-    if (space.f_bavail * space.f_frsize < capacity_needed(image)
-            or space.f_favail < image.get('members', 65536) + 1024):
-        raise ValueError('Insufficient space or free inodes after deletion; replacement cannot be restored')
-    temporary.mkdir(mode=0o700)
-    atomic(temporary / staging.MARKER, {'schema': 1, 'profile': 'j71b', 'status': 'incomplete',
-           'partition': partition['id'], 'filesystem_uuid': partition['filesystem_uuid'],
-           'directory': name, 'release': release['release'], 'root_sha256': image['sha256']})
-    # Archive members cannot overwrite either ownership or operation state.
-    started = time.monotonic()
-    emit('phase', phase='stream-extraction')
-    result = extract(sys.stdin.buffer, temporary, size=image['bytes'], sha256=image['sha256'],
-                     expanded_limit=image['expanded_bytes'], compression=image['compression'])
-    emit('phase', phase='finalize')
-    if (temporary / 'lib').readlink().as_posix() != 'usr/lib':
-        raise ValueError('Root library layout differs')
-    validate_root(temporary, release)
-    verify_privileges(temporary)
-    verify_session_access(temporary)
+    with ExitStack() as resources:
+        source = sys.stdin.buffer if cache_mode != 'reuse' else None
+        if cache_mode:
+            cache = resources.enter_context(root_cache.Cache(ROOT, create=cache_mode == 'store'))
+            if cache_mode == 'reuse':
+                emit('phase', phase='verifying-root-cache')
+                source = resources.enter_context(cache.verified(image))
+                if source is None:
+                    raise ValueError('Root cache changed or failed verification; nothing was deleted')
+                emit('phase', phase='cache-hit')
+                cache.retain(root_cache.key(image))
+            cache.cleanup_pending()
+        target = ROOT / name
+        if target.is_symlink():
+            raise ValueError('Destination became a symlink during installation')
+        reclaimable = reclaimed_inodes = 0
+        if existing['exists']:
+            info = target.stat()
+            if [info.st_dev, info.st_ino, info.st_mtime_ns, info.st_ctime_ns] != existing['identity']:
+                raise ValueError('Destination changed before deletion')
+            reclaimable, reclaimed_inodes = directory_usage(target)
+        elif target.exists():
+            raise ValueError('Destination appeared before installation')
+        # Journal replay, cache cleanup and a possible cache miss can change
+        # space. Recheck actual allocation/inodes immediately before deletion.
+        space = os.statvfs(ROOT)
+        if (space.f_bavail * space.f_frsize + reclaimable < needed_bytes or
+                space.f_favail + reclaimed_inodes < needed_inodes):
+            raise ValueError('Insufficient space or free inodes; nothing was deleted')
+        if existing['exists']:
+            operation = json.loads((RUN / 'installation.json').read_text())
+            atomic(RUN / 'installation.json', {**operation, 'replacement_started': True})
+            emit('phase', phase='deleting-destination')
+            shutil.rmtree(target)
+            command('sync')
+        space = os.statvfs(ROOT)
+        if (space.f_bavail * space.f_frsize < needed_bytes or space.f_favail < needed_inodes):
+            raise ValueError('Insufficient space or free inodes after deletion; replacement cannot be restored')
+        temporary.mkdir(mode=0o700)
+        atomic(temporary / staging.MARKER, {'schema': 1, 'profile': 'j71b', 'status': 'incomplete',
+               'partition': partition['id'], 'filesystem_uuid': partition['filesystem_uuid'],
+               'directory': name, 'release': release['release'], 'root_sha256': image['sha256']})
+        # Archive members cannot overwrite either ownership or operation state.
+        started = time.monotonic()
+        if cache_mode == 'store':
+            emit('phase', phase='cache-store')
+            with cache.store(source, image) as incoming:
+                result = extract_root(incoming, temporary, release, 'stream-extraction')
+                incoming.commit()
+        else:
+            result = extract_root(source, temporary, release,
+                                  'cached-extraction' if cache_mode == 'reuse' else 'stream-extraction')
     mixin = json.loads((RUN / 'mixin.json').read_text())
     for firmware_name, expected in mixin['files'].items():
         # The mixin contains ONLY lib/firmware/...; never copy runtime or modules.
@@ -599,7 +689,9 @@ def install(request):
     unmount_target(partition)
     atomic(RUN / 'installation.json', {'target': partition, 'directory': name,
                                        'status': 'complete', 'receipt': receipt})
-    return finish('install', receipt=receipt, stream_extraction_seconds=time.monotonic() - started, **result)
+    cache_result = {'root_cache': 'reused' if cache_mode == 'reuse' else 'stored'} if cache_mode else {}
+    return finish('install', receipt=receipt, stream_extraction_seconds=time.monotonic() - started,
+                  **cache_result, **result)
 
 
 def handoff(_):
@@ -659,7 +751,7 @@ OPERATIONS = {'installations': installations, 'launch': launch_installed,
               'status': status, 'prepare': prepare, 'targets': targets,
               'destination': destination, 'install': install, 'handoff': handoff,
               'diagnostics': diagnostics, 'abort': abort, 'bootstrap': bootstrap,
-              'revoke-ssh': revoke_ssh, 'format-target': format_target}
+              'revoke-ssh': revoke_ssh, 'format-target': format_target, 'root-cache': root_cache_status}
 
 
 def main():

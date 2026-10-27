@@ -36,6 +36,7 @@ The m1n1 backend is unbranded by default. A distro can pass `--extra-patch FILE`
 - `image/prepare_runtime.py`: Python/ELF dependency staging and recovery root-stream receipt.
 - `image/recovery.py`: recovery assembly, newc packing and m1n1 framing.
 - `runtime/j71b`: archive containment, staging cleanup, storage fencing and PID-1 handoff.
+- [Root-image cache](docs/root-image-cache.md): optional public compressed-root reuse on existing ext4 storage.
 - `devices/j71b/touch/runtime`: device activation scripts.
 
 Image builders pass a `--policy-dir` containing `image_policy.py` and supporting modules. The policy is staged into the image, not imported on the host. It supplies `ready`, `validate_root`, `validate_handoff`, `verify_privileges`, `verify_session_access`, `diagnostics`, and `INIT`; diagnostic retirement also uses `stop_diagnostics` and `DIAGNOSTICS_EXECUTABLE`. Desktop and init policy belong to the image, not the shared hardware runtime.
