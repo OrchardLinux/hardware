@@ -1,0 +1,1198 @@
+From 0dd7ae0ce28ac531913ec71284663d0eb9e19537 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Tue, 27 Oct 2026 18:26:06 +0000
+Subject: [PATCH] power: supply: apple: charge J71t from computers and USB-C
+ chargers at 2.4 A
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Charger source detection for the J71t Lightning port, as validated on
+an iPad 5 Wi-Fi (S8003) on 2026-10-27:
+
+- The Tristar power role reads the USB-C CC advertisement through
+  Apple's USB-C to Lightning cable (3 A sources are capped at the
+  2.4 A board maximum), keeps BC1.2 results across the cable's ID
+  exchange, monitors idle Lightning lanes, and prefers an enumerated
+  USB host over an early BC1.2 reading, so computers get the board
+  maximum too.
+- The D2365 charger restores the policy input limit after the PMIC's
+  attach default (0x02) instead of treating it as a weak source.
+- bq27xxx reports Discharging when the J71t gauge measures negative
+  current, also at 100 %.
+- The gadget core tells current-budget listeners why it notified
+  them (no hardware operation).
+- The diagnostics added to the lightning_state and charge7_state
+  files are documented in sysfs-apple-charge{8,9,10}.
+
+Computers (USB-A, and a Mac USB-C port through the USB-C to Lightning
+cable), a USB-C wall charger and a Mac USB-C power adapter charge at
+2.4 A, and the battery no longer drains on wall chargers. Charging is
+5 V only; the iPad 5 has no USB Power Delivery.
+
+From the validated charging update of the iPad 5 port
+(https://github.com/brkosebay/omarchy-ipad5), filtered for OrchardLinux.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../ABI/testing/sysfs-apple-charge10          |  19 +
+ Documentation/ABI/testing/sysfs-apple-charge8 |  23 +
+ Documentation/ABI/testing/sysfs-apple-charge9 |  27 +
+ drivers/power/supply/apple_j71t_charger.c     |  45 +-
+ drivers/power/supply/apple_tristar_power.c    | 485 ++++++++++++++----
+ drivers/power/supply/bq27xxx_battery.c        |  43 ++
+ drivers/usb/gadget/udc/core.c                 |  18 +-
+ include/linux/usb/gadget.h                    |  11 +
+ 8 files changed, 566 insertions(+), 105 deletions(-)
+ create mode 100644 Documentation/ABI/testing/sysfs-apple-charge10
+ create mode 100644 Documentation/ABI/testing/sysfs-apple-charge8
+ create mode 100644 Documentation/ABI/testing/sysfs-apple-charge9
+
+diff --git a/Documentation/ABI/testing/sysfs-apple-charge10 b/Documentation/ABI/testing/sysfs-apple-charge10
+new file mode 100644
+index 0000000000000000000000000000000000000000..8f2b0b5f3bad871b105110b89ba5c7d2163b0a05
+--- /dev/null
++++ b/Documentation/ABI/testing/sysfs-apple-charge10
+@@ -0,0 +1,19 @@
++What:		/sys/bus/i2c/devices/*-001a/lightning_state
++Date:		October 2026
++Contact:	Berkay Kösebay <brkosebay@users.noreply.github.com>
++Description:
++		source_epoch adds computer_seen: a positive USB data session
++		(connected, configured, or host-granted gadget evidence) observed
++		in this source epoch. It persists across USB suspend/reset and is
++		cleared by the same VBUS/ID/phase boundaries as other source policy.
++		A real computer supersedes prior divider/BC1.2/CC source results:
++		usb_type becomes SDP, with the charger's generic board ceiling.
++		bc_ua/bc_type remain diagnostic evidence and cannot cap that host.
++
++		bc_primary_mv and bc_secondary_mv report the most recent BC pin
++		measurements, distinct from passive dp_mv/dm_mv. Negative values
++		are errno/unavailable. They are reset on a new source epoch and
++		retained during a CC-only refresh. For ordinary USB, secondary D+
++		below 326 mV means CDP, at/above 326 mV means DCP. These are pin
++		voltages, not VBUS. A never-enumerating source keeps its proven
++		BC1.2/CC allowance, bounded by the existing charger policy.
+diff --git a/Documentation/ABI/testing/sysfs-apple-charge8 b/Documentation/ABI/testing/sysfs-apple-charge8
+new file mode 100644
+index 0000000000000000000000000000000000000000..4577e4472878077678099953d64d12ac9b6382d8
+--- /dev/null
++++ b/Documentation/ABI/testing/sysfs-apple-charge8
+@@ -0,0 +1,23 @@
++What:		/sys/bus/i2c/devices/*-001a/lightning_state
++Date:		October 2026
++Contact:	Berkay Kösebay <brkosebay@users.noreply.github.com>
++Description:
++		The charger_detect line adds cached diagnostics to the existing
++		Lightning snapshot. Reading it never starts a pin conversion.
++		stage/pin identify the last detection operation; error is its errno,
++		monitor_error is the role-monitor callback result (including a
++		refused callback), attempts/failures count this physical source,
++		retry_ms is the failure backoff (1000..60000 ms), poisoned means
++		ADC completion was uncertain and further triggers are prohibited
++		until reboot. Detach does not clear that poison; poison_stage and
++		poison_attach retain the operation and source epoch that latched it.
++
++		route is the last pre-monitor DX_CONTROL byte, adc_status the last
++		0x156 read. Negative values indicate errno or unavailable (-ENODATA).
++		dp_mv/dm_mv are passive divider samples, cc_mv the last opposite-pair
++		D+ sample for verified DigitalID 10 09 08 00 00 00. These are pin
++		voltages, never VBUS. sampled means classification completed.
++		Type C budgets come from stable CC advertisement (1500/3000 mA),
++		3 A requires BC1.2 charging-port evidence; otherwise it is capped
++		at 1500 mA. All budgets are bounded by the charger's board ceiling and supported current ladder.
++		Classification does not negotiate USB Power Delivery or change VBUS.
+diff --git a/Documentation/ABI/testing/sysfs-apple-charge9 b/Documentation/ABI/testing/sysfs-apple-charge9
+new file mode 100644
+index 0000000000000000000000000000000000000000..d004764f00a493eee99f7be82e74c5ce52c80b5e
+--- /dev/null
++++ b/Documentation/ABI/testing/sysfs-apple-charge9
+@@ -0,0 +1,27 @@
++What:		/sys/class/power_supply/charger/charge7_state
++Date:		October 2026
++Contact:	Berkay Kösebay <brkosebay@users.noreply.github.com>
++Description:
++		The attach_resets field counts successfully repaired D2365 0xa03
++		attach-default resets (0x02) in the first fifteen seconds of ownership
++		or a new source epoch. These do not create adaptive backoffs. A
++		policy step always uses its calibrated register code, including the
++		floor after other unexplained PMIC input reductions. Transport and
++		battery safety failures can defer a repair; live_ua remains readback,
++		not an assertion that nominal and actual currents are identical.
++
++What:		/sys/bus/i2c/devices/*-001a/lightning_state
++Date:		October 2026
++Contact:	Berkay Kösebay <brkosebay@users.noreply.github.com>
++Description:
++		source_epoch records id, reason (boot, vbus-detach, digital-id or
++		accessory-phase), retained bc_ua/bc_type, cc_first_mv, lifetime
++		usb_events/usb_idle_events, data-session usb_generation and last
++		usb_event_source. Origin codes: 1 source forget, 2 base budget,
++		3 grant revoke, 4 suspend, 5 SETUP, 6 grant, 7 gadget state.
++		Idle notifications do not invalidate conversions; actual USB session
++		activity still does. A first ID refines the current epoch, preserving
++		verified BC evidence and scheduling one settled reclassification.
++		Changed IDs and phase drops to device/empty revoke the source even
++		when polling missed the VBUS-low interval. No poll-based guarantee
++		exists for an otherwise unobserved same-ID swap.
+diff --git a/drivers/power/supply/apple_j71t_charger.c b/drivers/power/supply/apple_j71t_charger.c
+index a7ea39fdedaa0a313f2d77d138266502ff22720b..18bdc6547d8d97da217174ec6371cfca4f16a532 100644
+--- a/drivers/power/supply/apple_j71t_charger.c
++++ b/drivers/power/supply/apple_j71t_charger.c
+@@ -47,6 +47,8 @@
+ /* One budget reassert per window before a register change counts as a fault. */
+ #define J71T_REASSERT_WINDOW_MS 10000
+ #define J71T_BACKOFF_HOLD_MS 60000
++#define J71T_ATTACH_RESET_MS 15000
++#define J71T_ATTACH_INPUT_DEFAULT 0x02
+ 
+ static const int j71t_budgets_ua[] = { 500000, 1000000, 2100000, 2400000 };
+ 
+@@ -69,6 +71,8 @@ struct j71t_charger {
+ 	int adaptive_ua;
+ 	unsigned int attach_id;
+ 	unsigned int backoffs;
++	unsigned int attach_resets;
++	unsigned long attach_until;
+ 	unsigned long adaptive_after;
+ 	const char *backoff_cause;
+ 	bool thermal_limited;
+@@ -228,6 +232,7 @@ static int j71t_source_eligible(struct j71t_charger *charger)
+ 	return value.intval == POWER_SUPPLY_USB_TYPE_SDP ||
+ 	       value.intval == POWER_SUPPLY_USB_TYPE_CDP ||
+ 	       value.intval == POWER_SUPPLY_USB_TYPE_DCP ||
++	       value.intval == POWER_SUPPLY_USB_TYPE_C ||
+ 	       value.intval == POWER_SUPPLY_USB_TYPE_APPLE_BRICK_ID ||
+ 	       value.intval == POWER_SUPPLY_USB_TYPE_ACA;
+ }
+@@ -303,6 +308,8 @@ static void j71t_new_attach(struct j71t_charger *charger, unsigned int id)
+ 	charger->ceiling_ua = 0;
+ 	charger->source_type = POWER_SUPPLY_USB_TYPE_UNKNOWN;
+ 	charger->attach_id = id;
++	charger->attach_resets = 0;
++	charger->attach_until = jiffies + msecs_to_jiffies(J71T_ATTACH_RESET_MS);
+ }
+ 
+ static int j71t_battery_safe(struct j71t_charger *charger)
+@@ -430,6 +437,7 @@ static int j71t_enable(struct j71t_charger *charger)
+ 		if (ret)
+ 			return ret;
+ 		charger->saved = true;
++		charger->attach_until = jiffies + msecs_to_jiffies(J71T_ATTACH_RESET_MS);
+ 	}
+ 	ret = j71t_apply(charger, charger->charge_code, charger->input_code);
+ 	if (!ret) {
+@@ -523,7 +531,8 @@ static int j71t_reassert(struct j71t_charger *charger, u8 input, u8 control, u8
+ }
+ 
+ /*
+- * Do not fight a lower PMU input setting. Its electrical cause is unknown:
++ * Reduce the policy step after a non-default lower PMU setting; then assert
++ * the calibrated code for that step. Its electrical cause is unknown:
+  * D2365's iOS isInputLimited callback (6bc038c) is constant false. This is
+  * an observed setpoint reduction, not a fabricated VBUS/droop measurement.
+  */
+@@ -541,7 +550,7 @@ static int j71t_input_reduced(struct j71t_charger *charger, u8 input)
+ 	charger->backoff_cause = "pmic-input-reduced";
+ 	charger->backoffs++;
+ 	charger->budget_ua = charger->adaptive_ua;
+-	charger->input_code = min(charger->input_codes[index], input);
++	charger->input_code = charger->input_codes[index];
+ 	charger->charge_code = j71t_charge_code(charger->budget_ua);
+ 	ret = j71t_enable(charger);
+ 	dev_warn_ratelimited(charger->dev,
+@@ -577,6 +586,7 @@ static void j71t_policy_work(struct work_struct *work)
+ 							  struct j71t_charger, work);
+ 	int ret = 0, target, index, online, previous;
+ 	unsigned int id;
++	bool attach_reset = false;
+ 
+ 	mutex_lock(&charger->lock);
+ 	if (charger->stopping)
+@@ -613,6 +623,13 @@ static void j71t_policy_work(struct work_struct *work)
+ 		u8 input = 0, control = 0, charge = 0;
+ 
+ 		ret = j71t_check_owned(charger, &input, &control, &charge);
++		if (j71t_is_fault(ret) && input == J71T_ATTACH_INPUT_DEFAULT &&
++		    time_before(jiffies, charger->attach_until) &&
++		    !(control & J71T_INPUT_SUSPEND) && charge == charger->charge_code) {
++			/* D2365 attach reset, observed 26 ms after applying the floor. */
++			attach_reset = true;
++			ret = 0;
++		}
+ 		if (j71t_is_fault(ret) && input < charger->input_code &&
+ 		    !(control & J71T_INPUT_SUSPEND) && charge == charger->charge_code) {
+ 			ret = j71t_input_reduced(charger, input);
+@@ -669,17 +686,27 @@ static void j71t_policy_work(struct work_struct *work)
+ 	if (index >= 0 && target > previous) {
+ 		int next = previous ? j71t_choose_budget(previous) + 1 : 0;
+ 
+-		if (previous && time_before(jiffies, charger->ramp_after))
+-			goto report;
++		if (previous && time_before(jiffies, charger->ramp_after)) {
++			if (!attach_reset)
++				goto report;
++			next = j71t_choose_budget(previous);
++		}
+ 		index = min(index, next);
+ 	}
+-	if (index >= 0 && (!charger->active || j71t_budgets_ua[index] != previous)) {
++	if (index >= 0 &&
++	    (!charger->active || j71t_budgets_ua[index] != previous || attach_reset)) {
+ 		charger->budget_ua = j71t_budgets_ua[index];
+ 		charger->input_code = charger->input_codes[index];
+ 		charger->charge_code = j71t_charge_code(charger->budget_ua);
+ 		ret = j71t_enable(charger);
+ 		if (ret)
+ 			goto restore;
++		if (attach_reset) {
++			charger->attach_resets++;
++			dev_info_ratelimited(charger->dev,
++					     "attach default 0x02: restored policy input 0x%02x\n",
++					     charger->input_code);
++		}
+ 		charger->ramp_after = jiffies + msecs_to_jiffies(1000);
+ 	}
+ 	goto report;
+@@ -837,7 +864,8 @@ static const struct power_supply_desc j71t_desc = {
+ 	.type = POWER_SUPPLY_TYPE_USB,
+ 	.usb_types = BIT(POWER_SUPPLY_USB_TYPE_UNKNOWN) | BIT(POWER_SUPPLY_USB_TYPE_SDP) |
+ 		     BIT(POWER_SUPPLY_USB_TYPE_CDP) | BIT(POWER_SUPPLY_USB_TYPE_DCP) |
+-		     BIT(POWER_SUPPLY_USB_TYPE_APPLE_BRICK_ID) | BIT(POWER_SUPPLY_USB_TYPE_ACA),
++		     BIT(POWER_SUPPLY_USB_TYPE_APPLE_BRICK_ID) | BIT(POWER_SUPPLY_USB_TYPE_ACA) |
++		     BIT(POWER_SUPPLY_USB_TYPE_C),
+ 	.properties = j71t_properties,
+ 	.num_properties = ARRAY_SIZE(j71t_properties),
+ 	.get_property = j71t_get_property,
+@@ -855,12 +883,13 @@ static ssize_t charge7_state_show(struct device *dev, struct device_attribute *a
+ 	mutex_lock(&charger->lock);
+ 	ret = j71t_read(charger, J71T_INPUT_LIMIT, &input);
+ 	len = sysfs_emit(buf,
+-			 "attach=%u source_type=%d ceiling_ua=%d step_ua=%d live_ua=%d override_ua=%d adaptive_ua=%d backoffs=%u last_backoff=%s vbus_mv=unavailable policy_error=%d active=%d\n",
++			 "attach=%u source_type=%d ceiling_ua=%d step_ua=%d live_ua=%d override_ua=%d adaptive_ua=%d backoffs=%u last_backoff=%s vbus_mv=unavailable policy_error=%d active=%d attach_resets=%u\n",
+ 			 charger->attach_id, charger->source_type, charger->ceiling_ua,
+ 			 charger->active ? charger->budget_ua : 0,
+ 			 ret ? ret : 75000 + input * 12500, charger->user_limit_ua,
+ 			 charger->adaptive_ua, charger->backoffs,
+-			 charger->backoff_cause ?: "none", charger->policy_error, charger->active);
++			 charger->backoff_cause ?: "none", charger->policy_error, charger->active,
++			 charger->attach_resets);
+ 	mutex_unlock(&charger->lock);
+ 	return len;
+ }
+diff --git a/drivers/power/supply/apple_tristar_power.c b/drivers/power/supply/apple_tristar_power.c
+index 2f58419da71a6e59b94d496b5d3138c5285e9261..c97848d8fa4a498713fcc2dc5bd8dc7e656a7e6b 100644
+--- a/drivers/power/supply/apple_tristar_power.c
++++ b/drivers/power/supply/apple_tristar_power.c
+@@ -90,6 +90,20 @@ struct apple_tristar {
+ 	struct notifier_block usb_notifier;
+ 	atomic_t reset_generation;
+ 	int seen_generation;
++	atomic_t usb_session;
++	atomic_t computer_seen;
++	atomic_t usb_events;
++	atomic_t usb_idle_events;
++	unsigned long usb_event_source;
++	int bc_ua;
++	int bc_type;
++	int cc_first_mv;
++	int bc_primary_mv;
++	int bc_secondary_mv;
++	u8 source_id[TRISTAR_AUTO_ID_LEN];
++	bool source_id_valid;
++	bool epoch_notify;
++	const char *epoch_reason;
+ 	struct delayed_work work;
+ 	/* Serializes register reads and protects the cached source state. */
+ 	struct mutex lock;
+@@ -109,11 +123,28 @@ struct apple_tristar {
+ 	bool computer;
+ 	bool detach_role;
+ 	unsigned long classify_after;
++	unsigned long classify_log_after;
++	const char *detect_stage;
++	const char *detect_pin;
++	int detect_error;
++	int monitor_error;
++	int sample_status;
++	int route_before;
++	int adc_status;
++	int dp_mv;
++	int dm_mv;
++	int cc_mv;
++	unsigned int detect_attempts;
++	unsigned int detect_failures;
++	unsigned int retry_ms;
++	bool detect_logged;
+ 	u8 saved_route;
+ 	bool restore_pending;
+ 	bool dcp_pending;
+ 	bool brick_sampled;
+ 	bool adc_poisoned;
++	const char *adc_fault_stage;
++	unsigned int adc_fault_attach;
+ 	bool stopping;
+ 	bool notifier_registered;
+ 	bool sleeping;
+@@ -187,21 +218,27 @@ static int apple_tristar_adc_mv(struct apple_tristar *ts)
+ 	if (ts->adc_poisoned)
+ 		return -EIO;
+ 	/* Observe the completion latch LOW before starting a new sample. */
++	ts->detect_stage = "adc-idle";
+ 	ret = read_poll_timeout(apple_tristar_pmic_read, status,
+ 				status < 0 || !(status & 1), 1000, 20000,
+ 				false, ts, D2365_ADC_DONE);
++	ts->adc_status = status;
+ 	if (ret || status < 0)
+ 		return ret ?: status;
++	ts->detect_stage = "adc-trigger";
+ 	ret = regmap_write(ts->pmic, D2365_ADC_START, 1);
+ 	if (ret)
+ 		goto poison;
++	ts->detect_stage = "adc-done";
+ 	ret = read_poll_timeout(apple_tristar_pmic_read, status,
+ 				status < 0 || (status & 1), 1000, 1000000,
+ 				false, ts, D2365_ADC_DONE);
++	ts->adc_status = status;
+ 	if (ret || status < 0) {
+ 		ret = ret ?: status;
+ 		goto poison;
+ 	}
++	ts->detect_stage = "adc-result";
+ 	ret = regmap_bulk_read(ts->pmic, D2365_ADC_RESULT, result, sizeof(result));
+ 	if (ret)
+ 		return ret;
+@@ -214,46 +251,93 @@ static int apple_tristar_adc_mv(struct apple_tristar *ts)
+ poison:
+ 	/* A late completion must never be mistaken for the next pin's sample. */
+ 	ts->adc_poisoned = true;
++	ts->adc_fault_stage = ts->detect_stage;
++	ts->adc_fault_attach = ts->attach_id;
+ 	return ret;
+ }
+ 
++/* Caller holds the role hardware lock and ts->lock. */
+ static bool apple_tristar_sample_valid(struct apple_tristar *ts)
+ {
+ 	struct usb_gadget_current_budget budget;
++	int ret = usb_gadget_get_current_budget(ts->usb_node, &budget);
+ 
+-	return !usb_gadget_get_current_budget(ts->usb_node, &budget) &&
+-	       !budget.connected && !budget.configured && !budget.host_grant &&
+-	       ts->seen_generation == atomic_read(&ts->reset_generation);
++	if (ret) {
++		ts->detect_stage = "usb-budget";
++		return false;
++	}
++	if (budget.connected || budget.configured || budget.host_grant ||
++	    atomic_read(&ts->computer_seen)) {
++		ts->detect_stage = "usb-active";
++		return false;
++	}
++	if (ts->seen_generation != atomic_read(&ts->reset_generation)) {
++		ts->detect_stage = "usb-event";
++		return false;
++	}
++	return true;
+ }
+ 
+-static int apple_tristar_pin_mv(struct apple_tristar *ts, bool dm, bool dcp)
++static int apple_tristar_sample_vbus(struct apple_tristar *ts)
+ {
+-	int ret, restore;
+-	u8 route;
++	int status;
+ 
+ 	if (!apple_tristar_sample_valid(ts))
+ 		return -EAGAIN;
++	ts->detect_stage = "vbus";
++	status = apple_tristar_read(ts->client, TRISTAR_VBUS);
++	if (status < 0)
++		return status;
++	if ((status & 3) != 3)
++		return -ENOLINK;
++	ts->detect_stage = "orientation";
++	if (!(status & TRISTAR_AUTO_PRESENT) ||
++	    ((status ^ ts->sample_status) & TRISTAR_AUTO_ORIENTATION))
++		return -EAGAIN;
++	return apple_tristar_sample_valid(ts) ? 0 : -EAGAIN;
++}
++
++/*
++ * Normal USB: monitor the oriented pair. Type-C CC: D+ on the OTHER pair
++ * (iOS 5e23a90 -> 5fe52dc -> 5ff5ed0), never a fixed cable-ID allowance.
++ * A zero mux is valid after replug: the direct iOS lane monitor also accepts
++ * it. Only touch an idle or USB-selected nibble; restore the exact byte.
++ */
++static int apple_tristar_pin_mv(struct apple_tristar *ts, bool dm, bool dcp, bool cc)
++{
++	int ret, restore, nibble;
++	bool high = !!(ts->sample_status & TRISTAR_AUTO_ORIENTATION) ^ cc;
++	u8 route;
++
++	ts->detect_pin = cc ? "cc" : dcp ? dm ? "primary" : "secondary" : dm ? "dm" : "dp";
++	ret = apple_tristar_sample_vbus(ts);
++	if (ret)
++		return ret;
++	ts->detect_stage = "route-read";
+ 	ret = apple_tristar_read(ts->client, TRISTAR_DX_CONTROL);
++	ts->route_before = ret;
+ 	if (ret < 0)
+ 		return ret;
+ 	ts->saved_route = ret;
+-	if ((ret & 7) == 1)
+-		route = (ret & 0xf0) | (dm ? 0x0d : 0x0c);
+-	else if ((ret & 0x70) == 0x10)
+-		route = (ret & 0x0f) | (dm ? 0xd0 : 0xc0);
+-	else
++	nibble = high ? ret >> 4 : ret & 15;
++	ts->detect_stage = "route-select";
++	if (nibble != 0 && (nibble & 7) != 1)
+ 		return -EOPNOTSUPP;
++	route = high ? (ret & 0x0f) | (dm ? 0xd0 : 0xc0) :
++		       (ret & 0xf0) | (dm ? 0x0d : 0x0c);
++	if (!apple_tristar_sample_valid(ts))
++		return -EAGAIN;
+ 	ts->restore_pending = true;
++	ts->detect_stage = "route-write";
+ 	ret = apple_tristar_write_checked(ts, route);
+ 	if (!ret) {
+ 		usleep_range(5000, 6000);
+ 		if (dcp) {
+ 			/* iOS 5ff5a08: monitor 4 (D-), 5 (D+), 40 ms pulse. */
+-			u8 pulse = dm ? 9 : 10;
++			u8 pulse = (dm ? 9 : 10) + (high ? 2 : 0);
+ 
+-			if ((ts->saved_route & 7) != 1)
+-				pulse += 2;
+ 			ts->dcp_pending = true;
++			ts->detect_stage = "dcp-write";
+ 			ret = apple_tristar_write_reg_checked(ts, TRISTAR_DCP_CONTROL, pulse);
+ 			if (!ret)
+ 				msleep(40);
+@@ -262,11 +346,33 @@ static int apple_tristar_pin_mv(struct apple_tristar *ts, bool dm, bool dcp)
+ 			ret = apple_tristar_sample_valid(ts) ? apple_tristar_adc_mv(ts) : -EAGAIN;
+ 	}
+ 	restore = apple_tristar_restore_route(ts);
+-	if (!restore && !apple_tristar_sample_valid(ts))
+-		return -EAGAIN;
++	if (restore) {
++		ts->detect_stage = "restore";
++		return restore;
++	}
++	/* Preserve the original error/stage unless the conversion succeeded. */
++	if (ret < 0)
++		return ret;
++	restore = apple_tristar_sample_vbus(ts);
+ 	return restore ?: ret;
+ }
+ 
++/* Verified 10 09 08 cable: USB=2, CC=1 (5e34408/5e4d9ac). */
++static bool apple_tristar_typec_cable(struct apple_tristar *ts)
++{
++	static const u8 id[] = { 0x10, 0x09, 0x08, 0, 0, 0 };
++
++	return ts->autop.id_valid && !memcmp(ts->autop.id, id, sizeof(id));
++}
++
++/* IOAccessoryPowerSourceItemUSB_TypeC_Current, 5de4024, inclusive edges. */
++static int apple_tristar_cc_current(int mv)
++{
++	if (mv < 0 || mv > 4000)
++		return -ERANGE;
++	return mv > 1229 ? 3000000 : mv > 659 ? 1500000 : 0;
++}
++
+ static int apple_tristar_brick_current(int dp_mv, int dm_mv)
+ {
+ 	static const int limits[] = { 500, 1000, 1000, 2100, 2400, 2400, 1000, 1000, 1000 };
+@@ -281,84 +387,182 @@ static int apple_tristar_brick_current(int dp_mv, int dm_mv)
+ 	return limits[3 * dp + dm] * 1000;
+ }
+ 
++static void apple_tristar_detect_failed(struct apple_tristar *ts, int ret)
++{
++	ts->detect_error = ret;
++	ts->detect_failures++;
++	ts->retry_ms = min(1000U << min(ts->detect_failures - 1, 6U), 60000U);
++	ts->classify_after = jiffies + msecs_to_jiffies(ts->retry_ms);
++	/* No repeated 1 Hz warnings, even if the global printk bucket refills. */
++	if (!ts->detect_logged || !time_before(jiffies, ts->classify_log_after)) {
++		dev_warn_ratelimited(&ts->client->dev,
++				     "charger detect: %s/%s error %d route %d adc %d poisoned %d attempt %u retry %u ms\n",
++				     ts->detect_pin ?: "none", ts->detect_stage ?: "none", ret,
++				     ts->route_before, ts->adc_status, ts->adc_poisoned,
++				     ts->detect_attempts, ts->adc_poisoned ? 0 : ts->retry_ms);
++		ts->classify_log_after = jiffies + msecs_to_jiffies(60000);
++		ts->detect_logged = true;
++	}
++}
++
+ static void apple_tristar_classify(struct apple_tristar *ts)
+ {
+-	struct usb_gadget_current_budget budget;
+-	int dp, dm, ret;
++	int dp, dm, ret, cc, attempt, cc_ua = 0, type = POWER_SUPPLY_USB_TYPE_UNKNOWN;
++	int bc_type = POWER_SUPPLY_USB_TYPE_UNKNOWN;
++	bool typec = apple_tristar_typec_cable(ts);
+ 
+ 	/* Caller holds the role hardware lock before ts->lock. */
+-	if (ts->computer || ts->brick_sampled || ts->adc_poisoned || !ts->online || ts->error ||
+-	    time_before(jiffies, ts->classify_after))
++	if (ts->computer || atomic_read(&ts->computer_seen) ||
++	    (ts->brick_sampled && !typec) || ts->adc_poisoned ||
++	    !ts->online || ts->error || time_before(jiffies, ts->classify_after))
+ 		return;
+ 	ts->seen_generation = atomic_read(&ts->reset_generation);
+-	ret = usb_gadget_get_current_budget(ts->usb_node, &budget);
+-	/* Never divert active USB traffic to the analog monitor. */
+-	if (ret || budget.connected || budget.configured || budget.host_grant ||
+-	    ts->seen_generation != atomic_read(&ts->reset_generation))
++	if (!apple_tristar_sample_valid(ts))
+ 		return;
+-	dp = apple_tristar_pin_mv(ts, false, false);
+-	if (dp < 0)
++	ts->detect_attempts++;
++	ts->sample_status = ts->status;
++	ts->dp_mv = -ENODATA;
++	ts->dm_mv = -ENODATA;
++	ts->cc_mv = -ENODATA;
++	if (typec) {
++		cc_ua = -1;
++		/* Ignore one unsettled first reading; require two equal advertisements. */
++		for (attempt = 0; attempt < 3; attempt++) {
++			cc = apple_tristar_pin_mv(ts, false, false, true);
++			ts->cc_mv = cc;
++			if (!attempt)
++				ts->cc_first_mv = cc;
++			if (cc < 0) {
++				ret = cc;
++				goto fail;
++			}
++			ts->detect_stage = "cc-range";
++			ret = apple_tristar_cc_current(cc);
++			if (ret < 0)
++				goto fail;
++			if (ret == cc_ua)
++				break;
++			cc_ua = ret;
++			if (attempt < 2)
++				msleep(20);
++		}
++		ts->detect_stage = "cc-debounce";
++		if (attempt == 3) {
++			ret = -EAGAIN;
++			goto fail;
++		}
++		if (ts->bc_ua) {
++			/* CC refresh cannot erase a proven BC item from this epoch. */
++			ret = ts->bc_ua;
++			type = ts->bc_type;
++			goto combine;
++		}
++	}
++	dp = apple_tristar_pin_mv(ts, false, false, false);
++	ts->dp_mv = dp;
++	if (dp < 0) {
++		ret = dp;
+ 		goto fail;
+-	ret = usb_gadget_get_current_budget(ts->usb_node, &budget);
+-	if (ret || budget.connected || budget.configured || budget.host_grant ||
+-	    ts->seen_generation != atomic_read(&ts->reset_generation))
+-		return;
+-	dm = apple_tristar_pin_mv(ts, true, false);
+-	if (dm < 0)
++	}
++	dm = apple_tristar_pin_mv(ts, true, false, false);
++	ts->dm_mv = dm;
++	if (dm < 0) {
++		ret = dm;
+ 		goto fail;
+-	ret = usb_gadget_get_current_budget(ts->usb_node, &budget);
+-	if (ret || budget.connected || budget.configured || budget.host_grant ||
+-	    ts->seen_generation != atomic_read(&ts->reset_generation))
+-		return;
+-	ret = apple_tristar_read(ts->client, TRISTAR_VBUS);
+-	if (ret < 0 || (ret & 3) != 3 ||
+-	    ts->seen_generation != atomic_read(&ts->reset_generation))
+-		return;
++	}
++	ts->detect_stage = "divider-range";
+ 	ret = apple_tristar_brick_current(dp, dm);
+ 	if (ret < 0)
+ 		goto fail;
+-	ts->analog_type = POWER_SUPPLY_USB_TYPE_APPLE_BRICK_ID;
+-	if (!ret) {
++	if (ret) {
++		type = POWER_SUPPLY_USB_TYPE_APPLE_BRICK_ID;
++	} else {
+ 		/* iOS 5de33e4/5de35dc, ordinary USB source (connect type 0). */
+-		dm = apple_tristar_pin_mv(ts, true, true);
+-		if (dm < 0)
++		dm = apple_tristar_pin_mv(ts, true, true, false);
++		ts->bc_primary_mv = dm;
++		if (dm < 0) {
++			ret = dm;
++			goto fail;
++		}
++		ts->detect_stage = "primary-range";
++		if (dm > 4000) {
++			ret = -ERANGE;
+ 			goto fail;
++		}
+ 		if (dm >= 326 && dm <= 899) {
+-			dp = apple_tristar_pin_mv(ts, false, true);
+-			if (dp < 0)
++			dp = apple_tristar_pin_mv(ts, false, true, false);
++			ts->bc_secondary_mv = dp;
++			if (dp < 0) {
++				ret = dp;
+ 				goto fail;
+-			ts->analog_type = dp < 326 ? POWER_SUPPLY_USB_TYPE_DCP :
+-						  POWER_SUPPLY_USB_TYPE_CDP;
++			}
++			ts->detect_stage = "secondary-range";
++			if (dp > 4000) {
++				ret = -ERANGE;
++				goto fail;
++			}
++			/* iOS internal 2=CDP, 1=DCP (type names at 6de2df0). */
++			type = dp < 326 ? POWER_SUPPLY_USB_TYPE_CDP : POWER_SUPPLY_USB_TYPE_DCP;
+ 			ret = 1500000;
+ 		}
+ 	}
+-	if (!apple_tristar_sample_valid(ts))
+-		return;
+-	dp = apple_tristar_read(ts->client, TRISTAR_VBUS);
+-	if (dp < 0 || (dp & 3) != 3 || !apple_tristar_sample_valid(ts))
+-		return;
++combine:
++	bc_type = type;
++	/* iOS 5e23a90: without a charging-port type, clamp 3 A CC to 1.5 A. */
++	if (cc_ua == 3000000 && type != POWER_SUPPLY_USB_TYPE_DCP &&
++	    type != POWER_SUPPLY_USB_TYPE_CDP)
++		cc_ua = 1500000;
++	if (cc_ua && cc_ua >= ret) {
++		ret = cc_ua;
++		type = POWER_SUPPLY_USB_TYPE_C;
++	}
++	cc = apple_tristar_sample_vbus(ts);
++	if (cc) {
++		ret = cc;
++		goto fail;
++	}
++	if (bc_type == POWER_SUPPLY_USB_TYPE_DCP || bc_type == POWER_SUPPLY_USB_TYPE_CDP) {
++		ts->bc_ua = 1500000;
++		ts->bc_type = bc_type;
++	}
++	/* Refresh Type-C advertisement, including reductions, while idle. */
++	ts->classify_after = jiffies + msecs_to_jiffies(5000);
++	if (!ts->brick_sampled || ts->brick_ua != ret || ts->analog_type != type)
++		dev_info_ratelimited(&ts->client->dev,
++				     "charger detected type %d budget %d mA dp %d dm %d cc %d mV\n",
++				     type, ret / 1000, ts->dp_mv, ts->dm_mv, ts->cc_mv);
+ 	ts->brick_ua = ret;
++	ts->analog_type = type;
+ 	ts->brick_sampled = true;
+-	dev_info_ratelimited(&ts->client->dev, "analog charger type %d, budget %d mA\n",
+-			     ts->analog_type, ret / 1000);
++	ts->detect_error = 0;
++	ts->detect_stage = "complete";
++	ts->detect_failures = 0;
++	ts->retry_ms = 0;
+ 	return;
+ fail:
+-	ts->classify_after = jiffies + msecs_to_jiffies(1000);
+-	dev_warn_ratelimited(&ts->client->dev,
+-			     "brick detection unavailable; no elevated analog allowance\n");
++	/* Revoke uncertain CC, retaining only separately verified BC evidence. */
++	if (typec) {
++		ts->brick_ua = ts->bc_ua;
++		ts->analog_type = ts->bc_type;
++		ts->brick_sampled = false;
++	}
++	apple_tristar_detect_failed(ts, ret);
+ }
+ 
+ /* Never call USB role APIs while holding ts->lock: role changes unbind UDC. */
+ static int apple_tristar_monitor(void *data)
+ {
+ 	struct apple_tristar *ts = data;
+-	int ret = 0;
++	int ret;
+ 
+ 	mutex_lock(&ts->lock);
+-	if (!ts->stopping && !ts->sleeping) {
+-		ret = apple_tristar_restore_route(ts);
+-		if (!ret)
+-			apple_tristar_classify(ts);
++	/* Repair even when quiescing; never restore outside the role lock. */
++	ret = apple_tristar_restore_route(ts);
++	if (ret) {
++		ts->detect_stage = "restore";
++		ts->detect_error = ret;
++	} else if (!ts->stopping && !ts->sleeping) {
++		apple_tristar_classify(ts);
+ 	}
+ 	if (ts->restore_pending || ts->dcp_pending)
+ 		ret = -EUCLEAN;
+@@ -406,6 +610,62 @@ static void apple_tristar_auto_cfg(struct tristar_auto_cfg *cfg)
+ 	};
+ }
+ 
++/* Caller holds ts->lock. Poll gaps can hide VBUS loss; ID/phase are evidence too. */
++static void apple_tristar_new_source(struct apple_tristar *ts, const char *reason)
++{
++	ts->attach_id++;
++	ts->epoch_reason = reason;
++	ts->epoch_notify = true;
++	ts->source_id_valid = false;
++	ts->computer = false;
++	atomic_set(&ts->computer_seen, 0);
++	ts->brick_sampled = false;
++	ts->brick_ua = 0;
++	ts->bc_ua = 0;
++	ts->bc_primary_mv = -ENODATA;
++	ts->bc_secondary_mv = -ENODATA;
++	ts->bc_type = POWER_SUPPLY_USB_TYPE_UNKNOWN;
++	ts->analog_type = POWER_SUPPLY_USB_TYPE_UNKNOWN;
++	ts->current_ua = APPLE_TRISTAR_FLOOR_UA;
++	ts->usb_type = POWER_SUPPLY_USB_TYPE_UNKNOWN;
++	ts->classify_after = jiffies + msecs_to_jiffies(300);
++	ts->detect_attempts = 0;
++	ts->detect_logged = false;
++	ts->detect_failures = 0;
++	ts->retry_ms = 0;
++	ts->detect_error = 0;
++	ts->detect_stage = reason;
++	usb_gadget_current_source_detached(ts->usb_node);
++}
++
++/* First ID refines this source; a changed ID proves a new source epoch. */
++static void apple_tristar_source_id(struct apple_tristar *ts, const u8 *id)
++{
++	bool changed = !ts->source_id_valid || memcmp(ts->source_id, id, sizeof(ts->source_id));
++
++	if (ts->source_id_valid && changed)
++		apple_tristar_new_source(ts, "digital-id");
++	memcpy(ts->source_id, id, sizeof(ts->source_id));
++	ts->source_id_valid = true;
++	if (changed) {
++		/* Preserve this epoch's BC evidence; once after ID settle, try CC too. */
++		ts->brick_sampled = false;
++		ts->classify_after = jiffies + msecs_to_jiffies(300);
++		ts->detect_failures = 0;
++		ts->retry_ms = 0;
++	}
++}
++
++static void apple_tristar_source_phase(struct apple_tristar *ts, enum tristar_auto_phase old)
++{
++	if (old != TRISTAR_AUTO_OFF && old != TRISTAR_AUTO_EMPTY &&
++	    old != ts->autop.phase &&
++	    (ts->autop.phase == TRISTAR_AUTO_DEVICE || ts->autop.phase == TRISTAR_AUTO_EMPTY)) {
++		apple_tristar_new_source(ts, "accessory-phase");
++		tristar_auto_forget(&ts->autop);
++	}
++}
++
+ static int apple_tristar_update(struct apple_tristar *ts)
+ {
+ 	struct usb_gadget_current_budget budget;
+@@ -437,18 +697,12 @@ static int apple_tristar_update(struct apple_tristar *ts)
+ 	/* A transport failure and USB reset/suspend are not source removal. */
+ 	if (!error && ts->source_present && !(value & 3)) {
+ 		ts->source_present = false;
+-		ts->attach_id++;
+-		ts->computer = false;
+-		ts->brick_sampled = false;
+-		ts->brick_ua = 0;
+-		ts->analog_type = POWER_SUPPLY_USB_TYPE_UNKNOWN;
+-		ts->classify_after = jiffies + msecs_to_jiffies(1000);
++		apple_tristar_new_source(ts, "vbus-detach");
+ 		ts->detach_role = true;
+ 		tristar_auto_forget(&ts->autop);
+ 		ts->autop.phase = TRISTAR_AUTO_EMPTY;
+ 		ts->autop.was_empty = true;
+ 		ts->autop.empty = 0;
+-		usb_gadget_current_source_detached(ts->usb_node);
+ 	}
+ 	if (!error && (value & 3) == 3)
+ 		ts->source_present = true;
+@@ -460,17 +714,19 @@ static int apple_tristar_update(struct apple_tristar *ts)
+ 	accessory = !error && tristar_auto_supply(&ts->autop, &cfg, value, &auto_online, &auto_ua);
+ 	/* IC getVBUSDetect(strict=1): both low bits, never orientation bits. */
+ 	online = accessory ? auto_online : !host && !error && (value & 3) == 3;
+-	if (ts->restore_pending) {
+-		int restore = apple_tristar_restore_route(ts);
+-
+-		if (restore)
+-			error = restore;
+-	}
++	/* Route repair belongs to the role-serialized monitor, never a getter. */
++	if (ts->restore_pending || ts->dcp_pending)
++		error = -EUCLEAN;
+ 	if (accessory && online && !error) {
+ 		/* An Accessory Charger Adapter: power in while the iPad is the host. */
+ 		current_ua = auto_ua;
+ 		type = POWER_SUPPLY_USB_TYPE_ACA;
+ 	} else if (online && !error) {
++		/* Positive USB session evidence outranks every earlier analog result. */
++		if (atomic_read(&ts->computer_seen)) {
++			ts->computer = true;
++			ts->brick_ua = 0;
++		}
+ 		if (usb_gadget_get_current_budget(ts->usb_node, &budget)) {
+ 			current_ua = apple_tristar_budget(NULL, 0, &type);
+ 			if (ts->computer) {
+@@ -481,9 +737,8 @@ static int apple_tristar_update(struct apple_tristar *ts)
+ 				current_ua = ts->brick_ua;
+ 			}
+ 		} else {
+-			if ((budget.connected || budget.configured || budget.host_grant) &&
+-			    (!ts->brick_ua ||
+-			     ts->analog_type == POWER_SUPPLY_USB_TYPE_APPLE_BRICK_ID)) {
++			if (budget.connected || budget.configured || budget.host_grant) {
++				atomic_set(&ts->computer_seen, 1);
+ 				ts->computer = true;
+ 				ts->brick_ua = 0;
+ 			}
+@@ -499,7 +754,8 @@ static int apple_tristar_update(struct apple_tristar *ts)
+ 			}
+ 		}
+ 	}
+-	changed = ts->error != error || ts->online != online;
++	changed = ts->error != error || ts->online != online || ts->epoch_notify;
++	ts->epoch_notify = false;
+ 	changed |= old_current != current_ua || old_type != type;
+ 	ts->error = error;
+ 	ts->online = online;
+@@ -548,13 +804,16 @@ static void apple_tristar_poll(struct work_struct *work)
+ {
+ 	struct apple_tristar *ts = container_of(to_delayed_work(work),
+ 						       struct apple_tristar, work);
++	int ret;
+ 
+ 	apple_tristar_update(ts);
+ 	apple_tristar_auto_run(ts);
+-	if (ts->role_sw)
+-		apple_s8000_usb_role_monitor(ts->role_sw, apple_tristar_monitor, ts);
+-	else
++	ret = ts->role_sw ?
++		apple_s8000_usb_role_monitor(ts->role_sw, apple_tristar_monitor, ts) :
+ 		apple_tristar_monitor(ts);
++	mutex_lock(&ts->lock);
++	ts->monitor_error = ret;
++	mutex_unlock(&ts->lock);
+ 	apple_tristar_update(ts);
+ 	mutex_lock(&ts->lock);
+ 	if (!ts->stopping && !ts->sleeping)
+@@ -570,8 +829,20 @@ static int apple_tristar_usb_event(struct notifier_block *nb, unsigned long even
+ 	if (budget->of_node != ts->usb_node || READ_ONCE(ts->stopping) ||
+ 	    READ_ONCE(ts->sleeping))
+ 		return NOTIFY_DONE;
+-	/* Cancel an in-flight analog sample; never revoke an attach here. */
+-	atomic_inc(&ts->reset_generation);
++	/* Idle budget/disconnect notifications are not USB data sessions. */
++	WRITE_ONCE(ts->usb_event_source, event);
++	atomic_inc(&ts->usb_events);
++	if (budget->connected || budget->configured || budget->host_grant) {
++		atomic_set(&ts->usb_session, 1);
++		/* Retain a short session even if it ends before the next worker. */
++		atomic_set(&ts->computer_seen, 1);
++		atomic_inc(&ts->reset_generation);
++	} else if (atomic_xchg(&ts->usb_session, 0)) {
++		/* A short real session ending between two samples still cancels. */
++		atomic_inc(&ts->reset_generation);
++	} else {
++		atomic_inc(&ts->usb_idle_events);
++	}
+ 	mod_delayed_work(system_power_efficient_wq, &ts->work, 0);
+ 	return NOTIFY_OK;
+ }
+@@ -589,13 +860,18 @@ static int apple_tristar_quiesce(struct apple_tristar *ts)
+ 	}
+ 	cancel_delayed_work_sync(&ts->work);
+ 	mutex_lock(&ts->lock);
++	ret = ts->restore_pending || ts->dcp_pending;
++	mutex_unlock(&ts->lock);
++	if (!ret)
++		return 0;
+ 	for (attempt = 0; attempt < 3; attempt++) {
+-		ret = apple_tristar_restore_route(ts);
++		ret = ts->role_sw ?
++			apple_s8000_usb_role_monitor(ts->role_sw, apple_tristar_monitor, ts) :
++			apple_tristar_monitor(ts);
+ 		if (!ret)
+ 			break;
+ 		msleep(20);
+ 	}
+-	mutex_unlock(&ts->lock);
+ 	if (ret)
+ 		dev_crit(&ts->client->dev, "Tristar route restore failed at quiesce: %d\n", ret);
+ 	return ret;
+@@ -949,6 +1225,8 @@ apple_tristar_auto_act(struct apple_tristar *ts, const struct tristar_auto_cfg *
+ 		old = ta->phase;
+ 		had = ta->id_valid;
+ 		same = had && !ret && !memcmp(ta->id, id, sizeof(id));
++		if (!ret)
++			apple_tristar_source_id(ts, id);
+ 		action = tristar_auto_probed(ta, cfg, ktime_to_ms(ktime_get_boottime()), ret, id);
+ 		if (!ret && !same)
+ 			apple_tristar_auto_note(ts, old, "digital ID %*ph%s", (int)sizeof(id), id,
+@@ -1032,6 +1310,7 @@ static void apple_tristar_auto_run(struct apple_tristar *ts)
+ 	in.status = ts->status;
+ 	old = ts->autop.phase;
+ 	action = tristar_auto_step(&ts->autop, &cfg, &in);
++	apple_tristar_source_phase(ts, old);
+ 	apple_tristar_auto_note(ts, old, NULL);
+ 	mutex_unlock(&ts->lock);
+ 	/* A probe can lead to the handshake and then the role switch. */
+@@ -1309,6 +1588,8 @@ static const char *apple_tristar_usb_type_name(int type)
+ 		return "BrickID";
+ 	case POWER_SUPPLY_USB_TYPE_ACA:
+ 		return "ACA";
++	case POWER_SUPPLY_USB_TYPE_C:
++		return "C";
+ 	default:
+ 		return "Unknown";
+ 	}
+@@ -1385,6 +1666,21 @@ static ssize_t lightning_state_show(struct device *dev, struct device_attribute
+ 	current_ua = ts->current_ua;
+ 	type = ts->usb_type;
+ 	error = ts->error;
++	len += sysfs_emit_at(buf, len,
++			     "charger_detect: stage=%s pin=%s error=%d monitor_error=%d attempts=%u failures=%u retry_ms=%u poisoned=%d route=%d adc_status=%d dp_mv=%d dm_mv=%d cc_mv=%d sampled=%d poison_stage=%s poison_attach=%u\n",
++			     ts->detect_stage ?: "none", ts->detect_pin ?: "none",
++			     ts->detect_error, ts->monitor_error, ts->detect_attempts,
++			     ts->detect_failures, ts->retry_ms, ts->adc_poisoned,
++			     ts->route_before, ts->adc_status, ts->dp_mv, ts->dm_mv,
++			     ts->cc_mv, ts->brick_sampled, ts->adc_fault_stage ?: "none",
++			     ts->adc_fault_attach);
++	len += sysfs_emit_at(buf, len,
++			     "source_epoch: id=%u reason=%s bc_ua=%d bc_type=%d cc_first_mv=%d usb_events=%d usb_idle_events=%d usb_generation=%d usb_event_source=%lu computer_seen=%d bc_primary_mv=%d bc_secondary_mv=%d\n",
++			     ts->attach_id, ts->epoch_reason ?: "boot", ts->bc_ua, ts->bc_type,
++			     ts->cc_first_mv, atomic_read(&ts->usb_events),
++			     atomic_read(&ts->usb_idle_events), atomic_read(&ts->reset_generation),
++			     READ_ONCE(ts->usb_event_source), atomic_read(&ts->computer_seen),
++			     ts->bc_primary_mv, ts->bc_secondary_mv);
+ 	mutex_unlock(&ts->lock);
+ 
+ 	len += sysfs_emit_at(buf, len, "auto_host: %d\nphase: %s\nrole: %s%s\n",
+@@ -1501,7 +1797,8 @@ static const struct power_supply_desc apple_tristar_desc = {
+ 	.type = POWER_SUPPLY_TYPE_USB,
+ 	.usb_types = BIT(POWER_SUPPLY_USB_TYPE_UNKNOWN) | BIT(POWER_SUPPLY_USB_TYPE_SDP) |
+ 		     BIT(POWER_SUPPLY_USB_TYPE_CDP) | BIT(POWER_SUPPLY_USB_TYPE_DCP) |
+-		     BIT(POWER_SUPPLY_USB_TYPE_APPLE_BRICK_ID) | BIT(POWER_SUPPLY_USB_TYPE_ACA),
++		     BIT(POWER_SUPPLY_USB_TYPE_APPLE_BRICK_ID) | BIT(POWER_SUPPLY_USB_TYPE_ACA) |
++		     BIT(POWER_SUPPLY_USB_TYPE_C),
+ 	.properties = apple_tristar_properties,
+ 	.num_properties = ARRAY_SIZE(apple_tristar_properties),
+ 	.get_property = apple_tristar_get_property,
+@@ -1554,6 +1851,14 @@ static int apple_tristar_probe(struct i2c_client *client)
+ 		return -ENOMEM;
+ 	ts->client = client;
+ 	ts->status = -ENODATA;
++	ts->route_before = -ENODATA;
++	ts->adc_status = -ENODATA;
++	ts->dp_mv = -ENODATA;
++	ts->dm_mv = -ENODATA;
++	ts->cc_mv = -ENODATA;
++	ts->bc_primary_mv = -ENODATA;
++	ts->bc_secondary_mv = -ENODATA;
++	ts->detect_stage = "initial";
+ 	tristar_auto_init(&ts->autop);
+ 	i2c_set_clientdata(client, ts);
+ 	node = of_parse_phandle(client->dev.of_node, "apple,usb-role-switch", 0);
+@@ -1597,6 +1902,10 @@ static int apple_tristar_probe(struct i2c_client *client)
+ 	if (ret)
+ 		return ret;
+ 	atomic_set(&ts->reset_generation, 0);
++	atomic_set(&ts->usb_session, 0);
++	atomic_set(&ts->computer_seen, 0);
++	atomic_set(&ts->usb_events, 0);
++	atomic_set(&ts->usb_idle_events, 0);
+ 	/* Allow old iOS work to quiesce; no first-boot ADC idle bit is known. */
+ 	ts->classify_after = jiffies + msecs_to_jiffies(2000);
+ 	ret = devm_mutex_init(&client->dev, &ts->lock);
+diff --git a/drivers/power/supply/bq27xxx_battery.c b/drivers/power/supply/bq27xxx_battery.c
+index c8dde7242fb360e7dcf0b7ee34b9060a2c648345..ebb6193ae40f9d8cee56a22c1982d78e74a64c47 100644
+--- a/drivers/power/supply/bq27xxx_battery.c
++++ b/drivers/power/supply/bq27xxx_battery.c
+@@ -2404,11 +2404,50 @@ static int bq27xxx_cached_optional_value(const struct bq27xxx_cached_value *cach
+ 	return bq27xxx_cached_value(cached, val) ? -ENODATA : 0;
+ }
+ 
++/* A full flag describes capacity, not whether this pack is supplying power. */
++static int bq27xxx_j71t_status(int current_ua, int online, int status)
++{
++	if (current_ua < 0)
++		return POWER_SUPPLY_STATUS_DISCHARGING;
++	if (online < 0)
++		return online;
++	if (!online)
++		return POWER_SUPPLY_STATUS_NOT_CHARGING;
++	if (status == POWER_SUPPLY_STATUS_FULL)
++		return status;
++	return current_ua > 0 ? POWER_SUPPLY_STATUS_CHARGING : POWER_SUPPLY_STATUS_NOT_CHARGING;
++}
++
++/* Never query another supply while holding the gauge mutex. No gauge writes. */
++static int bq27xxx_battery_j71t_status(int current_ua, union power_supply_propval *val)
++{
++	struct power_supply *source;
++	union power_supply_propval online;
++	int ret = -ENODEV;
++
++	if (current_ua < 0) {
++		val->intval = POWER_SUPPLY_STATUS_DISCHARGING;
++		return 0;
++	}
++	source = power_supply_get_by_name("usb");
++	if (source) {
++		ret = power_supply_get_property(source, POWER_SUPPLY_PROP_ONLINE, &online);
++		power_supply_put(source);
++	}
++	ret = bq27xxx_j71t_status(current_ua, ret ? ret : online.intval, val->intval);
++	if (ret < 0)
++		return ret;
++	val->intval = ret;
++	return 0;
++}
++
+ static int bq27xxx_battery_get_cached_property(struct power_supply *psy,
+ 					       struct bq27xxx_device_info *di,
+ 					       enum power_supply_property psp,
+ 					       union power_supply_propval *val)
+ {
++	union power_supply_propval battery_current;
++	bool j71t = of_device_is_compatible(di->dev->of_node, "apple,j71t-bq27540");
+ 	int ret;
+ 
+ 	mutex_lock(&di->lock);
+@@ -2425,6 +2464,8 @@ static int bq27xxx_battery_get_cached_property(struct power_supply *psy,
+ 	switch (psp) {
+ 	case POWER_SUPPLY_PROP_STATUS:
+ 		ret = bq27xxx_cached_value(&di->cache.status, val);
++		if (!ret && j71t)
++			ret = bq27xxx_cached_value(&di->cache.current_now, &battery_current);
+ 		break;
+ 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
+ 		ret = bq27xxx_cached_value(&di->cache.voltage, val);
+@@ -2485,6 +2526,8 @@ static int bq27xxx_battery_get_cached_property(struct power_supply *psy,
+ 
+ out_unlock:
+ 	mutex_unlock(&di->lock);
++	if (!ret && j71t && psp == POWER_SUPPLY_PROP_STATUS)
++		ret = bq27xxx_battery_j71t_status(battery_current.intval, val);
+ 	return ret;
+ }
+ 
+diff --git a/drivers/usb/gadget/udc/core.c b/drivers/usb/gadget/udc/core.c
+index 7d6d0e1661263cf627cc3bd30cfbf9e59b9e6572..7c49a9718c1f796fd3c4a636689da1c7b8992e0e 100644
+--- a/drivers/usb/gadget/udc/core.c
++++ b/drivers/usb/gadget/udc/core.c
+@@ -96,7 +96,7 @@ static void gadget_current_snapshot(struct usb_gadget *gadget,
+ 	budget->current_ma = budget->connected && !budget->suspended ? budget_ma : 0;
+ }
+ 
+-static void gadget_current_notify(struct usb_gadget *gadget)
++static void gadget_current_notify(struct usb_gadget *gadget, unsigned long event)
+ {
+ 	struct usb_gadget_current_budget budget;
+ 	unsigned long flags;
+@@ -106,7 +106,7 @@ static void gadget_current_notify(struct usb_gadget *gadget)
+ 	spin_lock_irqsave(&gadget->state_lock, flags);
+ 	gadget_current_snapshot(gadget, &budget);
+ 	spin_unlock_irqrestore(&gadget->state_lock, flags);
+-	atomic_notifier_call_chain(&gadget_current_notifier, 0, &budget);
++	atomic_notifier_call_chain(&gadget_current_notifier, event, &budget);
+ }
+ 
+ /**
+@@ -191,7 +191,7 @@ void usb_gadget_current_source_detached(const struct device_node *node)
+ 		gadget->current_bus_connected = false;
+ 		gadget->current_suspended = false;
+ 		spin_unlock_irqrestore(&gadget->state_lock, flags);
+-		gadget_current_notify(gadget);
++		gadget_current_notify(gadget, USB_GADGET_CURRENT_DETACH);
+ 	}
+ 	mutex_unlock(&udc_lock);
+ }
+@@ -210,7 +210,7 @@ static void gadget_current_set_base(struct usb_gadget *gadget, unsigned int ma)
+ 		gadget->current_host_grant = false;
+ 	}
+ 	spin_unlock_irqrestore(&gadget->state_lock, flags);
+-	gadget_current_notify(gadget);
++	gadget_current_notify(gadget, USB_GADGET_CURRENT_BASE);
+ }
+ 
+ /* Also used to revoke a grant when its ep0 status transfer fails. */
+@@ -224,7 +224,7 @@ void usb_gadget_revoke_current_grant(struct usb_gadget *gadget)
+ 	gadget->current_extra_ma = 0;
+ 	gadget->current_host_grant = false;
+ 	spin_unlock_irqrestore(&gadget->state_lock, flags);
+-	gadget_current_notify(gadget);
++	gadget_current_notify(gadget, USB_GADGET_CURRENT_REVOKE);
+ }
+ EXPORT_SYMBOL_GPL(usb_gadget_revoke_current_grant);
+ 
+@@ -240,7 +240,7 @@ void usb_gadget_current_budget_suspend(struct usb_gadget *gadget, bool suspended
+ 	gadget->current_extra_ma = 0;
+ 	gadget->current_host_grant = false;
+ 	spin_unlock_irqrestore(&gadget->state_lock, flags);
+-	gadget_current_notify(gadget);
++	gadget_current_notify(gadget, USB_GADGET_CURRENT_SUSPEND);
+ }
+ EXPORT_SYMBOL_GPL(usb_gadget_current_budget_suspend);
+ 
+@@ -264,7 +264,7 @@ int usb_gadget_handle_current_grant(struct usb_gadget *gadget,
+ 	}
+ 	spin_unlock_irqrestore(&gadget->state_lock, flags);
+ 	if (newly_connected)
+-		gadget_current_notify(gadget);
++		gadget_current_notify(gadget, USB_GADGET_CURRENT_SETUP);
+ 	if (ctrl->bRequest != 0x40 ||
+ 	    (ctrl->bRequestType != 0x40 && ctrl->bRequestType != 0xc0))
+ 		return -EOPNOTSUPP;
+@@ -286,7 +286,7 @@ int usb_gadget_handle_current_grant(struct usb_gadget *gadget,
+ 	dev_info_ratelimited(&gadget->dev,
+ 			     "Apple host current grant: extra %d mA, suspend %d mA\n",
+ 			     extra, suspend);
+-	gadget_current_notify(gadget);
++	gadget_current_notify(gadget, USB_GADGET_CURRENT_GRANT);
+ 	return 0;
+ }
+ EXPORT_SYMBOL_GPL(usb_gadget_handle_current_grant);
+@@ -1381,7 +1381,7 @@ void usb_gadget_set_state(struct usb_gadget *gadget,
+ 		schedule_work(&gadget->work);
+ 	spin_unlock_irqrestore(&gadget->state_lock, flags);
+ 	trace_usb_gadget_set_state(gadget, 0);
+-	gadget_current_notify(gadget);
++	gadget_current_notify(gadget, USB_GADGET_CURRENT_STATE);
+ }
+ EXPORT_SYMBOL_GPL(usb_gadget_set_state);
+ 
+diff --git a/include/linux/usb/gadget.h b/include/linux/usb/gadget.h
+index 9878fd7326afc14a94d55f94ed7e40dfbc061323..c10407ab435cf91ab40ea3fe6d5d008585fae1a2 100644
+--- a/include/linux/usb/gadget.h
++++ b/include/linux/usb/gadget.h
+@@ -363,6 +363,17 @@ struct usb_gadget_ops {
+ struct device_node;
+ struct notifier_block;
+ 
++/* Origin of an opted-in current-budget notification; no hardware operation. */
++enum usb_gadget_current_event {
++	USB_GADGET_CURRENT_DETACH = 1,
++	USB_GADGET_CURRENT_BASE,
++	USB_GADGET_CURRENT_REVOKE,
++	USB_GADGET_CURRENT_SUSPEND,
++	USB_GADGET_CURRENT_SETUP,
++	USB_GADGET_CURRENT_GRANT,
++	USB_GADGET_CURRENT_STATE,
++};
++
+ /**
+  * struct usb_gadget_current_budget - instantaneous USB power authorization
+  * @of_node: controller node, valid for the synchronous callback or caller query

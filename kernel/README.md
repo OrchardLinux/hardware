@@ -28,11 +28,14 @@ hardware-proven.
 
 `patches/j71t/` is one patch per feature (S8003 PCIe/ANS NVMe, Wi-Fi and
 Bluetooth, SmartIO/SPI, N1 touch, audio, power, USB, sensors/backlight, native
-display, H.264 decoder, device trees, MAINTAINERS) in `git format-patch` form.
-Each patch is one commit of
+display, H.264 decoder, device trees, MAINTAINERS, then the charging update)
+in `git format-patch` form. Each patch is one commit of
 [brkosebay/linux `a9/orchard-j71t`](https://github.com/brkosebay/linux/tree/a9/orchard-j71t), which is based on
 the same `hoolock` revision and taken from the release 2 kernel of the
-[omarchy-ipad5](https://github.com/brkosebay/omarchy-ipad5) port. It leaves out the GPU research
+[omarchy-ipad5](https://github.com/brkosebay/omarchy-ipad5) port; patch 0013
+adds that port's device-validated charger source detection (computers and
+USB-C chargers at up to 2.4 A). Follow-ups are added as new patches, so
+published patches never change. It leaves out the GPU research
 code, SEP and the Touch ID sensor, AOP and diagnostics-only drivers. The series
 applies in order to the pinned revision and reproduces that branch's tree.
 
