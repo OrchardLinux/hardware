@@ -1,0 +1,156 @@
+From: Berkay Kösebay <brkosebay@users.noreply.github.com>
+Subject: [PATCH] usb: Preserve J71b detection across idle events
+
+Only real data-session transitions cancel analog samples. Retain short
+computer sessions through the source epoch; expose idle-event counters.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+---
+diff --git a/drivers/usb/dwc2/gadget.c b/drivers/usb/dwc2/gadget.c
+index 22c547a..ae46bf4 100644
+--- a/drivers/usb/dwc2/gadget.c
++++ b/drivers/usb/dwc2/gadget.c
+@@ -3728,8 +3728,7 @@ irq_retry:
+ 
+ 	gintsts &= gintmsk;
+ 	if (gintsts)
+-		usb_gadget_j71b_event(&hsotg->gadget,
+-				      !!(gintsts & GINTSTS_RXFLVL));
++		usb_gadget_j71b_event(&hsotg->gadget, false);
+ 
+ 	if (gintsts & GINTSTS_RESETDET) {
+ 		dev_dbg(hsotg->dev, "%s: USBRstDet\n", __func__);
+@@ -3767,7 +3766,6 @@ irq_retry:
+ 
+ 		if (usb_status & GOTGCTL_BSESVLD && connected)
+ 			dwc2_hsotg_core_init_disconnected(hsotg, true);
+-		usb_gadget_j71b_event(&hsotg->gadget, true);
+ 	}
+ 
+ 	if (gintsts & GINTSTS_ENUMDONE) {
+diff --git a/drivers/usb/gadget/udc/core.c b/drivers/usb/gadget/udc/core.c
+index 5cc38cc..ad48027 100644
+--- a/drivers/usb/gadget/udc/core.c
++++ b/drivers/usb/gadget/udc/core.c
+@@ -1132,17 +1132,37 @@ static void usb_gadget_state_work(struct work_struct *work)
+ 		sysfs_notify(&udc->dev.kobj, NULL, "state");
+ }
+ 
++/* Caller holds state_lock. Idle notifications cannot cancel pin sampling.
++ * A real session, including its end between two samples, always cancels it.
++ * Keep computer evidence until the physical-source owner forgets the epoch.
++ */
++static void j71b_source_event_locked(struct usb_gadget *gadget, bool active,
++				     bool state_event)
++{
++	bool session = active || (!state_event && gadget->j71b_source_session);
++
++	gadget->j71b_source_events++;
++	if (session || gadget->j71b_source_session)
++		gadget->j71b_source_generation++;
++	else
++		gadget->j71b_source_idle++;
++	gadget->j71b_source_session = session;
++	if (active)
++		gadget->j71b_source_connected = true;
++}
++
+ void usb_gadget_set_state(struct usb_gadget *gadget,
+ 		enum usb_device_state state)
+ {
+ 	unsigned long flags;
++	bool active;
+ 
+ 	spin_lock_irqsave(&gadget->state_lock, flags);
+ 	gadget->state = state;
+-	gadget->j71b_source_generation++;
+-	if (state == USB_STATE_DEFAULT || state == USB_STATE_ADDRESS ||
+-	    state == USB_STATE_CONFIGURED)
+-		gadget->j71b_source_connected = true;
++	active = state == USB_STATE_DEFAULT || state == USB_STATE_ADDRESS ||
++		 state == USB_STATE_CONFIGURED ||
++		 (state == USB_STATE_SUSPENDED && gadget->j71b_source_session);
++	j71b_source_event_locked(gadget, active, true);
+ 
+ 	if (!gadget->teardown)
+ 		schedule_work(&gadget->work);
+@@ -1151,17 +1171,15 @@ void usb_gadget_set_state(struct usb_gadget *gadget,
+ }
+ EXPORT_SYMBOL_GPL(usb_gadget_set_state);
+ 
+-/* DWC2 IRQ activity cancels an in-flight analog measurement. A reset or
+- * enumeration is host evidence; suspend/resume alone cannot invent a host.
++/* Only real USB session activity cancels an in-flight analog measurement.
++ * Enumeration/gadget session state is evidence; idle line/ID events are not.
+  */
+ void usb_gadget_j71b_event(struct usb_gadget *gadget, bool host_seen)
+ {
+ 	unsigned long flags;
+ 
+ 	spin_lock_irqsave(&gadget->state_lock, flags);
+-	gadget->j71b_source_generation++;
+-	if (host_seen)
+-		gadget->j71b_source_connected = true;
++	j71b_source_event_locked(gadget, host_seen, false);
+ 	spin_unlock_irqrestore(&gadget->state_lock, flags);
+ }
+ EXPORT_SYMBOL_GPL(usb_gadget_j71b_event);
+@@ -1183,14 +1201,17 @@ int usb_gadget_j71b_source(struct device_node *node,
+ 		if (gadget->dev.parent->of_node != node)
+ 			continue;
+ 		spin_lock_irqsave(&gadget->state_lock, flags);
++		/* Return the pre-forget session for the initial/PM ADC exclusion. */
++		source->active = gadget->j71b_source_session;
+ 		if (detached) {
+ 			gadget->j71b_source_connected = false;
++			gadget->j71b_source_session = false;
+ 			gadget->j71b_source_generation++;
+ 		}
+ 		source->generation = gadget->j71b_source_generation;
+ 		source->connected = gadget->j71b_source_connected;
+-		source->active = gadget->state >= USB_STATE_DEFAULT &&
+-				 gadget->state <= USB_STATE_SUSPENDED;
++		source->events = gadget->j71b_source_events;
++		source->idle_events = gadget->j71b_source_idle;
+ 		spin_unlock_irqrestore(&gadget->state_lock, flags);
+ 		ret = 0;
+ 		break;
+@@ -1442,6 +1463,11 @@ void usb_initialize_gadget(struct device *parent, struct usb_gadget *gadget,
+ 		void (*release)(struct device *dev))
+ {
+ 	spin_lock_init(&gadget->state_lock);
++	gadget->j71b_source_generation = 0;
++	gadget->j71b_source_events = 0;
++	gadget->j71b_source_idle = 0;
++	gadget->j71b_source_connected = false;
++	gadget->j71b_source_session = false;
+ 	gadget->teardown = false;
+ 	INIT_WORK(&gadget->work, usb_gadget_state_work);
+ 	gadget->dev.parent = parent;
+diff --git a/include/linux/usb/gadget.h b/include/linux/usb/gadget.h
+index 33507d9..0cfcf95 100644
+--- a/include/linux/usb/gadget.h
++++ b/include/linux/usb/gadget.h
+@@ -457,6 +457,9 @@ struct usb_gadget {
+ 	/* Physical-source evidence, separate from USB link accounting. */
+ 	unsigned int			j71b_source_generation;
+ 	bool				j71b_source_connected;
++	bool				j71b_source_session;
++	unsigned int			j71b_source_events;
++	unsigned int			j71b_source_idle;
+ 	spinlock_t			state_lock;
+ 	bool				teardown;
+ 	const char			*name;
+diff --git a/include/linux/usb/j71b-source.h b/include/linux/usb/j71b-source.h
+index 1edc112..5fc7b2d 100644
+--- a/include/linux/usb/j71b-source.h
++++ b/include/linux/usb/j71b-source.h
+@@ -10,6 +10,8 @@ struct usb_gadget;
+ struct device_node;
+ struct j71b_usb_source {
+ 	unsigned int generation;
++	unsigned int events;
++	unsigned int idle_events;
+ 	bool connected;
+ 	bool active;
+ };
