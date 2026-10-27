@@ -14,3 +14,11 @@ selective reuse and adaptation, not a replacement of the pinned base kernel.
 
 m1n1: Asahi Linux Contributors, MIT (LICENSES/m1n1.txt).
 Wireless regulatory database: LICENSES/wireless-regdb.txt.
+
+P105/A5 manual bring-up uses Project Cascadia by rzxvx and its contributors:
+https://github.com/rzxvx/Project-Cascadia
+Pinned revision: c20b85ebb951c704d7e3a664c378dde8276e3928.
+Cascadia carries the GNU GPL version 2. The source-preparation recipe fetches
+that revision separately; its hardware timing remains in Cascadia. P105
+patches preserve the upstream source notices. Apple firmware and per-device
+touch calibration are supplied privately by the device owner.

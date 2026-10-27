@@ -1,0 +1,17 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+set -eu
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin
+[ "$(cat /etc/cascadia/systemd-root)" = p105-systemd-v1 ]
+tr '\000' '\n' < /proc/device-tree/compatible | grep -qx apple,p105ap
+[ "$(uname -m)" = armv7l ]
+[ -c /dev/hx-touch ]
+[ -c /dev/dri/card0 ]
+cd /
+sha256sum -c /usr/lib/cascadia/p105-payload.sha256
+# KMS shares memory with fbcon. Keep normal console messages out of graphics.
+if [ -w /sys/module/printk/parameters/ignore_loglevel ]; then
+    printf N > /sys/module/printk/parameters/ignore_loglevel
+fi
+dmesg -n 1
+cat /proc/sys/kernel/random/boot_id > /run/p105/hardware-ready

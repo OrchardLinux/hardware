@@ -4,6 +4,9 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 device=${1:-}
 [[ $# -gt 0 ]] && shift
+if [[ "$device" == p105 ]]; then
+  exec python3 "$here/p105/build" "$@"
+fi
 dest=
 resume=false
 while (($#)); do

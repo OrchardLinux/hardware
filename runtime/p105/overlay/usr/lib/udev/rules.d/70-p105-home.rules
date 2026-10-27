@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: GPL-2.0-only
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Cascadia P105 Home", ENV{ID_INPUT}="1", ENV{ID_INPUT_KEY}="1", ENV{ID_INPUT_KEYBOARD}="1", TAG+="seat", TAG+="uaccess"

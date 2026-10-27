@@ -1,0 +1,233 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
+"""Prepare pinned Cascadia sources for a private P105 build; no device access."""
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path, PurePosixPath
+import re
+import shutil
+import subprocess
+import tarfile
+import tempfile
+
+HERE = Path(__file__).resolve().parent
+HARDWARE = HERE.parents[1]
+EXCLUDED = ('initramfs/lib/firmware/mtcal.bin',)
+RUNTIME_PATCHES = (
+    'runtime/p105/patches/0001-p105-systemd-handoff.patch',
+    'runtime/p105/patches/0002-p105-desktop-home.patch',
+)
+SYMBOL = re.compile(r'^(?:# )?(CONFIG_[A-Z0-9_]+)(?:=| is not set$)')
+
+
+def checked(command, **options):
+    return subprocess.run(command, check=True, **options)
+
+
+def git_output(repository, *arguments):
+    return subprocess.check_output(['git', '-C', str(repository), *arguments])
+
+
+def sha(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def check_source_files(repository, commit, paths):
+    # Compare only the selected public files. A general Git index refresh can
+    # inspect other working-tree files, including the excluded calibration.
+    records = git_output(repository, 'ls-tree', '-r', '-z', commit, '--', *paths)
+    for record in records.split(b'\0'):
+        if not record:
+            continue
+        metadata, filename = record.split(b'\t', 1)
+        mode, kind, expected = metadata.decode().split()
+        name = filename.decode()
+        if name in EXCLUDED or kind != 'blob':
+            raise ValueError('Unexpected selected source entry: ' + name)
+        path = repository / name
+        if mode == '120000':
+            if not path.is_symlink():
+                raise ValueError('--source has a modified source link: ' + name)
+            data = os.fsencode(os.readlink(path))
+        else:
+            if path.is_symlink() or not path.is_file():
+                raise ValueError('--source has a missing source file: ' + name)
+            if bool(path.stat().st_mode & 0o111) != (mode == '100755'):
+                raise ValueError('--source has modified source modes: ' + name)
+            data = path.read_bytes()
+        actual = hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()
+        if actual != expected:
+            raise ValueError('--source has modified tracked source files: ' + name)
+    staged = subprocess.run(['git', '-C', str(repository), 'diff', '--cached', '--quiet', commit, '--', *paths])
+    if staged.returncode:
+        raise ValueError('--source has staged source changes')
+
+
+def pins():
+    values = {}
+    for line in (HERE / 'upstream.lock').read_text().splitlines():
+        if line and not line.startswith('#'):
+            key, value = line.split('=', 1)
+            if key in values:
+                raise ValueError('Duplicate upstream pin: ' + key)
+            values[key] = value
+    if (values.get('cascadia_url') != 'https://github.com/rzxvx/Project-Cascadia.git'
+            or values.get('linux_url') != 'https://github.com/torvalds/linux.git'
+            or values.get('linux_tag') != 'v6.12'
+            or any(not re.fullmatch(r'[0-9a-f]{40}', values.get(key, ''))
+                   for key in ('cascadia_commit', 'linux_commit'))):
+        raise ValueError('Unexpected P105 upstream.lock')
+    return values
+
+
+def merge_config(base, fragment):
+    symbols = {match.group(1) for line in fragment.splitlines()
+               if (match := SYMBOL.match(line))}
+    if not symbols or 'CONFIG_INITRAMFS_SOURCE' in symbols:
+        raise ValueError('The public fragment must omit per-user initramfs paths')
+    retained = []
+    begin = '# Orchard P105 userspace prerequisites.'
+    end = '# End Orchard P105 userspace prerequisites.'
+    managed = False
+    for line in base.splitlines():
+        if line == begin:
+            if managed:
+                raise ValueError('Nested P105 config block')
+            managed = True
+            continue
+        if managed:
+            if line == end:
+                managed = False
+            continue
+        match = SYMBOL.match(line)
+        if not match or match.group(1) not in symbols:
+            retained.append(line)
+    if managed:
+        raise ValueError('Unterminated P105 config block')
+    return '\n'.join(retained).rstrip() + '\n\n' + begin + '\n' + fragment.rstrip() + '\n' + end + '\n'
+
+
+def export_source(repository, commit, paths, destination, archive_path):
+    # Naming individual tracked files excludes the reference calibration before
+    # git archive reads any file data. No working-tree/private inputs are copied.
+    if sum(len(path.encode()) + 1 for path in paths) > 120000:
+        raise ValueError('Pinned source path list exceeds the supported argument budget')
+    checked(['git', '-C', str(repository), 'archive', '--format=tar',
+             '--output=' + str(archive_path), commit, '--', *paths])
+    with tarfile.open(archive_path, 'r:') as archive:
+        for member in archive:
+            name = PurePosixPath(member.name)
+            if name.is_absolute() or '..' in name.parts or str(name) in EXCLUDED:
+                raise ValueError('Unexpected exported source path: ' + member.name)
+            target = destination.joinpath(*name.parts)
+            for parent in target.parents:
+                if parent == destination:
+                    break
+                if parent.is_symlink():
+                    raise ValueError('Exported path is below a symlink: ' + member.name)
+            if member.isdir():
+                target.mkdir(parents=True, exist_ok=True)
+            elif member.isfile():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with archive.extractfile(member) as source, target.open('wb') as output:
+                    shutil.copyfileobj(source, output)
+                target.chmod(member.mode & 0o777)
+            elif member.issym():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.symlink_to(member.linkname)
+            else:
+                raise ValueError('Unexpected source archive entry: ' + member.name)
+
+
+def prepare(args):
+    lock = pins()
+    requested_output = args.output.expanduser().absolute()
+    if requested_output.exists() or requested_output.is_symlink():
+        raise ValueError('Choose a fresh output directory')
+    output = requested_output.resolve()
+    if output == HARDWARE or HARDWARE in output.parents:
+        raise ValueError('Choose an output outside the hardware checkout; later build products are private')
+    if shutil.which('git') is None:
+        raise ValueError('Git is required')
+    patch_paths = [HARDWARE / name for name in RUNTIME_PATCHES] + [
+        HERE / 'private-calibration.patch', HERE / 'native-container.patch',
+        HERE / 'nand-disabled.patch']
+    if any(not path.is_file() for path in patch_paths):
+        raise ValueError('The P105 runtime and private-calibration patches must be present')
+    with tempfile.TemporaryDirectory(prefix='orchard-p105-source-') as temporary:
+        temporary = Path(temporary)
+        if args.source:
+            repository = args.source.expanduser().resolve()
+            top = Path(git_output(repository, 'rev-parse', '--show-toplevel').decode().strip()).resolve()
+            if top != repository:
+                raise ValueError('--source must name the Cascadia checkout root')
+            actual = git_output(repository, 'rev-parse', '--verify', 'HEAD^{commit}').decode().strip()
+        else:
+            repository = temporary / 'upstream.git'
+            checked(['git', 'init', '--bare', '-q', str(repository)])
+            checked(['git', '-C', str(repository), 'fetch', '--progress', '--depth', '1',
+                     lock['cascadia_url'], lock['cascadia_commit']])
+            actual = git_output(repository, 'rev-parse', '--verify', 'FETCH_HEAD^{commit}').decode().strip()
+        if actual != lock['cascadia_commit']:
+            raise ValueError('Cascadia revision differs from upstream.lock')
+        names = git_output(repository, 'ls-tree', '-r', '-z', '--name-only', actual).decode().split('\0')
+        paths = [name for name in names if name and name not in EXCLUDED]
+        if args.source:
+            check_source_files(repository, actual, paths)
+            others = git_output(repository, 'ls-files', '--others', '--exclude-standard', '-z')
+            if others:
+                raise ValueError('--source must have no untracked non-ignored files')
+            if output == repository or repository in output.parents:
+                raise ValueError('Output must be outside the input checkout')
+        tree = temporary / 'prepared'
+        tree.mkdir()
+        export_source(repository, actual, paths, tree, temporary / 'source.tar')
+        for path in patch_paths:
+            checked(['git', '-C', str(tree), 'apply', '--check', str(path)])
+            checked(['git', '-C', str(tree), 'apply', str(path)])
+        config = tree / 'config/p105ap.config'
+        config.write_text(merge_config(config.read_text(), (HERE / 'config.fragment').read_text()))
+        checked(['awk', '-f', str(tree / 'scripts/check-config-fragment.awk'), str(config)])
+        if any((tree / path).exists() for path in EXCLUDED):
+            raise ValueError('Excluded reference calibration appeared in the prepared source')
+        receipt = {
+            'schema': 1, 'kind': 'hardware.p105.prepared-source', 'upstream': lock,
+            'excluded_tracked_paths': list(EXCLUDED),
+            'patches': [{'path': path.relative_to(HARDWARE).as_posix(), 'sha256': sha(path)}
+                        for path in patch_paths],
+            'config_fragment_sha256': sha(HERE / 'config.fragment'),
+            'merged_config_sha256': sha(config),
+            'private_build_outputs': True,
+        }
+        (tree / 'orchard-p105-source.json').write_text(json.dumps(receipt, indent=2, sort_keys=True) + '\n')
+        output.parent.mkdir(parents=True, exist_ok=True)
+        # Copy across filesystems, then promote only a complete prepared tree.
+        stage = Path(tempfile.mkdtemp(prefix='.' + output.name + '-', dir=output.parent))
+        try:
+            shutil.copytree(tree, stage, symlinks=True, dirs_exist_ok=True)
+            if output.exists() or output.is_symlink():
+                raise ValueError('Output appeared during preparation; refusing to replace it')
+            os.rename(stage, output)
+        finally:
+            if stage.exists():
+                shutil.rmtree(stage)
+    print('Prepared pinned P105 sources: ' + str(output))
+    print('Private boot builds require the owner panel calibration; public kernels omit the initramfs.')
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--source', type=Path, help='Clean checkout at the pinned Cascadia commit; otherwise fetch it')
+    parser.add_argument('--output', type=Path, required=True, help='New directory outside this hardware checkout')
+    args = parser.parse_args()
+    try:
+        prepare(args)
+    except (OSError, ValueError, subprocess.CalledProcessError, tarfile.TarError) as error:
+        parser.exit(1, 'p105 source preparation: ' + str(error) + '\n')
+
+
+if __name__ == '__main__':
+    main()

@@ -1,0 +1,328 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
+"""Produce P105 public kernel components or an explicitly private boot bundle."""
+import argparse
+import datetime
+import hashlib
+import importlib.machinery
+import importlib.util
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import stat
+import subprocess
+import tarfile
+import tempfile
+import uuid
+
+HERE = Path(__file__).resolve().parent
+HARDWARE = HERE.parents[1]
+DEFAULT_IMAGE = 'localhost/orchard-hardware-p105-toolchain:jammy'
+
+
+def module(name, path):
+    loader = importlib.machinery.SourceFileLoader(name, str(path))
+    spec = importlib.util.spec_from_loader(name, loader)
+    result = importlib.util.module_from_spec(spec)
+    loader.exec_module(result)
+    return result
+
+
+def sha(path):
+    value = hashlib.sha256()
+    with path.open('rb') as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+            value.update(chunk)
+    return value.hexdigest()
+
+
+def fresh(path):
+    path = path.expanduser().absolute()
+    if path.exists() or path.is_symlink():
+        raise ValueError('Choose a fresh path: ' + str(path))
+    resolved = path.resolve()
+    if resolved == HARDWARE or HARDWARE in resolved.parents:
+        raise ValueError('Keep component work and outputs outside the hardware package')
+    return resolved
+
+
+def inventory(root):
+    result = {}
+    for path in sorted(root.rglob('*')):
+        name = path.relative_to(root).as_posix()
+        mode = path.lstat().st_mode
+        if stat.S_ISLNK(mode):
+            result[name] = {'link': os.readlink(path)}
+        elif stat.S_ISREG(mode):
+            result[name] = {'sha256': sha(path), 'bytes': path.stat().st_size,
+                            'mode': stat.S_IMODE(mode)}
+        elif stat.S_ISDIR(mode):
+            result[name] = {'directory': True, 'mode': stat.S_IMODE(mode)}
+        else:
+            raise ValueError('Special file in build input: ' + name)
+    return result
+
+
+def archive_tree(root, output):
+    before = inventory(root)
+    with tarfile.open(output, 'w') as archive:
+        for path in sorted(root.rglob('*')):
+            item = archive.gettarinfo(str(path), arcname=path.relative_to(root).as_posix())
+            item.uid = item.gid = 0
+            item.uname = item.gname = 'root'
+            if item.isfile():
+                with path.open('rb') as stream:
+                    archive.addfile(item, stream)
+            elif item.isdir() or item.issym():
+                archive.addfile(item)
+            else:
+                raise ValueError('Special file in build input')
+    if before != inventory(root):
+        raise ValueError('Build input changed while archiving')
+    return before
+
+
+def local_target(root, name):
+    path = root / name
+    if not path.resolve().is_relative_to(root):
+        raise ValueError('Private input escapes the initramfs: ' + name)
+    return path
+
+
+def check_private(root, calibration):
+    if root.is_symlink() or not root.is_dir():
+        raise ValueError('Select an existing initramfs directory')
+    root = root.resolve()
+    if calibration.is_symlink() or not calibration.is_file() or calibration.stat().st_size == 0:
+        raise ValueError('Select the owner calibration as a nonempty regular file')
+    if calibration.resolve().is_relative_to(root):
+        raise ValueError('Supply the owner calibration separately from the initramfs')
+    embedded = local_target(root, 'lib/firmware/mtcal.bin')
+    if not embedded.is_file() or embedded.read_bytes() != calibration.read_bytes():
+        raise ValueError('Initramfs calibration differs from the owner input')
+    installer = module('p105_build_installer', HARDWARE / 'runtime/p105/install.py')
+    installer.arm_elf(local_target(root, 'bin/busybox.static'), static=True)
+    for name in ('init', 'sbin/mount.nfs', 'usr/sbin/dropbear'):
+        if not local_target(root, name).is_file():
+            raise ValueError('Missing private boot input: ' + name)
+    recipe = json.loads((HARDWARE / 'devices/p105/firmware.json').read_text())
+    for entry in recipe['files'] + recipe['generated']:
+        path = local_target(root, entry['destination'])
+        if not path.is_file() or sha(path) != entry['sha256']:
+            raise ValueError('Private firmware differs from the pinned recipe: ' + entry['name'])
+
+
+def overlay(source, destination):
+    """Copy public boot sources without following a guest's destination links."""
+    for path in sorted(source.rglob('*')):
+        relative = path.relative_to(source)
+        target = destination / relative
+        for parent in (target, *target.parents):
+            if parent == destination:
+                break
+            if parent.is_symlink():
+                raise ValueError('Linked overlay destination: ' + relative.as_posix())
+        if path.is_symlink():
+            raise ValueError('Linked public overlay source: ' + relative.as_posix())
+        if path.is_dir():
+            target.mkdir(parents=True, exist_ok=True)
+        elif path.is_file():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, target)
+        else:
+            raise ValueError('Special public overlay source')
+
+
+def nfs_location(value):
+    if value is not None and (len(value) > 4096 or not re.fullmatch(
+            r'(?:[A-Za-z0-9][A-Za-z0-9.-]*|\[[0-9A-Fa-f:]+\]):/[^\r\n\x00]+', value)):
+        raise ValueError('Expected --nfs-root HOST:/absolute/export/path')
+    return value
+
+
+def stage_private(source, calibration, prepared, work, nfs_root=None):
+    check_private(source, calibration)
+    stage = work / 'private-root'
+    shutil.copytree(source, stage, symlinks=True)
+    boot_mounts(stage)
+    overlay(prepared / 'rootfs/alpine', stage)
+    overlay(prepared / 'initramfs', stage)
+    for path in stage.rglob('*'):
+        if path.name in ('nandctl', 'iosnand', 'ios') and (path.is_file() or path.is_symlink()):
+            path.unlink()
+    boot_date = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d 00:00:00\n')
+    local_target(stage, 'etc/build-date').write_text(boot_date)
+    if nfs_root is not None:
+        local_target(stage, 'etc/nfsroot').write_text(nfs_location(nfs_root) + '\n')
+    if local_target(stage, 'lib/firmware/mtcal.bin').read_bytes() != calibration.read_bytes():
+        raise ValueError('Owner calibration changed during private staging')
+    return stage
+
+
+def boot_mounts(root):
+    """Preserve the empty mount points needed before the first userspace mount."""
+    for name in ('dev', 'proc', 'sys', 'run', 'tmp'):
+        path = root / name
+        if path.is_symlink() or (path.exists() and not path.is_dir()):
+            raise ValueError('Invalid early mount point: ' + name)
+        path.mkdir(exist_ok=True)
+        path.chmod(0o1777 if name == 'tmp' else 0o755)
+
+
+def run(*args, **options):
+    return subprocess.run([str(arg) for arg in args], check=True, **options)
+
+
+def linux_archive(work, lock, bundle=None):
+    repository = work / 'linux.git'
+    run('git', 'init', '--bare', '-q', repository)
+    if bundle:
+        # Unbundle imports the pinned tree without traversing unavailable
+        # parents when a local source cache came from a shallow checkout.
+        heads = subprocess.check_output(['git', 'bundle', 'list-heads', str(bundle.resolve()), 'HEAD'], text=True)
+        if heads.strip() != lock['linux_commit'] + ' HEAD':
+            raise ValueError('Linux bundle HEAD differs from upstream.lock')
+        run('git', '-C', repository, 'bundle', 'unbundle', bundle.resolve(), stdout=subprocess.DEVNULL)
+        reference = lock['linux_commit']
+    else:
+        run('git', '-C', repository, 'fetch', '--depth', '1', lock['linux_url'], lock['linux_commit'])
+        reference = 'FETCH_HEAD'
+    actual = subprocess.check_output(['git', '-C', str(repository), 'rev-parse', reference + '^{commit}'], text=True).strip()
+    if actual != lock['linux_commit']:
+        raise ValueError('Linux source revision differs from upstream.lock')
+    run('git', '-C', repository, 'archive', '--format=tar',
+        '--output=' + str(work / 'inputs/linux.tar'), actual)
+
+
+def validate_outputs(output, private):
+    files = {p.name for p in output.iterdir()}
+    expected = {'zImage', 'p105ap.dtb', 'kernel.config', 'kernel.release', 'compiler.txt', 'binutils.txt'}
+    if private:
+        expected |= {'staging-bundle.bin', 'staging-loader.bin', 'initramfs.tar'}
+    if files != expected or any(p.is_symlink() or not p.is_file() for p in output.iterdir()):
+        raise ValueError('Unexpected component output set')
+    data = (output / 'zImage').read_bytes()
+    if len(data) < 48 or data[36:40] != bytes.fromhex('18286f01'):
+        raise ValueError('Producer returned an invalid ARM zImage')
+    dtb = (output / 'p105ap.dtb').read_bytes()
+    if dtb[:4] != bytes.fromhex('d00dfeed') or int.from_bytes(dtb[4:8], 'big') != len(dtb):
+        raise ValueError('Producer returned an invalid device tree')
+    config = (output / 'kernel.config').read_text()
+    if any(line in config.splitlines() for line in ('CONFIG_MTD_APPLE_H2FMI=y', 'CONFIG_MTD_APPLE_H2FMI=m')):
+        raise ValueError('NAND controller was enabled in a desktop component')
+    if not private and 'CONFIG_INITRAMFS_SOURCE=""' not in config.splitlines():
+        raise ValueError('Public kernel embeds an initramfs')
+    if private:
+        loader = (output / 'staging-loader.bin').read_bytes()
+        bundle = (output / 'staging-bundle.bin').read_bytes()
+        if not loader or len(loader) > 32768 or bundle != loader.ljust(32768, b'\0') + data + dtb:
+            raise ValueError('Private bundle differs from its component files')
+
+
+def build(args):
+    work, output = fresh(args.work), fresh(args.output)
+    if work in output.parents or output in work.parents or work == output:
+        raise ValueError('Work and output directories must be separate')
+    private = args.private_initramfs is not None
+    if private != (args.calibration is not None):
+        raise ValueError('--private-initramfs and --calibration must be supplied together')
+    if not 1 <= args.jobs <= 64:
+        raise ValueError('Choose between 1 and 64 build jobs')
+    nfs_root = nfs_location(args.nfs_root)
+    if nfs_root is not None and not private:
+        raise ValueError('--nfs-root requires an explicitly private boot root')
+    if private:
+        check_private(args.private_initramfs, args.calibration)
+    # Validate private inputs before network, output creation or VM operations.
+    os.umask(0o077)
+    work.mkdir(parents=True, mode=0o700)
+    inputs = work / 'inputs'
+    inputs.mkdir()
+    prepare = module('p105_component_prepare', HERE / 'prepare-source')
+    prepared = work / 'cascadia'
+    prepare.prepare(argparse.Namespace(source=args.cascadia_source, output=prepared))
+    lock = prepare.pins()
+    source = archive_tree(prepared, inputs / 'source.tar')
+    linux_archive(work, lock, args.linux_bundle)
+    private_receipt = None
+    if private:
+        stage = stage_private(args.private_initramfs, args.calibration, prepared, work, nfs_root)
+        private_receipt = archive_tree(stage, inputs / 'initramfs.tar')
+        shutil.copyfile(args.calibration, inputs / 'calibration')
+    shutil.copyfile(HERE / 'build-in-container.sh', inputs / 'build-in-container.sh')
+    inspect = subprocess.run(['podman', 'image', 'inspect', args.toolchain_image,
+                              '--format', '{{.Id}}'], capture_output=True, text=True)
+    if inspect.returncode:
+        if args.toolchain_image != DEFAULT_IMAGE:
+            raise ValueError('Requested toolchain image is unavailable')
+        run('podman', 'build', '-f', HERE / 'Containerfile', '-t', DEFAULT_IMAGE, HERE)
+        image = subprocess.check_output(['podman', 'image', 'inspect', DEFAULT_IMAGE,
+                                         '--format', '{{.Id}}'], text=True).strip()
+    else:
+        image = inspect.stdout.strip()
+    if not re.fullmatch(r'(?:sha256:)?[0-9a-f]{64}', image):
+        raise ValueError('Invalid toolchain image identity')
+    volume = 'orchard-p105-' + uuid.uuid4().hex
+    run('podman', 'volume', 'create', '--label', 'io.orchard.profile=p105', volume, stdout=subprocess.DEVNULL)
+    state = {'schema': 1, 'mode': 'private' if private else 'public', 'volume': volume,
+             'toolchain_image': image, 'completed': False}
+    (work / 'state.json').write_text(json.dumps(state, indent=2) + '\n')
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = Path(tempfile.mkdtemp(prefix='.' + output.name + '-', dir=output.parent))
+    try:
+        log_path = work / 'build.log'
+        print('Compiling P105 components; build log: ' + str(log_path), flush=True)
+        with log_path.open('w') as log:
+            run('podman', 'run', '--rm', '--network', 'none', '--cap-drop', 'all',
+                '--security-opt', 'no-new-privileges', '-v', volume + ':/cascadia',
+                '-v', str(inputs) + ':/inputs:ro', '-v', str(temporary) + ':/export:rw',
+                '-w', '/cascadia', image, 'bash', '/inputs/build-in-container.sh',
+                state['mode'], str(args.jobs), stdout=log, stderr=subprocess.STDOUT)
+        validate_outputs(temporary, private)
+        receipt = {'schema': 1, 'kind': 'hardware.p105.components', 'profile': 'p105',
+                   'architecture': 'armv7h', 'private': private, 'publishable': not private,
+                   'flash_controller': 'disabled', 'upstream': lock,
+                   'prepared_source': source, 'toolchain_image': image,
+                   'recipe_sha256': sha(HERE / 'build-in-container.sh'),
+                   'producer_sha256': sha(HERE / 'build'),
+                   'components': inventory(temporary),
+                   'qualification': 'build-only; physical-device validation required'}
+        if private:
+            receipt['private_inputs'] = private_receipt
+        (temporary / 'components.json').write_text(json.dumps(receipt, indent=2, sort_keys=True) + '\n')
+        if output.exists() or output.is_symlink():
+            raise ValueError('Output appeared during the build; refusing to replace it')
+        temporary.rename(output)
+        state['completed'] = True
+        (work / 'state.json').write_text(json.dumps(state, indent=2) + '\n')
+        if not args.keep_work:
+            run('podman', 'volume', 'rm', volume, stdout=subprocess.DEVNULL)
+        print('P105 ' + state['mode'] + ' components: ' + str(output))
+    finally:
+        if temporary.exists():
+            shutil.rmtree(temporary)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--work', required=True, type=Path, help='Fresh work directory outside the hardware checkout')
+    parser.add_argument('--output', required=True, type=Path, help='Fresh component output outside the hardware checkout')
+    parser.add_argument('--private-initramfs', type=Path, help='Owner boot root; produces a private embedded bundle')
+    parser.add_argument('--calibration', type=Path, help='Owner calibration outside the supplied boot root')
+    parser.add_argument('--nfs-root', help='Optional private HOST:/absolute/export/path for the desktop root')
+    parser.add_argument('--cascadia-source', type=Path, help='Optional clean checkout at the pinned commit')
+    parser.add_argument('--linux-bundle', type=Path, help='Optional Git bundle whose HEAD is the pinned Linux commit')
+    parser.add_argument('--toolchain-image', default=DEFAULT_IMAGE)
+    parser.add_argument('--jobs', type=int, default=2)
+    parser.add_argument('--keep-work', action='store_true', help='Retain this build volume for inspection')
+    args = parser.parse_args()
+    try:
+        build(args)
+    except (OSError, ValueError, subprocess.CalledProcessError, tarfile.TarError) as error:
+        parser.exit(1, 'p105 components: ' + str(error) + '\n')
+
+
+if __name__ == '__main__':
+    main()

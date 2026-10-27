@@ -1,0 +1,6 @@
+[Match]
+MACAddress=02:10:5a:05:00:02
+
+[Link]
+NamePolicy=keep
+Name=usb0

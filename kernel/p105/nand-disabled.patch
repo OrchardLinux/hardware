@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-2.0-only
+--- a/dts/p105ap.dts
++++ b/dts/p105ap.dts
+@@ -702,7 +702,7 @@
+ 			      <0x1340000 0x1000>,	/* FMC1 */
+ 			      <0x1380000 0x1000>;	/* ECC1 */
+ 			interrupts = <33>, <34>;
+-			status = "okay";
++			status = "disabled";
+ 		};
+ 
+ 		ohci1: usb@6600000 {

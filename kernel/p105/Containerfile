@@ -1,0 +1,9 @@
+FROM docker.io/library/ubuntu:22.04@sha256:0a9887931b0e38af2e3487ed39e29436b0535c4f3f52e57745baaf79d1898956
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential gcc-arm-linux-gnueabihf binutils-arm-linux-gnueabihf \
+    libc6-dev-armhf-cross bc bison flex libssl-dev libelf-dev \
+    device-tree-compiler python3 git cpio rsync kmod xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+ENV ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf-
+WORKDIR /cascadia

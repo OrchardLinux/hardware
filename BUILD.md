@@ -30,6 +30,12 @@ Choose new output paths. Producers use pinned upstream revisions, hardware patch
 
 The m1n1 backend is unbranded by default. A distro can pass `--extra-patch FILE`, `--include-header FILE`, and `--extra-cflags FLAGS` for its own presentation.
 
+## iPad mini 1 components
+
+The [P105 hardware profile](devices/p105/README.md) covers the first-generation Wi-Fi iPad mini. The [P105 producer](kernel/p105/README.md) builds ARMv7 public kernel components with an empty initramfs, or a private boot bundle from an explicit owner root and calibration. Run `kernel/build p105 --work NEW_WORK --output NEW_OUTPUT`; both directories must be outside this package. Its desktop configuration and device tree disable the reference NAND controller.
+
+The manual boot route uses an existing jailbreak and a root served over USB/NFS by the host. Follow [systemd runtime integration](runtime/p105/README.md) for the installed root. A private bundle embeds per-user recovery inputs and stays on the owner's host. The J71b release workflow continues to build J71b artifacts; P105 launcher publication and CLI integration are separate work.
+
 ## Runtime and image assembly
 
 - `image/runtime.py`: modules, hardware/touch scripts, device API and integrity lists.

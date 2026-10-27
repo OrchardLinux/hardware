@@ -1,5 +1,10 @@
 # Kernel build
 
+P105 has an ARMv7 [component producer](p105/README.md) with separate public
+kernel and private embedded-root outputs. Use `kernel/build p105 --work
+NEW_WORK --output NEW_OUTPUT`; its desktop build disables the reference NAND
+controller. The ARM64 J71b producer is described below.
+
 `build` fetches the pinned Linux revision, applies the selected target's patches
 and config, compiles the kernel and external modules, stages the modules, and
 runs the target's final-DTB recipe. Git and Podman are required.

@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: GPL-2.0-only
+[Unit]
+Description=Cascadia physical USB rescue console in RAM
+DefaultDependencies=no
+After=systemd-udev-trigger.service
+Before=basic.target
+ConditionFileIsExecutable=/run/p105-rescue/busybox
+IgnoreOnIsolate=yes
+
+[Service]
+Type=exec
+WorkingDirectory=/run/p105-rescue
+ExecStart=/run/p105-rescue/busybox sh /run/p105-rescue/acm.sh
+Restart=on-failure
+RestartSec=2
+StandardInput=null
+StandardOutput=null
+StandardError=kmsg
+
+[Install]
+WantedBy=sysinit.target

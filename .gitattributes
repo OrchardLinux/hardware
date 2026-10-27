@@ -1,0 +1,3 @@
+# Unified-diff context prefixes are part of the patch data.
+kernel/p105/*.patch whitespace=-blank-at-eol,-space-before-tab
+runtime/p105/patches/*.patch whitespace=-blank-at-eol,-space-before-tab

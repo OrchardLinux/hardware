@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: GPL-2.0-only
+--- a/cascadia
++++ b/cascadia
+@@ -220,6 +220,7 @@
+ }
+ 
+ cmd_build() {
++    [ -s "$ROOT/build/keep/lib/firmware/mtcal.bin" ] || fail "owner panel calibration required: supply build/keep/lib/firmware/mtcal.bin before building"
+     [ -f "$ROOT/build/linux/Makefile" ] || fail "no kernel source -- run: ./cascadia kernel"
+     [ -d "$ROOT/build/initramfs-root" ] || fail "no rootfs -- run: ./cascadia rootfs"
+     mkdir -p "$ROOT/build/out" "$ROOT/output"
+--- a/scripts/build-kernel.sh
++++ b/scripts/build-kernel.sh
+@@ -17,6 +17,12 @@
+ TREE="$ROOT/build/linux"
+ OUT="$ROOT/build/out"
+ LOGS="$ROOT/logs"
++
++# The Orchard public producer has no private input mount and embeds no root.
++if [ "${ORCHARD_P105_PUBLIC_KERNEL:-0}" != 1 ] && [ ! -s "$ROOT/build/keep/lib/firmware/mtcal.bin" ]; then
++    echo "owner panel calibration required: supply build/keep/lib/firmware/mtcal.bin before building" >&2
++    exit 1
++fi
+ 
+ export ARCH=arm
+ export CROSS_COMPILE=arm-linux-gnueabihf-
+@@ -86,6 +92,12 @@
+ # initrd pointer, and a second irecovery upload would have to land on an address
+ # iBEC has not already claimed.  One blob sidesteps both problems.
+ INITRAMFS_DIR="${INITRAMFS_DIR:-$ROOT/build/initramfs-root}"
++if [ "${ORCHARD_P105_PUBLIC_KERNEL:-0}" != 1 ]; then
++    [ -s "$INITRAMFS_DIR/lib/firmware/mtcal.bin" ] && cmp -s "$ROOT/build/keep/lib/firmware/mtcal.bin" "$INITRAMFS_DIR/lib/firmware/mtcal.bin" || {
++        echo "initramfs calibration must match the owner's private input" >&2
++        exit 1
++    }
++fi
+ if [ -d "$INITRAMFS_DIR" ]; then
+     echo "==> Embedding initramfs from $INITRAMFS_DIR"
+     frag="$(mktemp)"

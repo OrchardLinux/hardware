@@ -1,0 +1,8 @@
+sbin/z2-boot|usr/libexec/p105/z2-boot|0755
+sbin/p105-keys|usr/libexec/p105/p105-keys|0755
+bin/busybox.static|usr/libexec/p105/busybox.static|0755
+lib/firmware/P105.mtprops|usr/lib/firmware/P105.mtprops|0644
+lib/firmware/mtcal.bin|usr/lib/firmware/mtcal.bin|0644
+lib/firmware/apple/sgx543.fw|usr/lib/firmware/apple/sgx543.fw|0644
+lib/firmware/brcm/brcmfmac4334.bin|usr/lib/firmware/brcm/brcmfmac4334.bin|0644
+lib/firmware/brcm/BCM4334B0.hcd|usr/lib/firmware/brcm/BCM4334B0.hcd|0644

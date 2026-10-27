@@ -1,0 +1,15 @@
+diff --git a/cascadia b/cascadia
+--- a/cascadia
++++ b/cascadia
+@@ -93,6 +93,11 @@
+ }
+ 
+ in_docker() {
++    # Local build mode: this process already runs in the compiler image.
++    if [ "${CASCADIA_BUILD_IN_CONTAINER:-0}" = 1 ]; then
++        bash -c "$1"
++        return
++    fi
+     ensure_image
+     # Run as the calling user on Linux.  Docker Desktop on macOS maps ownership
+     # for you; a plain Linux daemon does not, so everything the build writes

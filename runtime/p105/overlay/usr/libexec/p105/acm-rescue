@@ -1,0 +1,12 @@
+#!/run/p105-rescue/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# Same physical USB rescue access as Cascadia stage 2, with all code in RAM.
+export PATH=/run/p105-rescue/bin HOME=/run/p105-rescue HISTFILE=/run/p105-rescue/.ash_history
+cd /run/p105-rescue
+n=0
+while [ "$n" -lt 500 ]; do
+    n=$((n+1))
+    [ ! -e /dev/ttyGS0 ] || getty -i -n -l /run/p105-rescue/bin/sh 115200 ttyGS0 2>/dev/null
+    sleep 1
+done
+echo "P105: ACM respawn limit reached" > /dev/kmsg
