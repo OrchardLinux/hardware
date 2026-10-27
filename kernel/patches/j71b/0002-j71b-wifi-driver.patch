@@ -26,7 +26,7 @@
  	if (eth_platform_get_mac_address(dev, mac) == 0)
  		nvp.strip_mac = true;
  
-+	/* This specific iPad's public NVRAM lacks macaddr; require its own ADT
++	/* J71b public NVRAM requires a device MAC; require its own ADT
 +	 * local-mac-address to be attached to the PCI OF node before any FW
 +	 * request can complete. Never print the MAC or private calibration.
 +	 */
@@ -41,22 +41,59 @@
  	while (nvp.pos < data_len) {
  		nvp.state = nv_parser_states[nvp.state](&nvp);
  		if (nvp.state == END)
+@@ -554,6 +567,8 @@
+ 		data = (u8 *)fw->data;
+ 		data_len = fw->size;
+ 	} else {
++		if (cur->flags & BRCMF_FW_REQF_EXACT)
++			goto fail;
+ 		data = bcm47xx_nvram_get_contents(&data_len);
+ 		if (data) {
+ 			free_bcm47xx_nvram = true;
+@@ -652,6 +667,10 @@
+ 	unsigned int i;
+ 	int ret;
+ 
++	/* Exact OTP-selected NVRAM must never fall back to another profile. */
++	if (cur->flags & BRCMF_FW_REQF_EXACT)
++		return request_firmware(fw, cur->path, fwctx->dev);
++
+ 	/* Files can be board-specific, first try board-specific paths */
+ 	for (i = 0; i < ARRAY_SIZE(fwctx->req->board_types); i++) {
+ 		char *alt_path;
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/firmware.h
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/firmware.h
+@@ -6,6 +6,8 @@
+ #define BRCMFMAC_FIRMWARE_H
+ 
+ #define BRCMF_FW_REQF_OPTIONAL		0x0001
++/* Required exact path: no board-name or platform NVRAM fallback. */
++#define BRCMF_FW_REQF_EXACT		0x0002
+ 
+ #define	BRCMF_FW_NAME_LEN		320
+ 
 --- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/msgbuf.c
 +++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/msgbuf.c
-@@ -1638,8 +1638,15 @@
+@@ -9,6 +9,7 @@
+  ******************************************************************************/
+ 
+ #include <linux/types.h>
++#include <linux/of.h>
+ #include <linux/netdevice.h>
+ #include <linux/etherdevice.h>
+ 
+@@ -1638,8 +1639,13 @@
  						     DMA_TO_DEVICE);
  	if (!msgbuf->tx_pktids)
  		goto fail;
-+	/* Hypothesis: J71b BCM4355C1 reads host-posted RX buffers during
-+	 * association. DART3 enforces direction: DMA_FROM_DEVICE gives only
-+	 * IOMMU_WRITE; stream0 READ FAULT (0x10) is consistent with that.
-+	 * Limit the extra READ permission to brcmfmac's RX packet IDs in
-+	 * this isolated Wi-Fi experiment. The same pktids->direction is
-+	 * used by map AND unmap.
++	/* J71b firmware reads RX buffers during association. Keep the
++	 * upstream DMA direction on other machines; map/unmap use the
++	 * same pktids->direction.
 +	 */
  	msgbuf->rx_pktids = brcmf_msgbuf_init_pktids(NR_RX_PKTIDS,
 -						     DMA_FROM_DEVICE);
-+						     DMA_BIDIRECTIONAL);
++				 of_machine_is_compatible("apple,j71b") ?
++				 DMA_BIDIRECTIONAL : DMA_FROM_DEVICE);
  	if (!msgbuf->rx_pktids)
  		goto fail;
  
@@ -70,6 +107,18 @@
  #include <linux/firmware.h>
  #include <linux/pci.h>
  #include <linux/vmalloc.h>
+@@ -1567,9 +1568,9 @@
+ 	brcmf_pcie_reset_device(devinfo);
+ 
+ 	fwreq = brcmf_pcie_prepare_fw_request(devinfo);
+-	if (!fwreq) {
++	if (IS_ERR_OR_NULL(fwreq)) {
+ 		dev_err(dev, "Failed to prepare FW request\n");
+-		return -ENOMEM;
++		return fwreq ? PTR_ERR(fwreq) : -ENOMEM;
+ 	}
+ 
+ 	err = brcmf_fw_get_firmwares(dev, fwreq, brcmf_pcie_setup);
 @@ -1744,6 +1745,8 @@
  
  			address -= rand_len;
@@ -124,7 +173,7 @@
  	brcmf_pcie_attach(devinfo);
  
  	fw = fwreq->items[BRCMF_PCIE_FW_CODE].binary;
-@@ -2230,7 +2257,8 @@
+@@ -2230,8 +2257,17 @@
  fail:
  	brcmf_err(bus, "Dongle setup failed\n");
  	brcmf_pcie_bus_console_read(devinfo, true);
@@ -132,38 +181,73 @@
 +	if (devinfo->state == BRCMFMAC_PCIE_STATE_UP)
 +		brcmf_fw_crashed(dev);
  	device_release_driver(dev);
++}
++
++/* OTP values become filename components, never paths or fallback patterns. */
++static bool brcmf_j71b_otp_component(const char *value)
++{
++	return value[0] &&
++	       strspn(value, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.") ==
++	       strlen(value);
  }
  
-@@ -2245,6 +2273,21 @@
+ static struct brcmf_fw_request *
+@@ -2245,6 +2281,21 @@
  		{ ".txcap_blob", devinfo->txcap_name },
  	};
  
-+	/* This private J71b research package maps apple,j71b to the exact
-+	 * figaroa/YSBC/u/4.3 public IPSW files. Refuse every other OTP/board
-+	 * BEFORE requesting or DMA-loading potentially wrong NVRAM/firmware.
++	/* J71b has no antenna SKU. Select NVRAM by the full OTP tuple,
++	 * independently of the upstream antenna-SKU fallback chain.
++	 * Do not restrict the machine to the first unit used for bring-up.
 +	 */
 +	if (of_machine_is_compatible("apple,j71b") &&
 +	    (!devinfo->fwseed || !devinfo->otp.valid ||
-+	     strcmp(devinfo->otp.module, "YSBC") ||
-+	     strcmp(devinfo->otp.vendor, "u") ||
-+	     strcmp(devinfo->otp.version, "4.3") ||
++	     !brcmf_j71b_otp_component(devinfo->otp.module) ||
++	     !brcmf_j71b_otp_component(devinfo->otp.vendor) ||
++	     !brcmf_j71b_otp_component(devinfo->otp.version) ||
 +	     !devinfo->settings->board_type ||
 +	     strcmp(devinfo->settings->board_type, "apple,j71b"))) {
-+		brcmf_err(NULL, "J71b OTP/board profile mismatch: firmware denied\n");
-+		return NULL;
++		brcmf_err(NULL, "J71b invalid OTP/board or missing firmware seed\n");
++		return ERR_PTR(-EINVAL);
 +	}
 +
  	fwreq = brcmf_fw_alloc_request(devinfo->ci->chip, devinfo->ci->chiprev,
  				       brcmf_pcie_fwnames,
  				       ARRAY_SIZE(brcmf_pcie_fwnames),
-@@ -2254,7 +2297,9 @@
+@@ -2254,7 +2305,24 @@
  
  	fwreq->items[BRCMF_PCIE_FW_CODE].type = BRCMF_FW_TYPE_BINARY;
  	fwreq->items[BRCMF_PCIE_FW_NVRAM].type = BRCMF_FW_TYPE_NVRAM;
 -	fwreq->items[BRCMF_PCIE_FW_NVRAM].flags = BRCMF_FW_REQF_OPTIONAL;
-+	/* Exact J71b profile requires NVRAM; don't boot without it/seed. */
-+	if (!of_machine_is_compatible("apple,j71b"))
++	if (of_machine_is_compatible("apple,j71b")) {
++		char *path;
++		int len = strlen(devinfo->nvram_name) - strlen(".txt");
++
++		path = devm_kasprintf(&devinfo->pdev->dev, GFP_KERNEL,
++				     "%.*s.apple,j71b-%s-%s-%s.txt",
++				     len, devinfo->nvram_name,
++				     devinfo->otp.module, devinfo->otp.vendor,
++				     devinfo->otp.version);
++		if (!path) {
++			kfree(fwreq);
++			return NULL;
++		}
++		fwreq->items[BRCMF_PCIE_FW_NVRAM].path = path;
++		fwreq->items[BRCMF_PCIE_FW_NVRAM].flags = BRCMF_FW_REQF_EXACT;
++	} else {
 +		fwreq->items[BRCMF_PCIE_FW_NVRAM].flags = BRCMF_FW_REQF_OPTIONAL;
++	}
  	fwreq->items[BRCMF_PCIE_FW_CLM].type = BRCMF_FW_TYPE_BINARY;
  	fwreq->items[BRCMF_PCIE_FW_CLM].flags = BRCMF_FW_REQF_OPTIONAL;
  	fwreq->items[BRCMF_PCIE_FW_TXCAP].type = BRCMF_FW_TYPE_BINARY;
+@@ -2549,8 +2617,8 @@
+ #endif
+ 
+ 	fwreq = brcmf_pcie_prepare_fw_request(devinfo);
+-	if (!fwreq) {
+-		ret = -ENOMEM;
++	if (IS_ERR_OR_NULL(fwreq)) {
++		ret = fwreq ? PTR_ERR(fwreq) : -ENOMEM;
+ 		goto fail_brcmf;
+ 	}
+ 

@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 
 HARDWARE = Path(__file__).resolve().parents[1]
 DEVICE = HARDWARE / 'devices/j71b/device.toml'
-RECIPE_SHA256 = '1f70f77036204d4350c482b2b211ba15ba969616ab69c7fb570c0946ec3b71fd'
+RECIPE_SHA256 = '6ce6f51f9a7816bc62c5fa8313758d1e9fa320e1e21ace8f690762cb0893a25d'
 
 
 class J71bData(unittest.TestCase):
@@ -66,7 +66,7 @@ class J71bData(unittest.TestCase):
 
     def test_data_only_destinations_unique_and_contained(self):
         entries = self.recipe['files'] + self.recipe['generated']
-        self.assertEqual(len(entries), 7)
+        self.assertEqual(len(entries), 10)
         self.assertEqual(len({entry['name'] for entry in entries}), len(entries))
         self.assertEqual(len({entry['destination'] for entry in entries}), len(entries))
         for entry in entries:
