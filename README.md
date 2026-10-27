@@ -4,7 +4,10 @@ Hardware support and image-building resources for Linux on Apple devices. This r
 
 ## Supported hardware
 
-Currently: iPad 6 Wi-Fi (`iPad7,5`, J71b), experimental. Boot is tethered and GPU acceleration is not available.
+Currently, all experimental, tethered and without GPU acceleration:
+
+- iPad 6 Wi-Fi (`iPad7,5`, J71b, A10 T8010).
+- iPad 5 Wi-Fi (`iPad6,11`, J71t, A9 S8003), tested on one unit. The Samsung S8000 variant (J71s) is not supported, and there is no shared launcher for J71t yet.
 
 ## Use
 
@@ -13,7 +16,7 @@ For installing and starting a published system, use the [Orchard CLI](https://gi
 For building components or another image, follow [BUILD.md](BUILD.md). All commands run from this repository or installed package resources; no sibling source checkout is needed.
 
 - [Kernel producers](kernel/README.md)
-- [Recovery tools](boot/initramfs/j71b/recovery/README.md)
+- [Recovery tools](boot/initramfs/j71b/recovery/README.md) and [J71t recovery](boot/initramfs/j71t/recovery/README.md)
 - [GitHub builds and release ordering](docs/ci.md)
 - [Shared launcher build and publication](boot/quiet/README.md)
 - [Device protocol](https://github.com/OrchardLinux/cli/blob/main/docs/device-protocol.md)

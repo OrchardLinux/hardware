@@ -12,5 +12,11 @@ Reference revision: 944541e67b4c603df328c77d30093551de802c17.
 Original copyright notices and per-file licenses remain applicable. This is
 selective reuse and adaptation, not a replacement of the pinned base kernel.
 
+The J71t (iPad 5 Wi-Fi, S8003) kernel patches, configuration and m1n1 patches
+come from the linux-a9 iPad 5 port (https://github.com/brkosebay/linux, branch
+a9/release), which builds on the same HoolockLinux base and adapts Paul
+Praschl's (Pauli1Go) T8010 PCIe/ANS, SmartIO, Wi-Fi and Bluetooth work to A9.
+Original copyright notices and per-file licenses remain applicable.
+
 m1n1: Asahi Linux Contributors, MIT (LICENSES/m1n1.txt).
 Wireless regulatory database: LICENSES/wireless-regdb.txt.

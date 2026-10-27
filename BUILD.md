@@ -26,6 +26,8 @@ HW=$(python -c 'from pathlib import Path; import orchard_hardware; print(Path(or
 "$HW/boot/m1n1/build" j71b --output "$PWD/out/m1n1.bin"
 ```
 
+Replace `j71b` with `j71t` for the iPad 5 Wi-Fi. Image producers take the same device as `--device` (default `j71b`): `orchard_hardware.image.recovery`, `orchard_hardware.image.launcher`, `ci/package_components.py`, `ci/launcher_inputs.py` and `boot/quiet/build.py`; `orchard_hardware.image.runtime.files()` takes it as `profile`.
+
 Choose new output paths. Producers use pinned upstream revisions, hardware patches and public toolchains. Their `.work` cache lives beside the installed producer, so use a writable virtual environment. Kernel/module builds enforce matching kernel releases. See [kernel/README.md](kernel/README.md) and [recovery tools](boot/initramfs/j71b/recovery/README.md) for individual producers.
 
 The m1n1 backend is unbranded by default. A distro can pass `--extra-patch FILE`, `--include-header FILE`, and `--extra-cflags FLAGS` for its own presentation.
@@ -35,12 +37,12 @@ The m1n1 backend is unbranded by default. A distro can pass `--extra-patch FILE`
 - `image/runtime.py`: modules, hardware/touch scripts, device API and integrity lists.
 - `image/prepare_runtime.py`: Python/ELF dependency staging and recovery root-stream receipt.
 - `image/recovery.py`: recovery assembly, newc packing and m1n1 framing.
-- `runtime/j71b`: archive containment, staging cleanup, storage fencing and PID-1 handoff.
+- `runtime/j71b`: archive containment, staging cleanup, storage fencing and PID-1 handoff, shared by all devices; `runtime/<device>` adds hardware preparation and platform checks.
 - `devices/j71b/touch/runtime`: device activation scripts.
 
 Image builders pass a `--policy-dir` containing `image_policy.py` and supporting modules. The policy is staged into the image, not imported on the host. It supplies `ready`, `validate_root`, `validate_handoff`, `verify_privileges`, `verify_session_access`, `diagnostics`, and `INIT`; diagnostic retirement also uses `stop_diagnostics` and `DIAGNOSTICS_EXECUTABLE`. Desktop and init policy belong to the image, not the shared hardware runtime.
 
-Recovery and installed roots receive identical public runtime files and integrity lists. Runtime paths are `/run/orchard`, `/etc/orchard`, and `/usr/libexec/orchard-j71b`; the command endpoint is `/usr/bin/orchard-device`.
+Recovery and installed roots receive identical public runtime files and integrity lists. Runtime paths are `/run/orchard`, `/etc/orchard`, and `/usr/libexec/orchard-<device>` (for example `orchard-j71b`); the command endpoint is `/usr/bin/orchard-device`.
 
 ## Shared launcher and publication
 
