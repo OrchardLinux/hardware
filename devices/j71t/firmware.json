@@ -24,7 +24,8 @@
     {"name": "P-feara_M-YSBU_V-u__m-1.1.txt", "sha256": "05eb7f987f4be2c23cbd5885b539470db4633cbe87ab2f1c3449473a178f2dcf", "destination": "lib/firmware/brcm/brcmfmac4355-pcie.apple,feara-YSBU-u-1.1.txt"},
     {"name": "BCM4355C0-FearA-USI.hcd", "sha256": "5513d25b9ebd3103263d27a14e709a884508feab5723521d18780cf26f0c24b2", "destination": "lib/firmware/brcm/BCM.apple,j71t.hcd"},
     {"name": "s8000-smartio.bin", "sha256": "da53095ed3364689ffd56f6576f036e4741a98836147a181c335626389ef5a36", "destination": "lib/firmware/apple/s8000-smartio.bin"},
-    {"name": "j71t-n1.bin", "sha256": "98f73566489fed958a04bb73b87f63d8abd6948b7ceacd89d1bc638e64b8998d", "destination": "lib/firmware/apple/j71t-n1.bin"}
+    {"name": "j71t-n1.bin", "sha256": "98f73566489fed958a04bb73b87f63d8abd6948b7ceacd89d1bc638e64b8998d", "destination": "lib/firmware/apple/j71t-n1.bin"},
+    {"name": "vxd-deva.bin", "sha256": "bf5167652e81540471aaca141943fd33d71c3990c137f145471305f5f5ade83b", "destination": "lib/firmware/apple/vxd-deva.bin"}
   ],
   "generated": [
     {"name": "j71t-n1-calibration.bin", "destination": "lib/firmware/apple/j71t-n1-calibration.bin", "generator": "j71t-adt"},

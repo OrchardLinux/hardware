@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 
 HARDWARE = Path(__file__).resolve().parents[1]
 DEVICE = HARDWARE / 'devices/j71t/device.toml'
-RECIPE_SHA256 = 'a04519b0e93cd040e2df11e3d99e732ed8c2559203ee67ae57a27fa548f3aeb5'
+RECIPE_SHA256 = '27fed6fe95cde773bd2d66d6b37003f8dcfb335db332a1a4c38e5f501db37ef6'
 WINDOW = 'nvme.write_window=1:0-4294967295'
 
 
@@ -67,7 +67,7 @@ class J71tData(unittest.TestCase):
 
     def test_data_only_destinations_unique_and_contained(self):
         entries = self.recipe['files'] + self.recipe['generated']
-        self.assertEqual(len(entries), 19)
+        self.assertEqual(len(entries), 20)
         self.assertEqual(len({entry['name'] for entry in entries}), len(entries))
         self.assertEqual(len({entry['destination'] for entry in entries}), len(entries))
         for entry in entries:
