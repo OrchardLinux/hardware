@@ -76,7 +76,7 @@
 +    const u8 empty_mac[6] = {0};
 +    const u8 broadcast_mac[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 +    if (!mac || !chosen_mac || !cal || mac_len != 6 || chosen_len != 6 ||
-+        cal_len != 1780 || (mac[0] & 1) ||
++        !cal_len || (mac[0] & 1) ||
 +        !memcmp(mac, empty_mac, sizeof(empty_mac)) ||
 +        !memcmp(mac, broadcast_mac, sizeof(broadcast_mac)) ||
 +        memcmp(mac, chosen_mac, 6)) {

@@ -3681,7 +3681,6 @@ index 271ababf0..ec84de96f 100644
  
  module_spi_driver(apple_z2_driver);
 diff --git a/drivers/iommu/apple-dart.c b/drivers/iommu/apple-dart.c
-index 85311e95f..d28380068 100644
 --- a/drivers/iommu/apple-dart.c
 +++ b/drivers/iommu/apple-dart.c
 @@ -23,6 +23,7 @@
@@ -3713,7 +3712,7 @@ index 85311e95f..d28380068 100644
  
  #define DART_S5L8960X_TTBR	0x40
  
-@@ -215,6 +223,9 @@ struct apple_dart {
+@@ -215,12 +223,17 @@
  	u32 supports_bypass : 1;
  	u32 four_level : 1;
  
@@ -3723,16 +3722,15 @@ index 85311e95f..d28380068 100644
  	struct iommu_group *sid2group[DART_MAX_STREAMS];
  	struct iommu_device iommu;
  
-@@ -222,6 +233,8 @@ struct apple_dart {
+ 	u32 save_tcr[DART_MAX_STREAMS];
  	u32 save_ttbr[DART_MAX_STREAMS][DART_MAX_TTBR];
  };
- 
-+static DEFINE_MUTEX(apple_dart_groups_lock);
 +
++static DEFINE_MUTEX(apple_dart_groups_lock);
+ 
  struct apple_dart_hw {
  	enum dart_type type;
- 	irqreturn_t (*irq_handler)(int irq, void *dev);
-@@ -310,13 +323,6 @@ struct apple_dart_master_cfg {
+@@ -310,10 +323,7 @@
  	/* Intersection of DART capabilitles */
  	u32 supports_bypass : 1;
  
@@ -3740,23 +3738,22 @@ index 85311e95f..d28380068 100644
 -	 * DMA aperture start and end to be overridden by "iommus"' phandle
 -	 * args. By default determined by DART's ias but may be outside of it.
 -	 */
--	dma_addr_t dma_min;
--	dma_addr_t dma_max;
--
- 	struct apple_dart_stream_map stream_maps[MAX_DARTS_PER_DEVICE];
- };
++	/* Intersection of controller and per-master DMA windows. */
+ 	dma_addr_t dma_min;
+ 	dma_addr_t dma_max;
  
-@@ -367,11 +373,14 @@ static u32 apple_dart_s5l8960x_read_tcr(struct apple_dart *dart, u32 sid)
+@@ -367,11 +377,14 @@
  
  static void apple_dart_s5l8960x_write_tcr(struct apple_dart *dart, u32 sid, u32 val)
  {
 -	WARN_ON(sid >= 4);
 -	u32 tcr = readl(dart->regs + dart->hw->tcr);
-+	u32 shift = sid * DART_S5L8960X_TCR_BITS_PER_STREAM;
-+	u32 tcr;
- 
+-
 -	tcr &= 0xff << (sid * DART_S5L8960X_TCR_BITS_PER_STREAM);
 -	tcr |= val;
++	u32 shift = sid * DART_S5L8960X_TCR_BITS_PER_STREAM;
++	u32 tcr;
++
 +	WARN_ON(sid >= DART_S5L8960X_MAX_STREAMS);
 +	tcr = readl(dart->regs + dart->hw->tcr);
 +
@@ -3765,48 +3762,49 @@ index 85311e95f..d28380068 100644
  	writel(tcr, dart->regs + dart->hw->tcr);
  }
  
-@@ -439,23 +448,30 @@ apple_dart_hw_clear_all_ttbrs(struct apple_dart_stream_map *stream_map)
+@@ -439,23 +452,30 @@
  }
  
  static int
--apple_dart_s5l8960x_hw_stream_command(struct apple_dart_stream_map *stream_map,
--			     u32 command)
 +apple_dart_s5l8960x_command_locked(struct apple_dart_stream_map *stream_map,
 +				   u32 command)
- {
--	unsigned long flags;
--	int ret;
- 	u32 command_reg;
- 
--	spin_lock_irqsave(&stream_map->dart->lock, flags);
--
- 	writel(stream_map->sidmap[0] << DART_S5L8960X_STREAM_COMMAND_SID_SHIFT |
- 	       command, stream_map->dart->regs + DART_S5L8960X_STREAM_COMMAND);
- 
--	ret = readl_poll_timeout_atomic(
--		stream_map->dart->regs + DART_S5L8960X_STREAM_COMMAND, command_reg,
--		!(command_reg & DART_S5L8960X_STREAM_COMMAND_BUSY), 1,
--		DART_STREAM_COMMAND_BUSY_TIMEOUT);
++{
++	u32 command_reg;
++
++	writel(stream_map->sidmap[0] << DART_S5L8960X_STREAM_COMMAND_SID_SHIFT |
++	       command, stream_map->dart->regs + DART_S5L8960X_STREAM_COMMAND);
++
 +	return readl_poll_timeout_atomic(stream_map->dart->regs +
 +					 DART_S5L8960X_STREAM_COMMAND,
 +					 command_reg,
 +			!(command_reg & DART_S5L8960X_STREAM_COMMAND_BUSY), 1,
 +			DART_STREAM_COMMAND_BUSY_TIMEOUT);
 +}
- 
-+static int
-+apple_dart_s5l8960x_hw_stream_command(struct apple_dart_stream_map *stream_map,
-+				      u32 command)
-+{
-+	unsigned long flags;
-+	int ret;
 +
-+	spin_lock_irqsave(&stream_map->dart->lock, flags);
++static int
+ apple_dart_s5l8960x_hw_stream_command(struct apple_dart_stream_map *stream_map,
+-			     u32 command)
++				      u32 command)
+ {
+ 	unsigned long flags;
+ 	int ret;
+-	u32 command_reg;
+ 
+ 	spin_lock_irqsave(&stream_map->dart->lock, flags);
+-
+-	writel(stream_map->sidmap[0] << DART_S5L8960X_STREAM_COMMAND_SID_SHIFT |
+-	       command, stream_map->dart->regs + DART_S5L8960X_STREAM_COMMAND);
+-
+-	ret = readl_poll_timeout_atomic(
+-		stream_map->dart->regs + DART_S5L8960X_STREAM_COMMAND, command_reg,
+-		!(command_reg & DART_S5L8960X_STREAM_COMMAND_BUSY), 1,
+-		DART_STREAM_COMMAND_BUSY_TIMEOUT);
+-
 +	ret = apple_dart_s5l8960x_command_locked(stream_map, command);
  	spin_unlock_irqrestore(&stream_map->dart->lock, flags);
  
  	if (ret) {
-@@ -599,6 +615,98 @@ static int apple_dart_hw_reset(struct apple_dart *dart)
+@@ -599,6 +619,98 @@
  	return dart->hw->invalidate_tlb(&stream_map);
  }
  
@@ -3905,24 +3903,22 @@ index 85311e95f..d28380068 100644
  static void apple_dart_domain_flush_tlb(struct apple_dart_domain *domain)
  {
  	int i, j;
-@@ -696,7 +804,8 @@ static int apple_dart_finalize_domain(struct apple_dart_domain *dart_domain,
+@@ -696,7 +808,8 @@
  {
  	struct apple_dart *dart = cfg->stream_maps[0].dart;
  	struct io_pgtable_cfg pgtbl_cfg;
 -	u32 ias = min_t(u32, dart->ias, fls64(cfg->dma_max));
-+	dma_addr_t dma_max = dart->dma_max;
++	dma_addr_t dma_max = cfg->dma_max;
 +	u32 ias = min_t(u32, dart->ias, fls64(dma_max));
  	int ret = 0;
  	int i, j;
  
-@@ -731,13 +840,17 @@ static int apple_dart_finalize_domain(struct apple_dart_domain *dart_domain,
- 	}
+@@ -732,12 +845,16 @@
  
  	if (dart->hw->type == DART_S5L8960X)
--		dart_domain->mask = ~cfg->dma_min;
+ 		dart_domain->mask = ~cfg->dma_min;
 -	else
 -		dart_domain->mask = DMA_BIT_MASK(pgtbl_cfg.ias);
-+		dart_domain->mask = ~dart->dma_min;
 +	else if (pgtbl_cfg.pgsize_bitmap == SZ_4K)
 +		dart_domain->mask = DMA_BIT_MASK(min_t(u32, dart->ias, 32));
 +	else if (pgtbl_cfg.apple_dart_cfg.n_levels == 3)
@@ -3931,90 +3927,46 @@ index 85311e95f..d28380068 100644
 +		dart_domain->mask = DMA_BIT_MASK(min_t(u32, dart->ias, 47));
  
  	dart_domain->domain.pgsize_bitmap = pgtbl_cfg.pgsize_bitmap;
--	dart_domain->domain.geometry.aperture_start = cfg->dma_min;
+ 	dart_domain->domain.geometry.aperture_start = cfg->dma_min;
 -	dart_domain->domain.geometry.aperture_end = cfg->dma_max;
-+	dart_domain->domain.geometry.aperture_start = dart->dma_min;
 +	dart_domain->domain.geometry.aperture_end = dma_max;
  	dart_domain->domain.geometry.force_aperture = true;
  
  	dart_domain->finalized = true;
-@@ -914,65 +1027,20 @@ static int apple_dart_of_xlate(struct device *dev,
+@@ -914,8 +1031,8 @@
  	struct platform_device *iommu_pdev = of_find_device_by_node(args->np);
  	struct apple_dart *dart = platform_get_drvdata(iommu_pdev);
  	struct apple_dart *cfg_dart;
 -	dma_addr_t dma_max = DMA_BIT_MASK(dart->ias);
 -	dma_addr_t dma_min = 0;
++	dma_addr_t dma_max = dart->dma_max;
++	dma_addr_t dma_min = dart->dma_min;
  	int i, sid;
  
  	put_device(&iommu_pdev->dev);
+@@ -954,6 +1071,12 @@
+ 			return -EINVAL;
+ 		}
+ 	}
++
++	/* A per-master window may narrow, but not escape, the controller window. */
++	dma_min = max(dma_min, dart->dma_min);
++	dma_max = min(dma_max, dart->dma_max);
++	if (dma_min > dma_max)
++		return -EINVAL;
  
--	if (args->args_count != 1 && args->args_count != 5)
-+	if (args->args_count != 1)
- 		return -EINVAL;
--
- 	sid = args->args[0];
- 
--	if (args->args_count == 5) {
--		dma_addr_t length = ((dma_addr_t)args->args[3] << 32) | args->args[4];
--
--		if (!length)
--			return -EINVAL;
--
--		dma_min = ((dma_addr_t)args->args[1] << 32) | args->args[2];
--
--		if (!IS_ALIGNED(dma_min, dart->pgsize) ||
--		    !IS_ALIGNED(length, dart->pgsize)) {
--			dev_err(dev, "Unaligned DMA window %pad, %pad (0x%x)\n",
--				&dma_min, &length, dart->pgsize);
--			return -EINVAL;
--		}
--		if (check_add_overflow(dma_min, length - 1, &dma_max)) {
--			dev_err(dev, "DMA window length (%pad) overflows range for start %pad\n",
--				&length, &dma_min);
--			return -EINVAL;
--		}
--
--		/*
--		 * Ensure that the DMA window does not exceed the DART's ias.
--		 */
--		if ((dma_min ^ dma_max) & ~DMA_BIT_MASK(dart->ias)) {
--			dev_err(dev, "Invalid DMA window for ias=%d\n",
--				dart->ias);
--			return -EINVAL;
--		}
--	}
--
  	if (!cfg) {
  		cfg = kzalloc_obj(*cfg);
- 		if (!cfg)
- 			return -ENOMEM;
- 		/* Will be ANDed with DART capabilities */
- 		cfg->supports_bypass = true;
--		/* Will be merged with other DARTs to the common range. */
--		cfg->dma_min = dma_min;
--		cfg->dma_max = dma_max;
--	} else {
--		if (dma_min >= cfg->dma_max || cfg->dma_min >= dma_max) {
--			dev_err(dev, "non-overlapping DMA windows: %pad..%pad, %pad..%pad\n",
--				&dma_min, &dma_max,
--				&cfg->dma_min, &cfg->dma_max);
--			return -EINVAL;
--		}
--		cfg->dma_min = max(dma_min, cfg->dma_min);
--		cfg->dma_max = min(dma_max, cfg->dma_max);
- 	}
- 	dev_iommu_priv_set(dev, cfg);
+@@ -1002,8 +1125,6 @@
  
-@@ -1003,8 +1071,6 @@ static int apple_dart_of_xlate(struct device *dev,
  	return -EINVAL;
  }
- 
--static DEFINE_MUTEX(apple_dart_groups_lock);
 -
+-static DEFINE_MUTEX(apple_dart_groups_lock);
+ 
  static void apple_dart_release_group(void *iommu_data)
  {
- 	int i, sid;
-@@ -1182,7 +1248,6 @@ static const struct iommu_ops apple_dart_iommu_ops = {
+@@ -1182,7 +1303,6 @@
  static irqreturn_t apple_dart_s5l8960x_irq(int irq, void *dev)
  {
  	struct apple_dart *dart = dev;
@@ -4022,7 +3974,7 @@ index 85311e95f..d28380068 100644
  	const char *fault_name = NULL;
  	u32 error = readl(dart->regs + DART_S5L8960X_ERROR);
  	u32 error_code = FIELD_GET(DART_S5L8960X_ERROR_CODE, error);
-@@ -1209,7 +1274,7 @@ static irqreturn_t apple_dart_s5l8960x_irq(int irq, void *dev)
+@@ -1209,7 +1329,7 @@
  	dev_err_ratelimited(
  		dart->dev,
  		"translation fault: status:0x%x stream:%d code:0x%x (%s) at 0x%llx",
@@ -4031,7 +3983,7 @@ index 85311e95f..d28380068 100644
  
  	writel(error, dart->regs + DART_S5L8960X_ERROR);
  	return IRQ_HANDLED;
-@@ -1301,6 +1366,7 @@ static int apple_dart_probe(struct platform_device *pdev)
+@@ -1301,6 +1421,7 @@
  	struct resource *res;
  	struct apple_dart *dart;
  	struct device *dev = &pdev->dev;
@@ -4039,7 +3991,7 @@ index 85311e95f..d28380068 100644
  
  	dart = devm_kzalloc(dev, sizeof(*dart), GFP_KERNEL);
  	if (!dart)
-@@ -1367,6 +1433,27 @@ static int apple_dart_probe(struct platform_device *pdev)
+@@ -1367,6 +1488,34 @@
  		break;
  	}
  
@@ -4053,7 +4005,14 @@ index 85311e95f..d28380068 100644
 +		goto err_clk_disable;
 +	} else {
 +		dart->dma_min = dma_range[0];
-+		dart->dma_max = dma_range[0] + dma_range[1] - 1;
++		if (!dma_range[1] ||
++		    !IS_ALIGNED(dma_range[0], dart->pgsize) ||
++		    !IS_ALIGNED(dma_range[1], dart->pgsize) ||
++		    check_add_overflow(dma_range[0], dma_range[1] - 1,
++				       &dart->dma_max)) {
++			ret = -EINVAL;
++			goto err_clk_disable;
++		}
 +		if ((dart->dma_min ^ dart->dma_max) & ~DMA_BIT_MASK(dart->ias)) {
 +			dev_err(&pdev->dev, "Invalid DMA range for ias=%d\n",
 +				dart->ias);
@@ -4067,7 +4026,7 @@ index 85311e95f..d28380068 100644
  	if (dart->num_streams > DART_MAX_STREAMS) {
  		dev_err(&pdev->dev, "Too many streams (%d > %d)\n",
  			dart->num_streams, DART_MAX_STREAMS);
-@@ -1432,7 +1519,7 @@ static const struct apple_dart_hw apple_dart_hw_s5l8960x = {
+@@ -1432,7 +1581,7 @@
  	.write_tcr = apple_dart_s5l8960x_write_tcr,
  	.oas = 36,
  	.fmt = APPLE_DART,

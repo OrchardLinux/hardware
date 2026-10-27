@@ -13,6 +13,7 @@ For installing and starting a published system, use the [Orchard CLI](https://gi
 For building components or another image, follow [BUILD.md](BUILD.md). All commands run from this repository or installed package resources; no sibling source checkout is needed.
 
 - [Kernel producers](kernel/README.md)
+- [J71b compatibility audit and validation limits](docs/j71b-compatibility-audit.md)
 - [Recovery tools](boot/initramfs/j71b/recovery/README.md)
 - [GitHub builds and release ordering](docs/ci.md)
 - [Shared launcher build and publication](boot/quiet/README.md)
