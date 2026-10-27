@@ -12,9 +12,10 @@ import tarfile
 
 
 class CountingReader:
-    def __init__(self, source, limit):
+    def __init__(self, source, limit, progress=None):
         self.source, self.limit, self.count = source, limit, 0
         self.digest = hashlib.sha256()
+        self.progress = progress
 
     def read(self, size=-1):
         data = self.source.read(min(size if size >= 0 else 1048576, 1048576))
@@ -22,6 +23,8 @@ class CountingReader:
         if self.count > self.limit:
             raise ValueError('Incoming stream exceeds declared size')
         self.digest.update(data)
+        if data and self.progress is not None:
+            self.progress(self.count)
         return data
 
 
@@ -59,8 +62,9 @@ def parent_fd(root, name):
         raise
 
 
-def extract(source, destination, *, size, sha256, expanded_limit, ownership=True, compression='gzip'):
-    incoming = CountingReader(source, size)
+def extract(source, destination, *, size, sha256, expanded_limit, ownership=True, compression='gzip',
+            progress=None):
+    incoming = CountingReader(source, size, progress)
     root = os.open(destination, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     seen, links, directories = set(), [], []
     expanded = 0

@@ -51,6 +51,16 @@ clients should allow a suitably long timeout for both `destination` and
 `root-cache`. Progress phases distinguish `verifying-root-cache`, `cache-hit`,
 `cache-store`, `stream-extraction` and `cached-extraction`.
 
+During cached extraction, protocol-v1 `progress` events carry
+`phase: "cached-extraction"`, integer `bytes` and `total` compressed-archive
+counts, and boolean `complete`. An initial zero is followed by updates at most
+four times per second. The final `bytes == total, complete: true` event is sent
+only after archive integrity and filesystem extraction finish successfully;
+root policy validation and installation finalization still follow. These are
+local extraction counts, not USB traffic. Older clients may log these events
+as diagnostics without affecting installation. Streaming installs retain their
+existing host-side transfer progress.
+
 ## Integrity, interruption and retention
 
 Reuse requires the exact hash **and** compressed byte count from the recovery's

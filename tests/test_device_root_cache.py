@@ -107,6 +107,61 @@ class DeviceCache(unittest.TestCase):
     def cache_path(self):
         return self.device.ROOT / self.device.root_cache.DIRECTORY / self.device.root_cache.key(self.image)
 
+    def extraction_events(self):
+        return [call.kwargs for call in self.device.emit.call_args_list
+                if call.args == ('progress',) and call.kwargs.get('phase') == 'cached-extraction']
+
+    def test_cached_extraction_reports_exact_initial_and_completed_bytes(self):
+        self.install('store')
+        self.assertEqual(self.extraction_events(), [])
+        self.reset_boot()
+        self.install('reuse')
+        events = self.extraction_events()
+        self.assertEqual(events[0], {'phase': 'cached-extraction', 'bytes': 0,
+                                    'total': len(self.data), 'complete': False})
+        self.assertEqual(events[-1], {'phase': 'cached-extraction', 'bytes': len(self.data),
+                                     'total': len(self.data), 'complete': True})
+        self.assertEqual(sum(event['complete'] for event in events), 1)
+
+    def test_extraction_progress_throttles_and_defers_final_byte_until_success(self):
+        d = self.device
+        with patch.object(d.time, 'monotonic', side_effect=[10, 10.1, 10.25, 10.3, 10.5]):
+            progress = d.ExtractionProgress(100)
+            for count in (10, 20, 30, 100):
+                progress.advance(count)
+        self.assertEqual([event['bytes'] for event in self.extraction_events()], [0, 20])
+        self.assertFalse(any(event['complete'] for event in self.extraction_events()))
+        progress.finish()
+        self.assertEqual([event['bytes'] for event in self.extraction_events()], [0, 20, 100])
+        self.assertTrue(self.extraction_events()[-1]['complete'])
+
+    def test_integrity_or_metadata_failure_never_reports_completed_extraction(self):
+        d = self.device
+        for failure in ('checksum', 'metadata'):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                d.emit.reset_mock()
+                image = dict(self.image)
+                if failure == 'checksum':
+                    image['sha256'] = '0' * 64
+                with patch.object(d.os, 'symlink', side_effect=OSError('link failed')) if failure == 'metadata' else ExitStack():
+                    with self.assertRaises((ValueError, OSError)):
+                        d.extract_root(io.BytesIO(self.data), Path(directory), {'root': image}, 'cached-extraction')
+                self.assertTrue(self.extraction_events())
+                self.assertFalse(any(event['complete'] for event in self.extraction_events()))
+                self.assertTrue(all(event['bytes'] < len(self.data) for event in self.extraction_events()))
+
+    def test_counting_reader_progress_is_bounded_and_never_counts_overflow(self):
+        reader_class = self.device.extract.__globals__['CountingReader']
+        source = Mock()
+        source.read.side_effect = [b'abc', b'def', b'']
+        progress = Mock()
+        reader = reader_class(source, 5, progress)
+        self.assertEqual(reader.read(), b'abc')
+        with self.assertRaisesRegex(ValueError, 'exceeds declared size'):
+            reader.read(2 * 1048576)
+        self.assertEqual(progress.call_args_list, [unittest.mock.call(3)])
+        self.assertEqual([call.args for call in source.read.call_args_list], [(1048576,), (1048576,)])
+
     def test_store_then_cold_recovery_replacement_reuses_without_stdin(self):
         d = self.device
         result = self.install('store')

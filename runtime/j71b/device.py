@@ -527,11 +527,41 @@ def root_cache_status(request):
         unmount_target(partition)
 
 
+class ExtractionProgress:
+    """Throttled compressed-byte counts; completion follows successful extraction."""
+    def __init__(self, total):
+        self.total, self.count = total, 0
+        self.last = time.monotonic()
+        self.report(complete=False)
+
+    def report(self, *, complete):
+        emit('progress', phase='cached-extraction', bytes=self.count,
+             total=self.total, complete=complete)
+
+    def advance(self, count):
+        self.count = count
+        now = time.monotonic()
+        # Reading the final compressed byte is not proof that decompression,
+        # archive integrity checks or filesystem metadata operations succeeded.
+        if count < self.total and now - self.last >= 0.25:
+            self.report(complete=False)
+            self.last = now
+
+    def finish(self):
+        if self.count != self.total:
+            raise ValueError('Cached extraction progress byte count differs')
+        self.report(complete=True)
+
+
 def extract_root(source, temporary, release, phase):
     image = release['root']
     emit('phase', phase=phase)
+    progress = ExtractionProgress(image['bytes']) if phase == 'cached-extraction' else None
     result = extract(source, temporary, size=image['bytes'], sha256=image['sha256'],
-                     expanded_limit=image['expanded_bytes'], compression=image['compression'])
+                     expanded_limit=image['expanded_bytes'], compression=image['compression'],
+                     progress=progress.advance if progress else None)
+    if progress:
+        progress.finish()
     emit('phase', phase='finalize')
     if (temporary / 'lib').readlink().as_posix() != 'usr/lib':
         raise ValueError('Root library layout differs')
