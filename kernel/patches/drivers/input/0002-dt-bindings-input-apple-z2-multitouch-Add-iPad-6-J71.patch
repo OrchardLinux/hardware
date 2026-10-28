@@ -8,11 +8,11 @@ runtime firmware. It has no display-sync pins.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- .../touchscreen/apple,z2-multitouch.yaml      | 35 +++++++++++++++++++
- 1 file changed, 35 insertions(+)
+ .../touchscreen/apple,z2-multitouch.yaml      | 47 +++++++++++++++++++
+ 1 file changed, 47 insertions(+)
 
 diff --git a/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml b/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml
-index 77e311df3..5ca5fa99b 100644
+index 77e311df3..78c212785 100644
 --- a/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml
 +++ b/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml
 @@ -17,6 +17,7 @@ properties:
@@ -23,7 +23,7 @@ index 77e311df3..5ca5fa99b 100644
        - apple,j172-touchscreen
        - apple,d11-touchscreen
        - apple,d111-touchscreen
-@@ -91,6 +92,24 @@ properties:
+@@ -91,6 +92,36 @@ properties:
      description:
        Dynamic shape acceleration calibration blob supplied by the bootloader
  
@@ -45,10 +45,22 @@ index 77e311df3..5ca5fa99b 100644
 +    description:
 +      Pressure effect correction blob supplied by the bootloader
 +
++  apple,z2-firefly-p100-cal-blob:
++    $ref: /schemas/types.yaml#/definitions/uint8-array
++    maxItems: 262144
++    description:
++      Firefly P100 calibration blob supplied by the bootloader
++
++  apple,z2-ext-cal-blob:
++    $ref: /schemas/types.yaml#/definitions/uint8-array
++    maxItems: 262144
++    description:
++      Extended multi-touch calibration blob supplied by the bootloader
++
  required:
    - compatible
    - interrupts
-@@ -122,6 +141,22 @@ allOf:
+@@ -122,6 +153,22 @@ allOf:
          - spi-cpol
          - apple,z2-bpw16-min-len
          - apple,z2-no-init-ack
