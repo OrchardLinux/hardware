@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Sat, 1 Aug 2026 17:16:43 +0200
+Subject: [PATCH 062/117] mfd: simple-mfd-i2c: support 8-bit Chestnut registers
+
+Apple's existing simple I2C PMIC match data configures a 16-bit register
+address with 8-bit values. Chestnut uses the same simple MFD parent model
+but addresses its registers with eight bits, so reusing apple,i2c-pmic
+would send malformed transactions.
+
+Add Chestnut-specific match data which selects the existing
+8-register/8-value regmap configuration and associate it with
+apple,chestnut-pmic. Child devices continue to be populated by
+simple-mfd-i2c and share the parent-owned regmap.
+
+Keeping the format in per-compatible match data preserves normal regmap
+lifetime, probe and removal handling. It avoids both a device-tree
+register-width property and a special case in the MFD or regmap cores. The
+complete kernel series built Image.gz, DTBs and modules, and the live D111
+PMIC bound through simple-mfd-i2c without Chestnut or regmap errors. This
+patch was checked with checkpatch.pl --strict.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: bb4061f9aae16a40f40ab5d1bd6f9386f2475dd8
+---
+ drivers/mfd/simple-mfd-i2c.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/drivers/mfd/simple-mfd-i2c.c b/drivers/mfd/simple-mfd-i2c.c
+index 8a81d7acc..636afd117 100644
+--- a/drivers/mfd/simple-mfd-i2c.c
++++ b/drivers/mfd/simple-mfd-i2c.c
+@@ -76,6 +76,10 @@ static const struct simple_mfd_data apple_i2c_pmic = {
+ 	.regmap_config = &regmap_config_16r_8v
+ };
+ 
++static const struct simple_mfd_data apple_chestnut_pmic = {
++	.regmap_config = &regmap_config_8r_8v
++};
++
+ static const struct mfd_cell sy7636a_cells[] = {
+ 	{ .name = "sy7636a-regulator", },
+ 	{ .name = "sy7636a-temperature", },
+@@ -125,6 +129,7 @@ static const struct simple_mfd_data spacemit_p1 = {
+ };
+ 
+ static const struct of_device_id simple_mfd_i2c_of_match[] = {
++	{ .compatible = "apple,chestnut-pmic", .data = &apple_chestnut_pmic },
+ 	{ .compatible = "apple,i2c-pmic", .data = &apple_i2c_pmic },
+ 	{ .compatible = "delta,tn48m-cpld" },
+ 	{ .compatible = "fsl,ls1028aqds-fpga" },

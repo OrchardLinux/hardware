@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Mon, 16 Jun 2025 09:32:04 +0800
+Subject: [PATCH 15/21] arm64: dts: apple: t7001: Add CPU PMU nodes
+
+Add CPU PMU nodes for Apple A8X SoC.
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ arch/arm64/boot/dts/apple/t7001.dtsi | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/t7001.dtsi b/arch/arm64/boot/dts/apple/t7001.dtsi
+index e1afb0542..b62122ea4 100644
+--- a/arch/arm64/boot/dts/apple/t7001.dtsi
++++ b/arch/arm64/boot/dts/apple/t7001.dtsi
+@@ -275,6 +275,15 @@
+ 		interrupts = <AIC_FIQ AIC_TMR_GUEST_PHYS IRQ_TYPE_LEVEL_HIGH>,
+ 			     <AIC_FIQ AIC_TMR_GUEST_VIRT IRQ_TYPE_LEVEL_HIGH>;
+ 	};
++
++	pmu {
++		compatible = "apple,typhoon-pmu";
++		interrupt-parent = <&aic>;
++		interrupts = <AIC_IRQ 75 IRQ_TYPE_LEVEL_HIGH>,
++			     <AIC_IRQ 78 IRQ_TYPE_LEVEL_HIGH>,
++			     <AIC_IRQ 81 IRQ_TYPE_LEVEL_HIGH>;
++		interrupt-affinity = <&cpu0 &cpu1 &cpu2>;
++	};
+ };
+ 
+ #include "t7001-pmgr.dtsi"

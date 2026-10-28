@@ -1,0 +1,34 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Sat, 7 Sep 2024 13:01:40 +0800
+Subject: [PATCH 01/10] dt-bindings: usb: dwc2: Add Apple A7-A11 compatibles
+
+Document the dwc2 compatibles for Apple A7-A11 SoCs.
+
+Some A9X and A10X devices support USB 3, so a -dwc2 prefix is used to
+indicate these bindings are for dwc2 (as opposed to -usb).
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ Documentation/devicetree/bindings/usb/dwc2.yaml | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/usb/dwc2.yaml b/Documentation/devicetree/bindings/usb/dwc2.yaml
+index 6c3a10991..166d37cd9 100644
+--- a/Documentation/devicetree/bindings/usb/dwc2.yaml
++++ b/Documentation/devicetree/bindings/usb/dwc2.yaml
+@@ -69,6 +69,14 @@ properties:
+           - const: snps,dwc2
+       - const: samsung,s3c6400-hsotg
+       - const: intel,socfpga-agilex-hsotg
++      - items:
++          - enum:
++              - apple,s5l8960x-dwc2
++              - apple,s8000-dwc2
++              - apple,t7000-dwc2
++              - apple,t8010-dwc2
++              - apple,t8015-dwc2
++          - const: apple,dwc2
+ 
+   reg:
+     maxItems: 1

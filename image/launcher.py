@@ -196,7 +196,7 @@ def main():
         public_lines = [
             'url = ' + json.dumps(args.public_base_url.rstrip('/') + '/' + json.loads(line[7:]))
             if line.startswith('file = ') else line for line in lines]
-        (args.output/'j71b-launcher.boot.toml').write_text('\n'.join(public_lines)+'\n')
+        (args.output/'j71b-apple-launcher.boot.toml').write_text('\n'.join(public_lines)+'\n')
     (args.output/'build-receipt.json').write_text(json.dumps({'schema':1,'release':args.release,
         'profile':'j71b','mode':'launcher','presentation':'black','inputs':inputs,'boot':boot,'pongo':pongo,
         'catalogue_sha256':sha(catalogue),'physical_qualification':'not-performed'},indent=2)+'\n')

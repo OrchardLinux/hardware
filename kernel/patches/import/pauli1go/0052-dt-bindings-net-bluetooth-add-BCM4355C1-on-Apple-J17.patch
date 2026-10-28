@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Mon, 27 Jul 2026 10:22:52 +0200
+Subject: [PATCH 052/117] dt-bindings: net: bluetooth: add BCM4355C1 on Apple
+ J172
+
+Add a generic brcm,bcm4355c1-bt compatible for UART-attached BCM4355C1
+controllers.
+
+Apple J172 requires additional board-specific power and transport
+sequencing. Describe it with apple,j172-bcm4355c1-bt followed by the
+generic BCM4355C1 compatible as a clean fallback.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: f11224c86fee26b25e4a912514f948ffd26e6e27
+---
+ .../devicetree/bindings/net/bluetooth/brcm,bluetooth.yaml     | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/net/bluetooth/brcm,bluetooth.yaml b/Documentation/devicetree/bindings/net/bluetooth/brcm,bluetooth.yaml
+index 95501e858..8f043322f 100644
+--- a/Documentation/devicetree/bindings/net/bluetooth/brcm,bluetooth.yaml
++++ b/Documentation/devicetree/bindings/net/bluetooth/brcm,bluetooth.yaml
+@@ -15,6 +15,9 @@ description:
+ properties:
+   compatible:
+     oneOf:
++      - items:
++          - const: apple,j172-bcm4355c1-bt
++          - const: brcm,bcm4355c1-bt
+       - items:
+           - enum:
+               - infineon,cyw43439-bt
+@@ -29,6 +32,7 @@ properties:
+           - brcm,bcm43438-bt
+           - brcm,bcm4345c5
+           - brcm,bcm43540-bt
++          - brcm,bcm4355c1-bt
+           - brcm,bcm4335a0
+           - brcm,bcm4349-bt
+           - cypress,cyw4373a0-bt

@@ -1,4 +1,4 @@
-"""Firmware/profile contracts and executable tests of the patched C selection blocks.
+"""Firmware/profile contracts and executable tests of the patched C selection block.
 
 These are host-side regression tests, not proof of radio initialization.
 """
@@ -7,11 +7,16 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-PATCHES = ROOT / 'kernel/patches/j71b'
+sys.path.insert(0, str(ROOT / 'kernel'))
+from series import patches as series_patches  # noqa: E402
+
+SELECTION = ROOT / 'kernel/patches/drivers/wifi/0002-wifi-brcmfmac-Select-Apple-NVRAM-by-OTP-when-there-i.patch'
+NVRAM = 'brcmfmac4355c1-pcie'
 
 
 def postimage(path):
@@ -34,56 +39,46 @@ def block(text, start):
 class WifiProfiles(unittest.TestCase):
     def setUp(self):
         self.recipe = json.loads((ROOT / 'devices/j71b/firmware.json').read_text())
-        self.source = postimage(PATCHES / '0002-j71b-wifi-driver.patch')
+        self.nvram = [{'name': row['steps'][0]['input'], 'sha256': row['sha256'], 'destination': row['destination']}
+                      for row in self.recipe['outputs'] if row['destination'].endswith('.txt')]
 
     def test_all_ipsw_profiles_have_separate_pinned_destinations(self):
         profiles = {'u-4.3': '9b05b7a2ff1b0baea5b8cb8240d1aedbfcdabafa2604742a72b5fe4a15f1b3ca',
                     'u-4.1': '9b05b7a2ff1b0baea5b8cb8240d1aedbfcdabafa2604742a72b5fe4a15f1b3ca',
                     'm-2.5': '0c83b29dd420c77eef163450aef451261dcebc484f6a2f16627f5a4f3cd52f72',
                     'm-2.3': '0c83b29dd420c77eef163450aef451261dcebc484f6a2f16627f5a4f3cd52f72'}
-        nvram = [row for row in self.recipe['files'] if row['name'].endswith('.txt')]
-        self.assertEqual(len(nvram), len(profiles))
+        self.assertEqual(len(self.nvram), len(profiles))
         for profile, digest in profiles.items():
             vendor, version = profile.split('-')
             self.assertIn({'name': f'P-figaroa_M-YSBC_V-{vendor}__m-{version}.txt',
                            'sha256': digest,
-                           'destination': 'lib/firmware/brcm/brcmfmac4355c1-pcie.apple,j71b-YSBC-' + profile + '.txt'}, nvram)
-        self.assertFalse(any(row['destination'].endswith('apple,j71b.txt') for row in nvram))
+                           'destination': f'lib/firmware/brcm/{NVRAM}.apple,j71b-YSBC-{profile}.txt'},
+                          self.nvram)
 
-    def test_exact_nvram_has_no_board_or_platform_fallback(self):
-        self.assertIn('flags = BRCMF_FW_REQF_EXACT;', self.source)
-        exact = self.source.index('if (cur->flags & BRCMF_FW_REQF_EXACT)\n\t\treturn request_firmware')
-        self.assertLess(exact, self.source.index('/* Files can be board-specific'))
-        self.assertIn('if (cur->flags & BRCMF_FW_REQF_EXACT)\n\t\t\tgoto fail;\n\t\tdata = bcm47xx_nvram_get_contents', self.source)
-        self.assertEqual(self.source.count('fwreq ? PTR_ERR(fwreq) : -ENOMEM'), 2)
+    def test_no_less_specific_nvram_is_packaged(self):
+        """Upstream falls back to shorter names; packaging none keeps profiles exact."""
+        for row in self.nvram:
+            stem = row['destination'].removeprefix(f'lib/firmware/brcm/{NVRAM}.').removesuffix('.txt')
+            self.assertRegex(stem, r'^apple,j71b-[A-Za-z0-9]+-[a-z]+-[0-9.]+$')
 
     def test_selection_c(self):
-        """Compile and execute the actual added guard and path-construction C."""
+        """Compile and execute the patched Apple OTP selection block."""
         cc = shutil.which('cc')
         if not cc:
             self.skipTest('host C compiler unavailable')
-        helper = block(self.source, 'static bool brcmf_j71b_otp_component')
-        guard = block(self.source, '\tif (of_machine_is_compatible("apple,j71b") &&\n\t    (!devinfo->fwseed')
-        selection = block(self.source, '\tif (of_machine_is_compatible("apple,j71b")) {\n\t\tchar *path;')
-        selection += ' else { fwreq->items[BRCMF_PCIE_FW_NVRAM].flags = BRCMF_FW_REQF_OPTIONAL; }'
+        selection = block(postimage(SELECTION),
+                          '\tif (devinfo->settings->board_type && devinfo->otp.valid) {')
         harness = r'''
 #include <assert.h>
-#include <stdbool.h>
-#include <stdint.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdarg.h>
-#include <errno.h>
-#define BRCMF_PCIE_FW_NVRAM 0
-#define BRCMF_FW_REQF_OPTIONAL 1
-#define BRCMF_FW_REQF_EXACT 2
 #define GFP_KERNEL 0
-#define ERR_PTR(n) ((void *)(intptr_t)(n))
-#define brcmf_err(...) ((void)0)
+#define PCIE 0
 #define kfree free
-static bool machine, allocation_failure;
-static bool of_machine_is_compatible(const char *s) { (void)s; return machine; }
+#define brcmf_dbg(...) ((void)0)
+static int allocation_failure;
 static char *devm_kasprintf(void *dev, int flags, const char *format, ...) {
     (void)dev; (void)flags;
     if (allocation_failure) return NULL;
@@ -91,66 +86,43 @@ static char *devm_kasprintf(void *dev, int flags, const char *format, ...) {
     va_list args; va_start(args, format); vsnprintf(result, 512, format, args); va_end(args);
     return result;
 }
-struct request { struct { const char *path; int flags; } items[1]; };
-struct settings { const char *board_type; };
-struct pci { int dev; };
-struct info {
-    bool fwseed;
-    struct { bool valid; const char *module, *vendor, *version; } otp;
-    struct settings *settings;
-    struct pci *pdev;
-    const char *nvram_name;
-};
-''' + helper + '\nstatic struct request *select_profile(struct info *devinfo) {\n' + guard + r'''
+struct device { int unused; };
+struct brcmf_otp_params { int valid; const char *module, *vendor, *version; };
+struct settings { const char *board_type, *antenna_sku; };
+struct request { const char *board_types[8]; };
+struct info { struct settings *settings; struct brcmf_otp_params otp; struct { struct device dev; } *pdev; };
+static struct request *select_names(struct info *devinfo) {
     struct request *fwreq = calloc(1, sizeof(*fwreq));
-    fwreq->items[0].path = devinfo->nvram_name;
-''' + selection + r'''
+''' + selection + r''' else {
+        fwreq->board_types[0] = devinfo->settings->board_type;
+    }
     return fwreq;
 }
+static void expect(struct request *r, const char **names) {
+    int i = 0;
+    for (; names[i]; i++) assert(r->board_types[i] && !strcmp(r->board_types[i], names[i]));
+    assert(!r->board_types[i]);
+}
 int main(void) {
-    struct settings settings = { "apple,j71b" };
-    struct pci pci = {0};
-    struct info info = { true, {true, "YSBC", "u", "4.3"}, &settings, &pci,
-                        "brcm/brcmfmac4355c1-pcie.txt" };
-    const char *vendors[] = {"u", "u", "m", "m"};
-    const char *versions[] = {"4.3", "4.1", "2.5", "2.3"};
-    machine = true;
-    for (int n = 0; n < 4; n++) {
-        info.otp.vendor = vendors[n]; info.otp.version = versions[n];
-        struct request *r = select_profile(&info);
-        char expected[512];
-        snprintf(expected, sizeof(expected), "brcm/brcmfmac4355c1-pcie.apple,j71b-YSBC-%s-%s.txt", vendors[n], versions[n]);
-        assert(r && !strcmp(r->items[0].path, expected));
-        assert(r->items[0].flags == BRCMF_FW_REQF_EXACT);
-        free((void *)r->items[0].path); free(r);
-    }
-    /* Future profiles request their own file, never a known unit's profile. */
-    info.otp.version = "9.9";
-    struct request *r = select_profile(&info);
-    assert(strstr(r->items[0].path, "-m-9.9.txt"));
-    free((void *)r->items[0].path); free(r);
-    info.otp.module = "../YSBC";
-    assert(select_profile(&info) == ERR_PTR(-EINVAL));
-    info.otp.module = "";
-    assert(select_profile(&info) == ERR_PTR(-EINVAL));
-    info.otp.module = "YSBC";
-    info.otp.valid = false;
-    assert(select_profile(&info) == ERR_PTR(-EINVAL));
-    info.otp.valid = true; info.fwseed = false;
-    assert(select_profile(&info) == ERR_PTR(-EINVAL));
-    info.fwseed = true; settings.board_type = NULL;
-    assert(select_profile(&info) == ERR_PTR(-EINVAL));
-    settings.board_type = "apple,rudderb";
-    assert(select_profile(&info) == ERR_PTR(-EINVAL));
-    settings.board_type = "apple,j71b";
-    allocation_failure = true;
-    assert(select_profile(&info) == NULL);
-    /* Other boards retain upstream optional NVRAM and board fallback. */
-    machine = false; info.otp.valid = false;
-    r = select_profile(&info);
-    assert(r->items[0].path == info.nvram_name);
-    assert(r->items[0].flags == BRCMF_FW_REQF_OPTIONAL);
-    free(r);
+    struct { struct device dev; } pdev;
+    struct settings settings = { "apple,j71b", NULL };
+    struct info info = { &settings, { 1, "YSBC", "u", "4.3" }, (void *)&pdev };
+    /* No antenna SKU (iPad): OTP names without SKU-specific entries. */
+    const char *nosku[] = { "apple,j71b-YSBC-u-4.3", "apple,j71b-YSBC-u", "apple,j71b-YSBC",
+                            "apple,j71b", NULL };
+    expect(select_names(&info), nosku);
+    /* With a SKU (Macs, J172): upstream's order unchanged. */
+    settings.antenna_sku = "X3";
+    const char *sku[] = { "apple,j71b-YSBC-u-4.3-X3", "apple,j71b-YSBC-u-4.3", "apple,j71b-YSBC-u",
+                          "apple,j71b-YSBC", "apple,j71b-X3", "apple,j71b", NULL };
+    expect(select_names(&info), sku);
+    /* No valid OTP: board type only. */
+    info.otp.valid = 0;
+    const char *bare[] = { "apple,j71b", NULL };
+    expect(select_names(&info), bare);
+    info.otp.valid = 1;
+    allocation_failure = 1;
+    assert(select_names(&info) == NULL);
     return 0;
 }
 '''
@@ -158,22 +130,22 @@ int main(void) {
             source = Path(directory) / 'profiles.c'
             binary = Path(directory) / 'profiles'
             source.write_text(harness)
-            subprocess.run([cc, '-std=c11', '-Wall', '-Wextra', '-Werror', str(source), '-o', str(binary)], check=True, capture_output=True)
+            subprocess.run([cc, '-std=c11', '-Wall', '-Wextra', '-Werror', '-Wno-unused-parameter',
+                            str(source), '-o', str(binary)], check=True, capture_output=True)
             subprocess.run([str(binary)], check=True, capture_output=True)
 
-    def test_non_j71b_dma_direction_preserved(self):
-        self.assertIn('of_machine_is_compatible("apple,j71b") ?\n\t\t\t\t DMA_BIDIRECTIONAL : DMA_FROM_DEVICE', self.source)
-
-    def test_no_single_unit_calibration_size_or_diagnostic_dependency(self):
-        loader = (ROOT / 'boot/m1n1/patches/j71b/0001-j71b-boot-support.patch').read_text()
-        self.assertNotIn('cal_len != 1780', loader)
-        self.assertIn('!cal_len ||', loader)
-        bt = (PATCHES / '0003-j71b-bluetooth-driver.patch').read_text()
-        self.assertNotIn('hci_h4.c', bt)
-        self.assertNotIn('-\t\t\tpm_runtime_dont_use_autosuspend', bt)
+    def test_loader_patches_are_device_generic(self):
+        patches = sorted((ROOT / 'boot/m1n1/patches').glob('*.patch'))
+        self.assertTrue(patches)
+        for path in patches:
+            added = [line for line in path.read_text().splitlines()
+                     if line.startswith('+') and not line.startswith('+++')]
+            # Board data comes from the ADT and DT aliases, never board compatibles.
+            self.assertFalse([line for line in added if 'check_compatible' in line], path.name)
+            self.assertFalse([line for line in added if 'cal_len !=' in line], path.name)
 
     def test_existing_device_match_names_not_removed(self):
-        for path in sorted(PATCHES.glob('*.patch')):
+        for path in series_patches('j71b'):
             before, after = [], []
             for line in path.read_text().splitlines():
                 # Match table strings, not branches or comments mentioning compatibles.

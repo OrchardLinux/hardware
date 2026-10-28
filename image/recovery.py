@@ -7,7 +7,7 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-HERE = ROOT / 'boot/initramfs/j71b/recovery'
+HERE = ROOT / 'boot/initramfs/recovery'
 
 
 def main():

@@ -1,0 +1,104 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Mon, 24 Mar 2025 00:10:34 +0800
+Subject: [PATCH 13/20] arm64: dts: apple: s8001: Add PMIC nodes
+
+Add nodes for PMIC and nodes for subdevices on Apple A9X SoC.
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ .../arm64/boot/dts/apple/s8001-j127-j128.dtsi | 17 ++++++++++
+ arch/arm64/boot/dts/apple/s8001-j127.dts      |  1 +
+ arch/arm64/boot/dts/apple/s8001-j128.dts      |  1 +
+ arch/arm64/boot/dts/apple/s8001-pro.dtsi      | 33 +++++++++++++++++++
+ 4 files changed, 52 insertions(+)
+ create mode 100644 arch/arm64/boot/dts/apple/s8001-j127-j128.dtsi
+
+diff --git a/arch/arm64/boot/dts/apple/s8001-j127-j128.dtsi b/arch/arm64/boot/dts/apple/s8001-j127-j128.dtsi
+new file mode 100644
+index 000000000..dd3e00ac6
+--- /dev/null
++++ b/arch/arm64/boot/dts/apple/s8001-j127-j128.dtsi
+@@ -0,0 +1,17 @@
++// SPDX-License-Identifier: GPL-2.0+ OR MIT
++/*
++ * Apple iPad Pro (9.7-inch)
++ *
++ * This file contains parts common to iPad Pro (12.9-inch).
++ *
++ * target-type: J127, J128
++ *
++ * Copyright (c) 2026, Nick Chan <towinchenmi@gmail.com>
++ */
++
++&pmic0 {
++	backlight@b00 {
++		compatible = "apple,aria-pmic-bl";
++		reg = <0xb00 0x2>;
++	};
++};
+diff --git a/arch/arm64/boot/dts/apple/s8001-j127.dts b/arch/arm64/boot/dts/apple/s8001-j127.dts
+index 8b522085c..38ab8940e 100644
+--- a/arch/arm64/boot/dts/apple/s8001-j127.dts
++++ b/arch/arm64/boot/dts/apple/s8001-j127.dts
+@@ -7,6 +7,7 @@
+ /dts-v1/;
+ 
+ #include "s8001-pro.dtsi"
++#include "s8001-j127-j128.dtsi"
+ 
+ / {
+ 	compatible = "apple,j127", "apple,s8001", "apple,arm-platform";
+diff --git a/arch/arm64/boot/dts/apple/s8001-j128.dts b/arch/arm64/boot/dts/apple/s8001-j128.dts
+index cdd3d06dc..db86400fa 100644
+--- a/arch/arm64/boot/dts/apple/s8001-j128.dts
++++ b/arch/arm64/boot/dts/apple/s8001-j128.dts
+@@ -7,6 +7,7 @@
+ /dts-v1/;
+ 
+ #include "s8001-pro.dtsi"
++#include "s8001-j127-j128.dtsi"
+ 
+ / {
+ 	compatible = "apple,j128", "apple,s8001", "apple,arm-platform";
+diff --git a/arch/arm64/boot/dts/apple/s8001-pro.dtsi b/arch/arm64/boot/dts/apple/s8001-pro.dtsi
+index 1fce5a7c4..adc7e3d1a 100644
+--- a/arch/arm64/boot/dts/apple/s8001-pro.dtsi
++++ b/arch/arm64/boot/dts/apple/s8001-pro.dtsi
+@@ -42,3 +42,36 @@
+ 		};
+ 	};
+ };
++
++&i2c0 {
++	status = "okay";
++
++	pmic0: pmic@3c {
++		compatible = "apple,aria-pmic", "apple,i2c-pmic";
++		reg = <0x3c>;
++		#address-cells = <1>;
++		#size-cells = <1>;
++
++		rtc@500 {
++			compatible = "apple,aria-pmic-rtc", "apple,antigua-pmic-rtc";
++			reg = <0x500 0x10>;
++			nvmem-cells = <&rtc_offset>;
++			nvmem-cell-names = "rtc_offset";
++		};
++
++		nvmem@5000 {
++			compatible = "apple,pmic-nvmem";
++			reg = <0x5000 0x28>;
++
++			nvmem-layout {
++				compatible = "fixed-layout";
++				#address-cells = <1>;
++				#size-cells = <1>;
++
++				rtc_offset: rtc-offset@4 {
++					reg = <0x4 0x4>;
++				};
++			};
++		};
++	};
++};

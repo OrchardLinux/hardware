@@ -4,12 +4,6 @@ import json
 from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parents[1]
-TOUCH = PROJECT / 'devices/j71b/touch/runtime'
-MODULES = {
-    'touch-start': ('virt-dma', 'apple-sio-core', 'apple-sio-dma', 'j71b_dma_bindings',
-                    'j71b_sio_denied_test', 'j71b_spi_dma_reset', 'j71b_touch_start'),
-    'touch-runtime': ('virt-dma', 'apple-sio-core', 'apple-sio-dma', 'j71b_dma_bindings', 'j71b_z2'),
-}
 
 
 def files(modules_dir: Path, policy_dir: Path):
@@ -26,21 +20,6 @@ def files(modules_dir: Path, policy_dir: Path):
         if path.is_file():
             result['usr/lib/modules/' + release + '/' + path.relative_to(releases[0]).as_posix()] = (path.read_bytes(), 0o644)
     prefix = 'usr/libexec/orchard-j71b/'
-    for role, names in MODULES.items():
-        entries = {}
-        for path in sorted((TOUCH / role).glob('*.sh')):
-            entries[path.name] = (path.read_bytes().replace(b'@KERNEL_RELEASE@', release.encode()), 0o755)
-        for name in names:
-            candidates = list(releases[0].rglob(name + '.ko'))
-            if len(candidates) != 1:
-                raise ValueError('Missing/ambiguous public touch module: ' + name)
-            entries['modules/' + name + '.ko'] = (candidates[0].read_bytes(), 0o644)
-        sums = ''.join(hashlib.sha256(data).hexdigest() + '  ' + name + '\n'
-                       for name, (data, _) in sorted(entries.items()))
-        entries['PUBLIC.SHA256SUMS'] = (sums.encode(), 0o644)
-        result.update({prefix + role + '/' + name: value for name, value in entries.items()})
-    result[prefix + 'touch-activate'] = ((TOUCH / 'touch-activate').read_bytes().replace(
-        b'@KERNEL_RELEASE@', release.encode()), 0o755)
     for source, target in (('phase2-hardware', 'hardware'), ('device.py', 'device.py'),
                            ('archive.py', 'archive.py'), ('handoff.py', 'handoff.py'),
                            ('staging.py', 'staging.py'), ('ssh_access.py', 'ssh_access.py'),
@@ -55,9 +34,6 @@ def files(modules_dir: Path, policy_dir: Path):
         if path.is_symlink() or prefix + path.name in result:
             raise ValueError('Unsafe/colliding image policy file')
         result[prefix + path.name] = (path.read_bytes(), 0o644)
-    for name in ('j71b-check-platform', 'j71b-charge-lease'):
-        result['usr/libexec/' + name] = ((PROJECT / 'runtime/j71b' / name).read_bytes().replace(
-            b'@KERNEL_RELEASE@', release.encode()), 0o755)
     # cfg80211 needs the public database AND its upstream detached signature
     # in recovery, before Wi-Fi probing. This is not private device firmware.
     regulatory = PROJECT / 'devices/j71b/public-firmware'

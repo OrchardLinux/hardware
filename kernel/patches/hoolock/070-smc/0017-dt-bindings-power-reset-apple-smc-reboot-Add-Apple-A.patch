@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Sun, 8 Feb 2026 15:08:47 +0800
+Subject: [PATCH 17/21] dt-bindings: power: reset: apple,smc-reboot: Add Apple
+ A11
+
+Add the binding for shutting down with SMC on Apple A11 SoC. PRC SKUs has
+requires different behaivor when attempting to power off when the device is
+connected to power, so add a `prc-poweroff` property, which may be filled in
+by loader.
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ .../bindings/power/reset/apple,smc-reboot.yaml        | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/power/reset/apple,smc-reboot.yaml b/Documentation/devicetree/bindings/power/reset/apple,smc-reboot.yaml
+index ce5ed8849..dff156749 100644
+--- a/Documentation/devicetree/bindings/power/reset/apple,smc-reboot.yaml
++++ b/Documentation/devicetree/bindings/power/reset/apple,smc-reboot.yaml
+@@ -16,7 +16,10 @@ maintainers:
+ 
+ properties:
+   compatible:
+-    const: apple,smc-reboot
++    items:
++      - enum:
++          - apple,smc-reboot
++          - apple,t8015-smc-reboot
+ 
+   nvmem-cells:
+     items:
+@@ -32,6 +35,12 @@ properties:
+       - const: boot_error_count
+       - const: panic_count
+ 
++  prc-poweroff:
++    type: boolean
++    description: Set to one by loader if the current device is a PRC SKU. With
++      this property, attempting to power off the device when it is connected
++      to power will show a battery indicator after rebooting.
++
+ required:
+   - compatible
+   - nvmem-cells

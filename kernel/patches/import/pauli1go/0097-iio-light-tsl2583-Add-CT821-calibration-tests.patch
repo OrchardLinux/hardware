@@ -1,0 +1,115 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Mon, 3 Aug 2026 12:45:17 +0200
+Subject: [PATCH 097/117] iio: light: tsl2583: Add CT821 calibration tests
+
+Exercise the CT821 LSCI gain-factor helper with a valid scaling step,
+rejected zero inputs, and the checksum-valid 65536 to 2^24 to 2^32
+sequence that must be rejected before it can wrap to a zero divisor.
+
+Keep the KUnit target independent of hardware so the parser arithmetic
+can be checked without an attached sensor.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: 003747afd81ab80327ad9f5c3197fcbd8dfb0da1
+---
+ drivers/iio/light/Kconfig        | 10 ++++++
+ drivers/iio/light/Makefile       |  1 +
+ drivers/iio/light/tsl2583-test.c | 54 ++++++++++++++++++++++++++++++++
+ 3 files changed, 65 insertions(+)
+ create mode 100644 drivers/iio/light/tsl2583-test.c
+
+diff --git a/drivers/iio/light/Kconfig b/drivers/iio/light/Kconfig
+index f23bbce12..672021de1 100644
+--- a/drivers/iio/light/Kconfig
++++ b/drivers/iio/light/Kconfig
+@@ -638,6 +638,16 @@ config TSL2583
+ 	  Provides support for the TAOS tsl2580, tsl2581 and tsl2583 devices.
+ 	  Access ALS data via iio, sysfs.
+ 
++config TSL2583_KUNIT_TEST
++	tristate "KUnit tests for TSL2583" if !KUNIT_ALL_TESTS
++	depends on KUNIT
++	default KUNIT_ALL_TESTS
++	help
++	  Build tests for the CT821 factory-calibration gain-factor parser,
++	  including rejection of zero and overflowing gain factors from LSCI.
++	  These tests do not require hardware. If built as a module, it will be
++	  called tsl2583-test.
++
+ config TSL2591
+         tristate "TAOS TSL2591 ambient light sensor"
+         depends on I2C
+diff --git a/drivers/iio/light/Makefile b/drivers/iio/light/Makefile
+index 64e354c49..fdbef07f8 100644
+--- a/drivers/iio/light/Makefile
++++ b/drivers/iio/light/Makefile
+@@ -59,6 +59,7 @@ obj-$(CONFIG_TCS3414)		+= tcs3414.o
+ obj-$(CONFIG_TCS3472)		+= tcs3472.o
+ obj-$(CONFIG_SENSORS_TSL2563)	+= tsl2563.o
+ obj-$(CONFIG_TSL2583)		+= tsl2583.o
++obj-$(CONFIG_TSL2583_KUNIT_TEST)	+= tsl2583-test.o
+ obj-$(CONFIG_TSL2591)		+= tsl2591.o
+ obj-$(CONFIG_TSL2772)		+= tsl2772.o
+ obj-$(CONFIG_TSL4531)		+= tsl4531.o
+diff --git a/drivers/iio/light/tsl2583-test.c b/drivers/iio/light/tsl2583-test.c
+new file mode 100644
+index 000000000..79b56a821
+--- /dev/null
++++ b/drivers/iio/light/tsl2583-test.c
+@@ -0,0 +1,54 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#include <kunit/test.h>
++#include <linux/module.h>
++
++#include "tsl2583.h"
++
++static void ct821_gain_factor_valid_test(struct kunit *test)
++{
++	u32 factor;
++
++	KUNIT_ASSERT_EQ(test, 0,
++			ct821_calculate_gain_factor(65536, 510, &factor));
++	KUNIT_EXPECT_EQ(test, 131072U, factor);
++}
++
++static void ct821_gain_factor_zero_test(struct kunit *test)
++{
++	u32 factor = 1;
++
++	KUNIT_EXPECT_EQ(test, -EINVAL,
++			ct821_calculate_gain_factor(65536, 0, &factor));
++	KUNIT_EXPECT_EQ(test, -EINVAL,
++			ct821_calculate_gain_factor(0, 255, &factor));
++	KUNIT_EXPECT_EQ(test, 1U, factor);
++}
++
++static void ct821_gain_factor_overflow_test(struct kunit *test)
++{
++	u32 factor;
++
++	KUNIT_ASSERT_EQ(test, 0,
++			ct821_calculate_gain_factor(65536, 0xff00, &factor));
++	KUNIT_ASSERT_EQ(test, 1U << 24, factor);
++	KUNIT_EXPECT_EQ(test, -ERANGE,
++			ct821_calculate_gain_factor(factor, 0xff00, &factor));
++}
++
++static struct kunit_case ct821_gain_factor_test_cases[] = {
++	KUNIT_CASE(ct821_gain_factor_valid_test),
++	KUNIT_CASE(ct821_gain_factor_zero_test),
++	KUNIT_CASE(ct821_gain_factor_overflow_test),
++	{}
++};
++
++static struct kunit_suite ct821_gain_factor_test_suite = {
++	.name = "ct821-gain-factor",
++	.test_cases = ct821_gain_factor_test_cases,
++};
++
++kunit_test_suite(ct821_gain_factor_test_suite);
++
++MODULE_DESCRIPTION("KUnit tests for the CT821 calibration gain factors");
++MODULE_LICENSE("GPL");

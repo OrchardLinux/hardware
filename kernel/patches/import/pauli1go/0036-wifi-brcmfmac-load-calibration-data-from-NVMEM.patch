@@ -1,0 +1,222 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Sun, 26 Jul 2026 17:17:17 +0200
+Subject: [PATCH 036/117] wifi: brcmfmac: load calibration data from NVMEM
+
+Read an optional calibration cell during OF setup and pass its contents
+through the existing firmware calibration path. Keep compatibility with
+a brcm,cal-blob property while preferring the described NVMEM cell when
+no property is present.
+
+Track ownership of NVMEM-allocated calibration buffers and release them
+with the module parameters. Propagate probe deferral and all other NVMEM
+errors so firmware data cannot be consumed before its provider is ready.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: 2cb3dc88ae836e260b66078b5ea2d5b09a6e183c
+---
+ .../broadcom/brcm80211/brcmfmac/common.c      | 12 ++-
+ .../broadcom/brcm80211/brcmfmac/common.h      |  1 +
+ .../wireless/broadcom/brcm80211/brcmfmac/of.c | 90 +++++++++++++++----
+ 3 files changed, 82 insertions(+), 21 deletions(-)
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/common.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/common.c
+index b6027d83e..f2d2d4d5a 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/common.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/common.c
+@@ -8,6 +8,7 @@
+ #include <linux/netdevice.h>
+ #include <linux/module.h>
+ #include <linux/firmware.h>
++#include <linux/slab.h>
+ #include <brcmu_wifi.h>
+ #include <brcmu_utils.h>
+ #include "core.h"
+@@ -516,6 +517,7 @@ struct brcmf_mp_device *brcmf_get_module_param(struct device *dev,
+ 	struct brcmf_mp_device *settings;
+ 	struct brcmfmac_pd_device *device_pd;
+ 	bool found;
++	int err;
+ 	int i;
+ 
+ 	brcmf_dbg(INFO, "Enter, bus=%d, chip=%d, rev=%d\n", bus_type, chip,
+@@ -561,9 +563,10 @@ struct brcmf_mp_device *brcmf_get_module_param(struct device *dev,
+ 	if (!found) {
+ 		/* No platform data for this device, try OF and DMI data */
+ 		brcmf_dmi_probe(settings, chip, chiprev);
+-		if (brcmf_of_probe(dev, bus_type, settings) == -EPROBE_DEFER) {
+-			kfree(settings);
+-			return ERR_PTR(-EPROBE_DEFER);
++		err = brcmf_of_probe(dev, bus_type, settings);
++		if (err) {
++			brcmf_release_module_param(settings);
++			return ERR_PTR(err);
+ 		}
+ 		brcmf_acpi_probe(dev, bus_type, settings);
+ 	}
+@@ -572,6 +575,8 @@ struct brcmf_mp_device *brcmf_get_module_param(struct device *dev,
+ 
+ void brcmf_release_module_param(struct brcmf_mp_device *module_param)
+ {
++	if (module_param->cal_blob_allocated)
++		kfree(module_param->cal_blob);
+ 	kfree(module_param);
+ }
+ 
+@@ -633,4 +638,3 @@ static void __exit brcmfmac_module_exit(void)
+ 
+ module_init(brcmfmac_module_init);
+ module_exit(brcmfmac_module_exit);
+-
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/common.h b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/common.h
+index 3bdb6984b..9e7290924 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/common.h
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/common.h
+@@ -56,6 +56,7 @@ struct brcmf_mp_device {
+ 	const char	*antenna_sku;
+ 	const void	*cal_blob;
+ 	int		cal_size;
++	bool		cal_blob_allocated;
+ 	union {
+ 		struct brcmfmac_sdio_pd sdio;
+ 	} bus;
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/of.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/of.c
+index 03efae36a..0d0959724 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/of.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/of.c
+@@ -7,6 +7,8 @@
+ #include <linux/of_irq.h>
+ #include <linux/of_net.h>
+ #include <linux/clk.h>
++#include <linux/nvmem-consumer.h>
++#include <linux/slab.h>
+ 
+ #include <defs.h>
+ #include "debug.h"
+@@ -66,6 +68,59 @@ static int brcmf_of_get_country_codes(struct device *dev,
+ 	return 0;
+ }
+ 
++static int brcmf_of_get_cal_blob(struct device *dev,
++				 struct brcmf_mp_device *settings)
++{
++	struct device_node *np = dev->of_node;
++	struct nvmem_cell *cell;
++	const void *prop;
++	size_t len;
++	void *buf;
++	int err;
++
++	/* The WLAN calibration blob is normally stored in SROM, but some
++	 * platforms pass it via the DT or an NVMEM cell instead.
++	 */
++	if (!np)
++		return 0;
++
++	prop = of_get_property(np, "brcm,cal-blob", &settings->cal_size);
++	if (prop && settings->cal_size) {
++		settings->cal_blob = prop;
++		return 0;
++	}
++
++	cell = nvmem_cell_get(dev, "calibration");
++	if (IS_ERR(cell)) {
++		err = PTR_ERR(cell);
++		if (err == -ENOENT || err == -EOPNOTSUPP)
++			return 0;
++
++		return err;
++	}
++
++	buf = nvmem_cell_read(cell, &len);
++	nvmem_cell_put(cell);
++	if (IS_ERR(buf))
++		return PTR_ERR(buf);
++
++	if (!len) {
++		kfree(buf);
++		return 0;
++	}
++
++	if (len > INT_MAX) {
++		kfree(buf);
++		return -EOVERFLOW;
++	}
++
++	settings->cal_blob = buf;
++	settings->cal_size = (int)len;
++	settings->cal_blob_allocated = true;
++
++	return 0;
++}
++
+ int brcmf_of_probe(struct device *dev, enum brcmf_bus_type bus_type,
+ 		   struct brcmf_mp_device *settings)
+ {
+@@ -74,6 +129,7 @@ int brcmf_of_probe(struct device *dev, enum brcmf_bus_type bus_type,
+ 	struct of_phandle_args oirq;
+ 	struct clk *clk;
+ 	const char *prop;
++	int board_type_err;
+ 	int irq;
+ 	int err;
+ 	u32 irqf;
+@@ -82,23 +138,20 @@ int brcmf_of_probe(struct device *dev, enum brcmf_bus_type bus_type,
+ 	/* Apple ARM64 platforms have their own idea of board type, passed in
+ 	 * via the device tree. They also have an antenna SKU parameter
+ 	 */
+-	err = of_property_read_string(np, "brcm,board-type", &prop);
+-	if (!err)
++	board_type_err = of_property_read_string(np, "brcm,board-type", &prop);
++	if (!board_type_err)
+ 		settings->board_type = prop;
+ 
+ 	if (!of_property_read_string(np, "apple,antenna-sku", &prop))
+ 		settings->antenna_sku = prop;
+ 
+-	/* The WLAN calibration blob is normally stored in SROM, but Apple
+-	 * ARM64 platforms pass it via the DT instead.
+-	 */
+-	prop = of_get_property(np, "brcm,cal-blob", &settings->cal_size);
+-	if (prop && settings->cal_size)
+-		settings->cal_blob = prop;
++	err = brcmf_of_get_cal_blob(dev, settings);
++	if (err)
++		return err;
+ 
+ 	/* Set board-type to the first string of the machine compatible prop */
+ 	root = of_find_node_by_path("/");
+-	if (root && err) {
++	if (root && board_type_err) {
+ 		char *board_type = NULL;
+ 		const char *tmp;
+ 
+@@ -121,16 +174,19 @@ int brcmf_of_probe(struct device *dev, enum brcmf_bus_type bus_type,
+ 
+ 	brcmf_dbg(INFO, "%s LPO clock\n", clk ? "enable" : "no");
+ 
+-	if (!np || !of_device_is_compatible(np, "brcm,bcm4329-fmac"))
+-		return 0;
++	if (np) {
++		err = brcmf_of_get_country_codes(dev, settings);
++		if (err)
++			brcmf_err("failed to get OF country code map (err=%d)\n",
++				  err);
+ 
+-	err = brcmf_of_get_country_codes(dev, settings);
+-	if (err)
+-		brcmf_err("failed to get OF country code map (err=%d)\n", err);
++		err = of_get_mac_address(np, settings->mac);
++		if (err == -EPROBE_DEFER)
++			return err;
++	}
+ 
+-	err = of_get_mac_address(np, settings->mac);
+-	if (err == -EPROBE_DEFER)
+-		return err;
++	if (!np || !of_device_is_compatible(np, "brcm,bcm4329-fmac"))
++		return 0;
+ 
+ 	if (bus_type != BRCMF_BUSTYPE_SDIO)
+ 		return 0;

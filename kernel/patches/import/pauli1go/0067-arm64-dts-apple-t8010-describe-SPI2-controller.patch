@@ -1,0 +1,51 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Sat, 1 Aug 2026 17:18:31 +0200
+Subject: [PATCH 067/117] arm64: dts: apple: t8010: describe SPI2 controller
+
+T8010 exposes a SmartIO SPI controller at 0x20a088000 which is used by the
+D111 touchscreen, but the common SoC description only contains the
+adjacent SPI3 instance. Boards therefore cannot describe an SPI2 child
+without duplicating controller resources.
+
+Add the SPI2 register range, interrupt, reference clock and power domain
+to the T8010 SoC node, following the existing SPI3 integration. Leave the
+controller disabled so each board remains responsible for chip select, DMA
+routing and enabling the instance.
+
+This is a normal SoC resource description and requires no SPI-core or
+platform-driver special case. The complete series built all DTBs and the
+D111 DTB passed schema validation; the resulting controller probed and
+carried the live D111 touchscreen traffic. This patch was checked with
+checkpatch.pl --strict.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: 025d5b5e8f4833792886a205577fff661451bebb
+---
+ arch/arm64/boot/dts/apple/t8010.dtsi | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/t8010.dtsi b/arch/arm64/boot/dts/apple/t8010.dtsi
+index 0b9a428f1..7224339e8 100644
+--- a/arch/arm64/boot/dts/apple/t8010.dtsi
++++ b/arch/arm64/boot/dts/apple/t8010.dtsi
+@@ -264,6 +264,18 @@
+ 			status = "disabled";
+ 		};
+ 
++		spi2: spi@20a088000 {
++			compatible = "apple,t8010-spi", "apple,spi";
++			reg = <0x2 0x0a088000 0x0 0x4000>;
++			interrupt-parent = <&aic>;
++			interrupts = <AIC_IRQ 216 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&clkref>;
++			power-domains = <&ps_spi2>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			status = "disabled";
++		};
++
+ 		spi3: spi@20a08c000 {
+ 			compatible = "apple,t8010-spi", "apple,spi";
+ 			reg = <0x2 0x0a08c000 0x0 0x4000>;

@@ -1,0 +1,197 @@
+{
+  "schema": 2,
+  "device": "iPhone9,2",
+  "ipsw": {
+    "version": "15.8.8",
+    "build": "19H422",
+    "url": "https://updates.cdn-apple.com/2025FallFCS/fullrestores/122-77525/29E86E57-1478-4ABD-BF2F-3CA41EF1CB7E/iPhone_5.5_P3_15.8.8_19H422_Restore.ipsw",
+    "bytes": 5555856715,
+    "sha256": "3aa770c2e8ad3c83c2da129441d1e26d3ff8fdd02887510b3f382cbb7b1fab9f"
+  },
+  "inputs": {
+    "sven.trx": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4355__s-C0/sven.trx"
+      },
+      "device": "/usr/share/firmware/wifi/C-4355__s-C0/sven.trx",
+      "sha256": "ed8c7bc41643ac230274cd027fc052bf29de6857488fbf93625258fbdd02149a"
+    },
+    "sven.clmb": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4355__s-C0/sven.clmb"
+      },
+      "device": "/usr/share/firmware/wifi/C-4355__s-C0/sven.clmb",
+      "sha256": "fed3efc9c57d38932899549dc325a9bbebedcbc6110057ed87151ba325d947d3"
+    },
+    "sven.txcb": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4355__s-C0/sven.txcb"
+      },
+      "device": "/usr/share/firmware/wifi/C-4355__s-C0/sven.txcb",
+      "sha256": "60488ea1a37a2844ac196db7a5a10cd4ded3b4e80622cbecb9825623674f670e"
+    },
+    "P-sven_M-PRNL_V-m__m-5.3.txt": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4355__s-C0/P-sven_M-PRNL_V-m__m-5.3.txt"
+      },
+      "device": "/usr/share/firmware/wifi/C-4355__s-C0/P-sven_M-PRNL_V-m__m-5.3.txt",
+      "sha256": "3fd90d00aad4ac69d7c11436e7e11dab02a8f13f55a406a5fc14056d5b902836"
+    },
+    "P-sven_M-PRNL_V-m__m-5.7.txt": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4355__s-C0/P-sven_M-PRNL_V-m__m-5.7.txt"
+      },
+      "device": "/usr/share/firmware/wifi/C-4355__s-C0/P-sven_M-PRNL_V-m__m-5.7.txt",
+      "sha256": "3fd90d00aad4ac69d7c11436e7e11dab02a8f13f55a406a5fc14056d5b902836"
+    },
+    "P-sven_M-PRNL_V-u__m-5.3.txt": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4355__s-C0/P-sven_M-PRNL_V-u__m-5.3.txt"
+      },
+      "device": "/usr/share/firmware/wifi/C-4355__s-C0/P-sven_M-PRNL_V-u__m-5.3.txt",
+      "sha256": "bc0cbbc55ed2238bfe708c40fdbb3529947480197825642344c1998096cb2e0e"
+    },
+    "P-sven_M-PRNL_V-u__m-5.9.txt": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4355__s-C0/P-sven_M-PRNL_V-u__m-5.9.txt"
+      },
+      "device": "/usr/share/firmware/wifi/C-4355__s-C0/P-sven_M-PRNL_V-u__m-5.9.txt",
+      "sha256": "bc0cbbc55ed2238bfe708c40fdbb3529947480197825642344c1998096cb2e0e"
+    },
+    "kernelcache": {
+      "ipsw": {
+        "kernelcache": true
+      },
+      "device": {
+        "kernelcache": "active"
+      }
+    },
+    "BlueTool": {
+      "ipsw": {
+        "rootfs": "usr/sbin/BlueTool"
+      },
+      "device": "/usr/sbin/BlueTool"
+    },
+    "D11.mtprops": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/multitouch/D11.mtprops"
+      },
+      "device": "/usr/share/firmware/multitouch/D11.mtprops",
+      "sha256": "7f9b16b749dd0f3e12633ce5140220ea89317006dc0278b24cf2d815578e3ff6"
+    }
+  },
+  "outputs": [
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355-pcie.apple,sven.bin",
+      "sha256": "ed8c7bc41643ac230274cd027fc052bf29de6857488fbf93625258fbdd02149a",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "sven.trx"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355-pcie.apple,sven.clm_blob",
+      "sha256": "fed3efc9c57d38932899549dc325a9bbebedcbc6110057ed87151ba325d947d3",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "sven.clmb"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355-pcie.apple,sven.txcap_blob",
+      "sha256": "60488ea1a37a2844ac196db7a5a10cd4ded3b4e80622cbecb9825623674f670e",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "sven.txcb"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355-pcie.apple,sven-PRNL-m-5.3.txt",
+      "sha256": "3fd90d00aad4ac69d7c11436e7e11dab02a8f13f55a406a5fc14056d5b902836",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-sven_M-PRNL_V-m__m-5.3.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355-pcie.apple,sven-PRNL-m-5.7.txt",
+      "sha256": "3fd90d00aad4ac69d7c11436e7e11dab02a8f13f55a406a5fc14056d5b902836",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-sven_M-PRNL_V-m__m-5.7.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355-pcie.apple,sven-PRNL-u-5.3.txt",
+      "sha256": "bc0cbbc55ed2238bfe708c40fdbb3529947480197825642344c1998096cb2e0e",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-sven_M-PRNL_V-u__m-5.3.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355-pcie.apple,sven-PRNL-u-5.9.txt",
+      "sha256": "bc0cbbc55ed2238bfe708c40fdbb3529947480197825642344c1998096cb2e0e",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-sven_M-PRNL_V-u__m-5.9.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/apple/t8010-smartio.bin",
+      "sha256": "408adbb05e75469cbd9c4d94624fd116ae58be5f87cf40b5e495242a83140bcb",
+      "steps": [
+        {
+          "step": "smartio-from-kernelcache@1",
+          "input": "kernelcache"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/BCM.apple,d11-MUR.hcd",
+      "sha256": "e8c5dbea024e84434a10411d8533d62cac675fbb1bab44206108a56b6fb59434",
+      "steps": [
+        {
+          "step": "bluetool-hcd@1",
+          "input": "BlueTool"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/BCM.apple,d11-USI.hcd",
+      "sha256": "3bce88460c018ee2175de900cb6656c71225d6222442c229eff9462ff941f85b",
+      "steps": [
+        {
+          "step": "bluetool-hcd@1",
+          "input": "BlueTool"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/apple/dfrmtfw-d11-c1f5e-2.bin",
+      "sha256": "57f094f2afbc21c3eca511f5b5d0a90e276789a0a5e8f770528e682fdfa660d6",
+      "steps": [
+        {
+          "step": "z2fw-from-mtprops@2",
+          "input": "D11.mtprops",
+          "profile": "C1F5E,2",
+          "packet": "Z2"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Thu, 7 Aug 2025 23:38:06 +0800
+Subject: [PATCH 01/21] power: reset: macsmc-reboot: Do not probe without OF
+ node
+
+Apple silicon platforms to boots using Device Tree. Do not probe without
+an OF node to allow implementations without this function indicate it
+by not having a reboot node in their SMC node.
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ drivers/power/reset/macsmc-reboot.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/drivers/power/reset/macsmc-reboot.c b/drivers/power/reset/macsmc-reboot.c
+index 9fc36fa68..413017534 100644
+--- a/drivers/power/reset/macsmc-reboot.c
++++ b/drivers/power/reset/macsmc-reboot.c
+@@ -204,6 +204,9 @@ static int macsmc_reboot_probe(struct platform_device *pdev)
+ 	struct macsmc_reboot *reboot;
+ 	int ret, i;
+ 
++	if (!pdev->dev.of_node)
++		return -ENODEV;
++
+ 	reboot = devm_kzalloc(&pdev->dev, sizeof(*reboot), GFP_KERNEL);
+ 	if (!reboot)
+ 		return -ENOMEM;

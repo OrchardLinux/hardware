@@ -1,0 +1,30 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Sun, 2 Aug 2026 23:01:01 +0200
+Subject: [PATCH 089/117] dt-bindings: bluetooth: brcm: Add BCM4355C0
+ compatible
+
+D111 uses BCM4355C0 with the existing BCM4345C5-compatible lifecycle.
+Document the chip-specific compatible followed by that fallback.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: ebbd5359a0061a1424a6dfa5e0dcc43d2b6f48c8
+---
+ .../devicetree/bindings/net/bluetooth/brcm,bluetooth.yaml      | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/net/bluetooth/brcm,bluetooth.yaml b/Documentation/devicetree/bindings/net/bluetooth/brcm,bluetooth.yaml
+index 8f043322f..49247148b 100644
+--- a/Documentation/devicetree/bindings/net/bluetooth/brcm,bluetooth.yaml
++++ b/Documentation/devicetree/bindings/net/bluetooth/brcm,bluetooth.yaml
+@@ -15,6 +15,9 @@ description:
+ properties:
+   compatible:
+     oneOf:
++      - items:
++          - const: brcm,bcm4355c0-bt
++          - const: brcm,bcm4345c5
+       - items:
+           - const: apple,j172-bcm4355c1-bt
+           - const: brcm,bcm4355c1-bt

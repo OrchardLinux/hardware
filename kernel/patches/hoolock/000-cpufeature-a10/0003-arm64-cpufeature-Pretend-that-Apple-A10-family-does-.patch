@@ -1,0 +1,56 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Mon, 23 Sep 2024 10:36:19 +0800
+Subject: [PATCH 3/3] arm64: cpufeature: Pretend that Apple A10 family does not
+ support 32-bit EL0
+
+The Apple A10 family consists of physical performance and efficiency
+cores, and only one of them can be active at a given time depending on
+the current p-state. However, only the performance cores can execute
+32-bit EL0. This results in logical cores that can only execute 32-bit
+EL0 in high p-states.
+
+Trying to support 32-bit EL0 on a CPU that can only execute it in certain
+states is a bad idea. The A10 family only supports 16KB page size anyway
+so many AArch32 executables won't run anyways. Pretend that it does not
+support 32-bit EL0 at all.
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ arch/arm64/kernel/cpufeature.c | 21 +++++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/arch/arm64/kernel/cpufeature.c b/arch/arm64/kernel/cpufeature.c
+index 17b83a251..efdff1576 100644
+--- a/arch/arm64/kernel/cpufeature.c
++++ b/arch/arm64/kernel/cpufeature.c
+@@ -4012,8 +4012,29 @@ static void __init setup_system_capabilities(void)
+ 	spectre_print_disabled_mitigations();
+ }
+ 
++static void bad_aarch32_el0_fixup(void)
++{
++	if (cpus_have_cap(ARM64_WORKAROUND_APPLE_FUSION)) {
++		struct arm64_ftr_reg *regp;
++
++		/*
++		 * Disable 32-bit EL0 altogether since Apple A10/A10X/T2 cannot
++		 * execute 32-bit EL0 in some p-states.
++		 */
++		regp = get_arm64_ftr_reg(SYS_ID_AA64PFR0_EL1);
++		if (!regp)
++			return;
++		u64 val = (regp->sys_val & ~ID_AA64PFR0_EL1_EL0_MASK)
++		  | ID_AA64PFR0_EL1_EL0_IMP;
++
++		update_cpu_ftr_reg(regp, val);
++	}
++}
++
+ void __init setup_system_features(void)
+ {
++	bad_aarch32_el0_fixup();
++
+ 	setup_system_capabilities();
+ 
+ 	linear_map_maybe_split_to_ptes();

@@ -8,7 +8,7 @@ rust=false
 for name in "$@"; do
   case "$name" in
     kernel) recipes+=("$here/kernel/install-toolchain");;
-    recovery) recipes+=("$here/boot/initramfs/j71b/recovery/install-toolchain");;
+    recovery) recipes+=("$here/boot/initramfs/recovery/install-toolchain");;
     m1n1) recipes+=("$here/boot/m1n1/install-toolchain"); rust=true;;
     *) echo "Unknown toolchain: $name" >&2; exit 2;;
   esac

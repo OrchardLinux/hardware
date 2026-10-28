@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Wed, 22 Jul 2026 12:47:18 +0200
+Subject: [PATCH 024/117] dt-bindings: i2c: apple: add reset and recovery GPIOs
+
+Apple T8010 I2C controllers need reset and GPIO bus-recovery resources
+that the existing binding could not describe.
+
+Add optional reset, SCL and SDA GPIO properties using the generic I2C
+recovery definitions. Boards without these resources remain unaffected.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: 0cea34278f89bbe7941f0bd57ae55012af37ebbf
+---
+ Documentation/devicetree/bindings/i2c/apple,i2c.yaml | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/i2c/apple,i2c.yaml b/Documentation/devicetree/bindings/i2c/apple,i2c.yaml
+index d39f5e3f1..ef191c78a 100644
+--- a/Documentation/devicetree/bindings/i2c/apple,i2c.yaml
++++ b/Documentation/devicetree/bindings/i2c/apple,i2c.yaml
+@@ -60,6 +60,13 @@ properties:
+   power-domains:
+     maxItems: 1
+ 
++  resets:
++    maxItems: 1
++
++  scl-gpios: true
++
++  sda-gpios: true
++
+ required:
+   - compatible
+   - reg

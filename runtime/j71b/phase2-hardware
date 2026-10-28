@@ -1,5 +1,7 @@
 #!/bin/sh
 # Public device-owned hardware preparation. No association or filesystem mounts.
+# PCIe, Wi-Fi power and platform control, PMIC GPIO and the supply regulator
+# are built into the platform kernel; only the drivers below are modules.
 set -eu
 phase=preflight
 failed() {
@@ -11,51 +13,47 @@ failed() {
 }
 trap failed EXIT
 step() { phase=$1; echo "$phase"; }
+# Storage and its read-only fence are required. Wi-Fi, touch and Bluetooth
+# are best effort: experimental boards may lack drivers, firmware or DT nodes,
+# and the install does not need them. Results go to /run/orchard/hardware.txt.
+report() { echo "$1: $2" | tee -a /run/orchard/hardware.txt; }
+optional() {
+ name=$1; shift
+ if ( "$@" ) >/run/orchard/"$name".log 2>&1; then report "$name" ready; else report "$name" missing; fi
+}
+wait_for() { n=0; while ! eval "$1"; do n=$((n+1)); [ "$n" -le 20 ] || return 1; sleep 1; done; }
+wifi_up() { modprobe cfg80211 && modprobe brcmutil && modprobe brcmfmac && wait_for '[ -d /sys/class/net/wlan0 ]'; }
+touch_up() {
+ modprobe apple-sio && modprobe apple-sio-dma && modprobe apple_z2 &&
+  wait_for 'grep -q "^N: Name=\".*Touchscreen\"" /proc/bus/input/devices'
+}
+bluetooth_up() { modprobe bluetooth && modprobe btbcm && modprobe hci_uart && wait_for '[ -d /sys/class/bluetooth/hci0 ]'; }
 [ "$(awk '$2=="/" {print $3}' /proc/mounts)" = rootfs ]
 [ ! -d /sys/module/nvme ]
 [ "$(grep -c '/dev/nvme' /proc/mounts || true)" = 0 ]
 step boot-readiness
-dmesg | grep -q J71B_GATE_PASS
-dmesg | grep -q J71B_GATE_STOP
 [ "$(cat /sys/class/power_supply/battery/present)" = 1 ]
 sha256sum -c /etc/orchard/public.SHA256SUMS > /run/orchard/public-verification.log
-mkdir -p /sys/kernel/debug
-mount -t debugfs debugfs /sys/kernel/debug
 step wifi
-modprobe gpio-apple-d2365
-modprobe fixed
-modprobe apple-t8010-wlan
-modprobe pci-pwrctrl-apple-wifi
-modprobe pcie-apple-h9p
-modprobe cfg80211
-modprobe brcmutil
-modprobe brcmfmac
-n=0
-while [ ! -d /sys/class/net/wlan0 ]; do n=$((n+1)); [ "$n" -le 20 ]; sleep 1; done
+optional wifi wifi_up
 step storage-fence
-modprobe nvme-core j71b_rw=1 max_retries=0 default_ps_max_latency_us=0
-modprobe nvme j71b_rw=1 max_host_mem_size_mb=0 io_queue_depth=8
-[ "$(cat /sys/module/nvme_core/parameters/j71b_rw)" = Y ]
-[ "$(cat /sys/module/nvme/parameters/j71b_rw)" = Y ]
-[ "$(cat /sys/class/nvme/nvme0/state)" = live ]
-[ "$(cat /sys/module/nvme/parameters/j71b_ro_failed)" = N ]
-for part in /sys/class/block/nvme0n1p*; do
- [ -d "$part" ]; blockdev --setro "/dev/${part##*/}"; [ "$(cat "$part/ro")" = 1 ]
-done
-step touch
-sh /usr/libexec/orchard-j71b/touch-activate --activate
-step bluetooth
-modprobe bluetooth
-modprobe btbcm
-modprobe hci_uart
+modprobe nvme
 n=0
-while ! dmesg | grep -q 'BCM (003.002.020) build 1328'; do n=$((n+1)); [ "$n" -le 20 ]; sleep 1; done
-[ -d /sys/class/bluetooth/hci0 ]
-step charging-policy
-modprobe j71b_charge_policy
-[ -r /sys/module/j71b_charge_policy/parameters/sleep_parked ]
+while [ "$(cat /sys/class/nvme/nvme0/state 2>/dev/null)" != live ]; do n=$((n+1)); [ "$n" -le 20 ]; sleep 1; done
+# Every NVMe partition stays read-only. The installer opens only its verified
+# target, and only while writing (storage.py). The whole disk stays writable:
+# a read-only disk would keep its partitions read-only after blockdev --setrw.
+found=0
+for block in /sys/class/block/nvme*n*p*; do
+ [ -d "$block" ] || continue
+ found=1
+ blockdev --setro "/dev/${block##*/}"
+ [ "$(cat "$block/ro")" = 1 ]
+done
+[ "$found" = 1 ]
+step touch
+optional touch touch_up
+step bluetooth
+optional bluetooth bluetooth_up
 [ "$(dmesg | grep -c 'apple-dart.*translation fault' || true)" = 0 ]
-[ "$(cat /sys/module/nvme/parameters/j71b_ro_failed)" = N ]
-mkdir -p /run/ipadlinux
-echo ready > /run/ipadlinux/j71b-early-ready
 echo hardware-ready

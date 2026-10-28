@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Sat, 21 Sep 2024 14:40:29 +0800
+Subject: [PATCH 04/10] dt-bindings: usb: generic-ehci: Add Apple A7-A11
+ compatibles
+
+Add the EHCI compatibles for Apple A7-A11 SoCs.
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ Documentation/devicetree/bindings/usb/generic-ehci.yaml | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/usb/generic-ehci.yaml b/Documentation/devicetree/bindings/usb/generic-ehci.yaml
+index ae9fb70d0..d26b84167 100644
+--- a/Documentation/devicetree/bindings/usb/generic-ehci.yaml
++++ b/Documentation/devicetree/bindings/usb/generic-ehci.yaml
+@@ -30,6 +30,11 @@ properties:
+               - allwinner,sun8i-v3s-ehci
+               - allwinner,sun9i-a80-ehci
+               - allwinner,sun20i-d1-ehci
++              - apple,s5l8960x-ehci
++              - apple,s8000-ehci
++              - apple,t7000-ehci
++              - apple,t8010-ehci
++              - apple,t8015-ehci
+               - aspeed,ast2400-ehci
+               - aspeed,ast2500-ehci
+               - aspeed,ast2600-ehci

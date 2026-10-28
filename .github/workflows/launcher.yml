@@ -167,7 +167,7 @@ jobs:
           import os, re
           from pathlib import Path
           minimum = os.environ['CLI_TAG'].removeprefix('v')
-          for name in ('boot.toml', 'j71b-launcher.boot.toml'):
+          for name in ('boot.toml', 'j71b-apple-launcher.boot.toml'):
               path = Path('out/launcher') / name
               text, count = re.subn(r'^min_orchard = "[^"]+"$',
                                    'min_orchard = "' + minimum + '"',
@@ -176,8 +176,18 @@ jobs:
               path.write_text(text)
           PY
           mkdir -p out/publication
-          cp out/launcher/recovery.bin out/launcher/pongo.bin out/launcher/j71b-launcher.boot.toml \
+          cp out/launcher/recovery.bin out/launcher/pongo.bin out/launcher/j71b-apple-launcher.boot.toml \
             out/launcher/launch.json out/publication/
+          # Keep pre-0.1.11 installs launchable: republish their pinned launcher manifest
+          # unchanged (its boot assets stay in the v0.1.10 release).
+          python - <<'PY'
+          import hashlib, tomllib, urllib.request
+          from pathlib import Path
+          boot = tomllib.loads(Path('devices/j71b/device.toml').read_text())['boot']
+          data = urllib.request.urlopen(boot['legacy_launch_manifest'], timeout=60).read()
+          assert hashlib.sha256(data).hexdigest() == boot['legacy_launch_manifest_sha256'], 'Legacy launcher manifest differs'
+          Path('out/publication/j71b-launcher.boot.toml').write_bytes(data)
+          PY
           (cd out/publication && sha256sum ./* > ../launcher.SHA256SUMS && mv ../launcher.SHA256SUMS .)
           orchard resolve --boot out/launcher/boot.toml
       - name: Attest public build

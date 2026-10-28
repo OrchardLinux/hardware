@@ -1,0 +1,117 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Orchard migration <noreply@orchardlinux>
+Date: Wed, 28 Oct 2026 11:31:02 +0800
+Subject: [PATCH] arm64: dts: apple: t8010: Describe PCIe DART windows in the
+ IOMMU specifier
+
+The PCIe DARTs only translate a window starting at 0x80000000. t8010.dtsi
+describes it with apple,dma-range, which the DART driver used to read but
+replaced with the binding's five-cell specifier. Without the window the
+domain aperture starts at zero, and the Wi-Fi function faults on its first
+DMA (NO PMD FOR IOVA). The NVMe DART loses its window the same way.
+
+Put the window into the five-cell specifier and drop apple,dma-range:
+
+- dart0 (NVMe):  0x80000000 + 0x3c000000
+- dart2 / dart3 (Wi-Fi on the iPhones and iPads): 0x80000000 + 0x3ffff000
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/arm64/boot/dts/apple/t8010-d11.dts    |  4 ++--
+ arch/arm64/boot/dts/apple/t8010-d111.dts   |  4 ++--
+ arch/arm64/boot/dts/apple/t8010-ipad6.dtsi |  4 ++--
+ arch/arm64/boot/dts/apple/t8010.dtsi       | 11 ++++-------
+ 4 files changed, 10 insertions(+), 13 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/apple/t8010-d11.dts b/arch/arm64/boot/dts/apple/t8010-d11.dts
+index 9c1f89cbe..355a50c3a 100644
+--- a/arch/arm64/boot/dts/apple/t8010-d11.dts
++++ b/arch/arm64/boot/dts/apple/t8010-d11.dts
+@@ -32,8 +32,8 @@
+ };
+ 
+ &pcie0 {
+-	iommu-map = <0x100 &pcie0_dart0 0 1>,
+-		    <0x200 &pcie0_dart3 0 1>;
++	iommu-map = <0x100 &pcie0_dart0 0 0x0 0x80000000 0x0 0x3c000000 1>,
++		    <0x200 &pcie0_dart3 0 0x0 0x80000000 0x0 0x3ffff000 1>;
+ 	pinctrl-0 = <&wifi_clkreq>;
+ 	pinctrl-names = "default";
+ 
+diff --git a/arch/arm64/boot/dts/apple/t8010-d111.dts b/arch/arm64/boot/dts/apple/t8010-d111.dts
+index 57bde8f15..d81f40c9a 100644
+--- a/arch/arm64/boot/dts/apple/t8010-d111.dts
++++ b/arch/arm64/boot/dts/apple/t8010-d111.dts
+@@ -32,8 +32,8 @@
+ };
+ 
+ &pcie0 {
+-	iommu-map = <0x100 &pcie0_dart0 0 1>,
+-		    <0x200 &pcie0_dart2 0 1>;
++	iommu-map = <0x100 &pcie0_dart0 0 0x0 0x80000000 0x0 0x3c000000 1>,
++		    <0x200 &pcie0_dart2 0 0x0 0x80000000 0x0 0x3ffff000 1>;
+ 	pinctrl-0 = <&wifi_clkreq>;
+ 	pinctrl-names = "default";
+ 
+diff --git a/arch/arm64/boot/dts/apple/t8010-ipad6.dtsi b/arch/arm64/boot/dts/apple/t8010-ipad6.dtsi
+index 974e05df2..0bffa509b 100644
+--- a/arch/arm64/boot/dts/apple/t8010-ipad6.dtsi
++++ b/arch/arm64/boot/dts/apple/t8010-ipad6.dtsi
+@@ -121,8 +121,8 @@
+ 	};
+ };
+ &pcie0 {
+-	iommu-map = <0x100 &pcie0_dart0 0 1>,
+-		    <0x200 &pcie0_dart3 0 1>;
++	iommu-map = <0x100 &pcie0_dart0 0 0x0 0x80000000 0x0 0x3c000000 1>,
++		    <0x200 &pcie0_dart3 0 0x0 0x80000000 0x0 0x3ffff000 1>;
+ 	pinctrl-0 = <&wifi_clkreq>;
+ 	pinctrl-names = "default";
+ 
+diff --git a/arch/arm64/boot/dts/apple/t8010.dtsi b/arch/arm64/boot/dts/apple/t8010.dtsi
+index 59fd45203..5ff9aa100 100644
+--- a/arch/arm64/boot/dts/apple/t8010.dtsi
++++ b/arch/arm64/boot/dts/apple/t8010.dtsi
+@@ -368,30 +368,27 @@
+ 		pcie0_dart0: iommu@601008000 {
+ 			compatible = "apple,t8010-dart", "apple,s5l8960x-dart";
+ 			reg = <0x6 0x01008000 0x0 0x4000>;
+-			#iommu-cells = <1>;
++			#iommu-cells = <5>;
+ 			interrupts = <AIC_IRQ 271 IRQ_TYPE_LEVEL_HIGH>;
+ 			power-domains = <&ps_pcie>;
+-			apple,dma-range = <0x0 0x80000000 0x0 0x3c000000>;
+ 			status = "disabled";
+ 		};
+ 
+ 		pcie0_dart2: iommu@603008000 {
+ 			compatible = "apple,t8010-dart", "apple,s5l8960x-dart";
+ 			reg = <0x6 0x03008000 0x0 0x4000>;
+-			#iommu-cells = <1>;
++			#iommu-cells = <5>;
+ 			interrupts = <AIC_IRQ 277 IRQ_TYPE_LEVEL_HIGH>;
+ 			power-domains = <&ps_pcie>;
+-			apple,dma-range = <0x0 0x80000000 0x0 0x3ffff000>;
+ 			status = "disabled";
+ 		};
+ 
+ 		pcie0_dart3: iommu@604008000 {
+ 			compatible = "apple,t8010-dart", "apple,s5l8960x-dart";
+ 			reg = <0x6 0x04008000 0x0 0x4000>;
+-			#iommu-cells = <1>;
++			#iommu-cells = <5>;
+ 			interrupts = <AIC_IRQ 280 IRQ_TYPE_LEVEL_HIGH>;
+ 			power-domains = <&ps_pcie>;
+-			apple,dma-range = <0x0 0x80000000 0x0 0x3ffff000>;
+ 			status = "disabled";
+ 		};
+ 
+@@ -427,7 +424,7 @@
+ 			apple,nvmmu-iova = <0xbc000000>;
+ 			apple,nvme-hmb = <&nvme_hmb>;
+ 
+-			iommu-map = <0x100 &pcie0_dart0 0 1>;
++			iommu-map = <0x100 &pcie0_dart0 0 0x0 0x80000000 0x0 0x3c000000 1>;
+ 			iommu-map-mask = <0xff00>;
+ 
+ 			#address-cells = <3>;

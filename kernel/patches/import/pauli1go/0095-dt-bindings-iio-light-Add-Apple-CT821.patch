@@ -1,0 +1,104 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Mon, 3 Aug 2026 12:44:54 +0200
+Subject: [PATCH 095/117] dt-bindings: iio: light: Add Apple CT821
+
+Apple devices pair the CT821 ambient-light sensor with the TSL2581
+register interface and store per-device LSCI calibration in SysCfg.
+
+Document the compatible fallback and the paired calibration NVMEM
+properties. Boot firmware may add the pair at runtime when the SysCfg
+provider is not statically representable in the board tree. Keep the
+NVMEM properties unavailable to generic TSL258x compatibles and require
+the cell name whenever a calibration cell is present.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: 1f6ee200372d8b74fbfab883e943719e90dc2f86
+---
+ .../bindings/iio/light/tsl2583.yaml           | 51 ++++++++++++++++---
+ 1 file changed, 44 insertions(+), 7 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/iio/light/tsl2583.yaml b/Documentation/devicetree/bindings/iio/light/tsl2583.yaml
+index 7b92ba8cb..c7b337ca4 100644
+--- a/Documentation/devicetree/bindings/iio/light/tsl2583.yaml
++++ b/Documentation/devicetree/bindings/iio/light/tsl2583.yaml
+@@ -10,14 +10,21 @@ maintainers:
+   - Brian Masney <masneyb@onstation.org>
+ 
+ description: |
+-  Ambient light sensing with an i2c interface.
++  Ambient light sensing with an i2c interface. Apple CT821 factory
++  calibration is stored in SysCfg. On systems where the SysCfg NVMEM
++  provider is created by boot firmware, the static board tree omits the
++  NVMEM link and firmware adds both NVMEM properties before kernel handoff.
+ 
+ properties:
+   compatible:
+-    enum:
+-      - amstaos,tsl2580
+-      - amstaos,tsl2581
+-      - amstaos,tsl2583
++    oneOf:
++      - enum:
++          - amstaos,tsl2580
++          - amstaos,tsl2581
++          - amstaos,tsl2583
++      - items:
++          - const: apple,ct821
++          - const: amstaos,tsl2581
+ 
+   reg:
+     maxItems: 1
+@@ -28,10 +35,38 @@ properties:
+   vcc-supply:
+     description: Regulator that provides power to the sensor
+ 
++  nvmem-cells:
++    description:
++      Apple CT821 factory LSCI ambient-light calibration data. Boot firmware
++      must populate this together with nvmem-cell-names when the provider is
++      not statically representable.
++    maxItems: 1
++
++  nvmem-cell-names:
++    items:
++      - const: calibration
++
+ required:
+   - compatible
+   - reg
+ 
++allOf:
++  - if:
++      properties:
++        compatible:
++          contains:
++            const: apple,ct821
++    then:
++      dependentRequired:
++        nvmem-cells:
++          - nvmem-cell-names
++        nvmem-cell-names:
++          - nvmem-cells
++    else:
++      properties:
++        nvmem-cells: false
++        nvmem-cell-names: false
++
+ additionalProperties: false
+ 
+ examples:
+@@ -41,8 +76,10 @@ examples:
+         #size-cells = <0>;
+ 
+         light-sensor@29 {
+-                compatible = "amstaos,tsl2581";
+-                reg = <0x29>;
++            compatible = "apple,ct821", "amstaos,tsl2581";
++            reg = <0x29>;
++            nvmem-cells = <&als_calibration>;
++            nvmem-cell-names = "calibration";
+         };
+     };
+ ...

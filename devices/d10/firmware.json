@@ -1,0 +1,41 @@
+{
+  "schema": 2,
+  "device": "iPhone9,1",
+  "ipsw": {
+    "version": "15.8.8",
+    "build": "19H422",
+    "url": "https://updates.cdn-apple.com/2025FallFCS/fullrestores/122-77496/774C7319-F63C-4C05-9C6C-49F5F0966540/iPhone_4.7_P3_15.8.8_19H422_Restore.ipsw",
+    "bytes": 5394873160,
+    "sha256": "4d480918c4a3e6fa69177db706086d3bf00d6f83f311e55974fe54e90c170aab"
+  },
+  "inputs": {
+    "BlueTool": {
+      "ipsw": {
+        "rootfs": "usr/sbin/BlueTool"
+      },
+      "device": "/usr/sbin/BlueTool"
+    }
+  },
+  "outputs": [
+    {
+      "destination": "lib/firmware/brcm/BCM.apple,d10-MUR.hcd",
+      "sha256": "ef09263853f36bbdec6e221d2abc67a43efd42e101628dd008c96e64b9d54fc6",
+      "steps": [
+        {
+          "step": "bluetool-hcd@1",
+          "input": "BlueTool"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/BCM.apple,d10-USI.hcd",
+      "sha256": "35971a9aa8187700bb95b4637174a88f25b4ee603518b3332db3995c75a3efaa",
+      "steps": [
+        {
+          "step": "bluetool-hcd@1",
+          "input": "BlueTool"
+        }
+      ]
+    }
+  ]
+}

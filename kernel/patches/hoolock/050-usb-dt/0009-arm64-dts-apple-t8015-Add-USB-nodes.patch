@@ -1,0 +1,99 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Sat, 21 Sep 2024 14:41:44 +0800
+Subject: [PATCH 9/9] arm64: dts: apple: t8015: Add USB nodes
+
+Add USB nodes for the Apple A11 SoC.
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ arch/arm64/boot/dts/apple/t8015-common.dtsi |  1 +
+ arch/arm64/boot/dts/apple/t8015.dtsi        | 56 +++++++++++++++++++++
+ 2 files changed, 57 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/t8015-common.dtsi b/arch/arm64/boot/dts/apple/t8015-common.dtsi
+index 498f58fb9..7dce314a3 100644
+--- a/arch/arm64/boot/dts/apple/t8015-common.dtsi
++++ b/arch/arm64/boot/dts/apple/t8015-common.dtsi
+@@ -11,6 +11,7 @@
+ 
+ / {
+ 	aliases {
++		ausbphy0 = &ausbphy0;
+ 		serial0 = &serial0;
+ 	};
+ 
+diff --git a/arch/arm64/boot/dts/apple/t8015.dtsi b/arch/arm64/boot/dts/apple/t8015.dtsi
+index ca806ba5a..27cee0a82 100644
+--- a/arch/arm64/boot/dts/apple/t8015.dtsi
++++ b/arch/arm64/boot/dts/apple/t8015.dtsi
+@@ -10,6 +10,7 @@
+ #include <dt-bindings/gpio/gpio.h>
+ #include <dt-bindings/interrupt-controller/apple-aic.h>
+ #include <dt-bindings/interrupt-controller/irq.h>
++#include <dt-bindings/phy/phy.h>
+ #include <dt-bindings/pinctrl/apple.h>
+ #include <dt-bindings/spmi/spmi.h>
+ 
+@@ -335,6 +336,61 @@
+ 			status = "disabled";
+ 		};
+ 
++		bus@230000000 {
++			compatible = "apple,t8015-usb-complex", "simple-pm-bus";
++			#address-cells = <2>;
++			#size-cells = <2>;
++			dma-ranges = <0x0 0x00000000 0x8 0x00000000 0x1 0x00000000>;
++			ranges;
++
++			reg = <0x2 0x30000000 0x0 0x60>;
++			power-domains = <&ps_usb>;
++
++			ausbphy0: phy@230000060 {
++				compatible = "apple,t8015-ausb-phy", "apple,ausb-phy";
++				reg = <0x2 0x30000060 0x0 0x20>;
++				power-domains = <&ps_usbctlreg>;
++				#phy-cells = <1>;
++				/* Tunables to be filled by loader */
++			};
++
++			usbdev: usbdev@230100000 {
++				compatible = "apple,t8015-dwc2", "apple,dwc2";
++				reg = <0x2 0x30100000 0x0 0x10000>;
++				interrupts = <AIC_IRQ 324 IRQ_TYPE_LEVEL_HIGH>;
++				clocks = <&clkref>;
++				clock-names = "otg";
++				phys = <&ausbphy0 PHY_TYPE_USB2>;
++				phy-names = "usb2-phy";
++				power-domains = <&ps_usb2dev>;
++				resets = <&ps_usb2dev>;
++				dr_mode = "peripheral";
++			};
++
++#if 0
++			ehci0: usb-ehci@230200000 {
++				compatible = "apple,t8015-ehci", "generic-ehci";
++				reg = <0x2 0x30200000 0x0 0x10000>;
++				interrupts = <AIC_IRQ 319 IRQ_TYPE_LEVEL_HIGH>;
++				power-domains = <&ps_usb2host0>;
++			};
++
++			ohci0: usb-ohci@230300000 {
++				compatible = "apple,t8015-ohci", "generic-ohci";
++				reg = <0x2 0x30300000 0x0 0x10000>;
++				interrupts = <AIC_IRQ 320 IRQ_TYPE_LEVEL_HIGH>;
++				power-domains = <&ps_usb2host0_ohci>;
++			};
++
++			ehci1: usb-ehci@230400000 {
++				compatible = "apple,t8015-ehci", "generic-ehci";
++				reg = <0x2 0x30400000 0x0 0x10000>;
++				interrupts = <AIC_IRQ 321 IRQ_TYPE_LEVEL_HIGH>;
++				power-domains = <&ps_usb2host1>;
++			};
++#endif
++		};
++
+ 		aic: interrupt-controller@232100000 {
+ 			compatible = "apple,t8015-aic", "apple,aic";
+ 			reg = <0x2 0x32100000 0x0 0x8000>;

@@ -1,0 +1,137 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Mon, 24 Mar 2025 01:47:12 +0800
+Subject: [PATCH 14/20] arm64: dts: apple: t8010: Add PMIC nodes
+
+Add PMIC and subdevice nodes for devices with Apple A10 SoC.
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ arch/arm64/boot/dts/apple/t8010-7.dtsi     | 33 ++++++++++++++++++++++
+ arch/arm64/boot/dts/apple/t8010-ipad6.dtsi | 33 ++++++++++++++++++++++
+ arch/arm64/boot/dts/apple/t8010-n112.dts   | 33 ++++++++++++++++++++++
+ 3 files changed, 99 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/t8010-7.dtsi b/arch/arm64/boot/dts/apple/t8010-7.dtsi
+index 1913b7b2c..67526e659 100644
+--- a/arch/arm64/boot/dts/apple/t8010-7.dtsi
++++ b/arch/arm64/boot/dts/apple/t8010-7.dtsi
+@@ -53,3 +53,36 @@
+ &hurricane_opp10 {
+ 	status = "okay";
+ };
++
++&i2c1 {
++	status = "okay";
++
++	pmic@74 {
++		compatible = "apple,adelyn-pmic", "apple,i2c-pmic";
++		reg = <0x74>;
++		#address-cells = <1>;
++		#size-cells = <1>;
++
++		rtc@500 {
++			compatible = "apple,adelyn-pmic-rtc", "apple,antigua-pmic-rtc";
++			reg = <0x500 0x10>;
++			nvmem-cells = <&rtc_offset>;
++			nvmem-cell-names = "rtc_offset";
++		};
++
++		nvmem@5000 {
++			compatible = "apple,pmic-nvmem";
++			reg = <0x5000 0x28>;
++
++			nvmem-layout {
++				compatible = "fixed-layout";
++				#address-cells = <1>;
++				#size-cells = <1>;
++
++				rtc_offset: rtc-offset@4 {
++					reg = <0x4 0x4>;
++				};
++			};
++		};
++	};
++};
+diff --git a/arch/arm64/boot/dts/apple/t8010-ipad6.dtsi b/arch/arm64/boot/dts/apple/t8010-ipad6.dtsi
+index 1e46e4a3a..4e17a8448 100644
+--- a/arch/arm64/boot/dts/apple/t8010-ipad6.dtsi
++++ b/arch/arm64/boot/dts/apple/t8010-ipad6.dtsi
+@@ -54,3 +54,36 @@
+ &hurricane_opp10 {
+ 	status = "okay";
+ };
++
++&i2c0 {
++	status = "okay";
++
++	pmic@3c {
++		compatible = "apple,angel-pmic", "apple,i2c-pmic";
++		reg = <0x3c>;
++		#address-cells = <1>;
++		#size-cells = <1>;
++
++		rtc@500 {
++			compatible = "apple,angel-pmic-rtc", "apple,antigua-pmic-rtc";
++			reg = <0x500 0x10>;
++			nvmem-cells = <&rtc_offset>;
++			nvmem-cell-names = "rtc_offset";
++		};
++
++		nvmem@5000 {
++			compatible = "apple,pmic-nvmem";
++			reg = <0x5000 0x28>;
++
++			nvmem-layout {
++				compatible = "fixed-layout";
++				#address-cells = <1>;
++				#size-cells = <1>;
++
++				rtc_offset: rtc-offset@4 {
++					reg = <0x4 0x4>;
++				};
++			};
++		};
++	};
++};
+diff --git a/arch/arm64/boot/dts/apple/t8010-n112.dts b/arch/arm64/boot/dts/apple/t8010-n112.dts
+index 48fdbedf7..ed719c3e1 100644
+--- a/arch/arm64/boot/dts/apple/t8010-n112.dts
++++ b/arch/arm64/boot/dts/apple/t8010-n112.dts
+@@ -49,3 +49,36 @@
+ &framebuffer0 {
+ 	power-domains = <&ps_disp0_fe &ps_disp0_be &ps_mipi_dsi>;
+ };
++
++&i2c1 {
++	status = "okay";
++
++	pmic@74 {
++		compatible = "apple,adelyn-pmic", "apple,i2c-pmic";
++		reg = <0x74>;
++		#address-cells = <1>;
++		#size-cells = <1>;
++
++		rtc@500 {
++			compatible = "apple,adelyn-pmic-rtc", "apple,antigua-pmic-rtc";
++			reg = <0x500 0x10>;
++			nvmem-cells = <&rtc_offset>;
++			nvmem-cell-names = "rtc_offset";
++		};
++
++		nvmem@5000 {
++			compatible = "apple,pmic-nvmem";
++			reg = <0x5000 0x28>;
++
++			nvmem-layout {
++				compatible = "fixed-layout";
++				#address-cells = <1>;
++				#size-cells = <1>;
++
++				rtc_offset: rtc-offset@4 {
++					reg = <0x4 0x4>;
++				};
++			};
++		};
++	};
++};

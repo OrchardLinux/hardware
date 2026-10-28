@@ -1,0 +1,199 @@
+{
+  "schema": 2,
+  "device": "iPad7,6",
+  "ipsw": {
+    "version": "17.7.11",
+    "build": "21H461",
+    "url": "https://updates.cdn-apple.com/2025SpringFCS/fullrestores/122-77020/D8DBC7A6-00AE-468D-8580-7FE5656EAE45/iPad_64bit_TouchID_ASTC_17.7.11_21H461_Restore.ipsw",
+    "bytes": 6849577393,
+    "sha256": "ef62bc3b566ea10c7cdf10d3de42e3532dca74ed5aef0f15ca62872df8bfc88a"
+  },
+  "inputs": {
+    "figarob.trx": {
+      "ipsw": {
+        "rootfs": "System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C1/figarob.trx"
+      },
+      "device": "/System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C1/figarob.trx",
+      "sha256": "35536ada819cf151131e2b9756565dc43754439336156f10d6765a3759705404"
+    },
+    "figarob.clmb": {
+      "ipsw": {
+        "rootfs": "System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C1/figarob.clmb"
+      },
+      "device": "/System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C1/figarob.clmb",
+      "sha256": "8d836f8e79cb2ce05af1b78e6553597084a25db8d4c4bcf9982cd6c1059aa8b8"
+    },
+    "figarob.txcb": {
+      "ipsw": {
+        "rootfs": "System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C1/figarob.txcb"
+      },
+      "device": "/System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C1/figarob.txcb",
+      "sha256": "e929f3723a542ba906ccef16965d8306c8d6d9cc09b49c85f5eb7e87ed0c4b36"
+    },
+    "P-figarob_M-YSBU_V-u__m-4.3.txt": {
+      "ipsw": {
+        "rootfs": "System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C1/P-figarob_M-YSBU_V-u__m-4.3.txt"
+      },
+      "device": "/System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C1/P-figarob_M-YSBU_V-u__m-4.3.txt",
+      "sha256": "730e96a5d96f84507d41a3eee350ecd7109ac8a3fc214f3bbcd2910fb4c38963"
+    },
+    "P-figarob_M-YSBU_V-u__m-4.1.txt": {
+      "ipsw": {
+        "rootfs": "System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C1/P-figarob_M-YSBU_V-u__m-4.1.txt"
+      },
+      "device": "/System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C1/P-figarob_M-YSBU_V-u__m-4.1.txt",
+      "sha256": "730e96a5d96f84507d41a3eee350ecd7109ac8a3fc214f3bbcd2910fb4c38963"
+    },
+    "P-figarob_M-YSBU_V-m__m-2.5.txt": {
+      "ipsw": {
+        "rootfs": "System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C1/P-figarob_M-YSBU_V-m__m-2.5.txt"
+      },
+      "device": "/System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C1/P-figarob_M-YSBU_V-m__m-2.5.txt",
+      "sha256": "3ab159fc48f380541ddfe3e9e8930d762fb28b6e02b50815d017010246efafc8"
+    },
+    "P-figarob_M-YSBU_V-m__m-2.3.txt": {
+      "ipsw": {
+        "rootfs": "System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C1/P-figarob_M-YSBU_V-m__m-2.3.txt"
+      },
+      "device": "/System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C1/P-figarob_M-YSBU_V-m__m-2.3.txt",
+      "sha256": "3ab159fc48f380541ddfe3e9e8930d762fb28b6e02b50815d017010246efafc8"
+    },
+    "kernelcache": {
+      "ipsw": {
+        "kernelcache": true
+      },
+      "device": {
+        "kernelcache": "active"
+      }
+    },
+    "BlueTool": {
+      "ipsw": {
+        "rootfs": "usr/sbin/BlueTool"
+      },
+      "device": "/usr/sbin/BlueTool"
+    },
+    "J72b.mtprops": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/multitouch/J72b.mtprops"
+      },
+      "device": "/usr/share/firmware/multitouch/J72b.mtprops",
+      "sha256": "3b48de549088ad3310516cd05ce09b53eb2a0fb4e69e24624703bc6dcfa78dfa"
+    }
+  },
+  "outputs": [
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355c1-pcie.apple,j72b.bin",
+      "sha256": "35536ada819cf151131e2b9756565dc43754439336156f10d6765a3759705404",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "figarob.trx"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355c1-pcie.apple,j72b.clm_blob",
+      "sha256": "8d836f8e79cb2ce05af1b78e6553597084a25db8d4c4bcf9982cd6c1059aa8b8",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "figarob.clmb"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355c1-pcie.apple,j72b.txcap_blob",
+      "sha256": "e929f3723a542ba906ccef16965d8306c8d6d9cc09b49c85f5eb7e87ed0c4b36",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "figarob.txcb"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355c1-pcie.apple,j72b-YSBU-u-4.3.txt",
+      "sha256": "730e96a5d96f84507d41a3eee350ecd7109ac8a3fc214f3bbcd2910fb4c38963",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-figarob_M-YSBU_V-u__m-4.3.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355c1-pcie.apple,j72b-YSBU-u-4.1.txt",
+      "sha256": "730e96a5d96f84507d41a3eee350ecd7109ac8a3fc214f3bbcd2910fb4c38963",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-figarob_M-YSBU_V-u__m-4.1.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355c1-pcie.apple,j72b-YSBU-m-2.5.txt",
+      "sha256": "3ab159fc48f380541ddfe3e9e8930d762fb28b6e02b50815d017010246efafc8",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-figarob_M-YSBU_V-m__m-2.5.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355c1-pcie.apple,j72b-YSBU-m-2.3.txt",
+      "sha256": "3ab159fc48f380541ddfe3e9e8930d762fb28b6e02b50815d017010246efafc8",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-figarob_M-YSBU_V-m__m-2.3.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/apple/t8010-smartio.bin",
+      "sha256": "85c32430f140a12d18a74f20dce520bb7266ae64ba20b20c67223c6f50047f6e",
+      "steps": [
+        {
+          "step": "smartio-from-kernelcache@1",
+          "input": "kernelcache"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/BCM.apple,j72b-MUR.hcd",
+      "sha256": "907d811769cfebdea8f1a28f2d4dcdab9e8ec6386b4979e0b45b797e48f2eb39",
+      "steps": [
+        {
+          "step": "bluetool-hcd@1",
+          "input": "BlueTool"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/BCM.apple,j72b-USI.hcd",
+      "sha256": "5f4655e5e8008715f5c52a5e25deb18d055416cd7433e55b6de5accedd0251c8",
+      "steps": [
+        {
+          "step": "bluetool-hcd@1",
+          "input": "BlueTool"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/apple/j72b-fwstart.z2fw",
+      "sha256": "ec4349481fbdc1e63989b800419527cd26061e6e419428e416376dff0dddd473",
+      "steps": [
+        {
+          "step": "z2fw-from-mtprops@1",
+          "input": "J72b.mtprops",
+          "profile": "K1F19,4",
+          "packet": "K1HBPP14",
+          "load_address": 1048576,
+          "hbpp_version": 260
+        }
+      ]
+    }
+  ]
+}

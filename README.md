@@ -14,7 +14,7 @@ For building components or another image, follow [BUILD.md](BUILD.md). All comma
 
 - [Kernel producers](kernel/README.md)
 - [J71b compatibility audit and validation limits](docs/j71b-compatibility-audit.md)
-- [Recovery tools](boot/initramfs/j71b/recovery/README.md)
+- [Recovery tools](boot/initramfs/recovery/README.md)
 - [GitHub builds and release ordering](docs/ci.md)
 - [Shared launcher build and publication](boot/quiet/README.md)
 - [Device protocol](https://github.com/OrchardLinux/cli/blob/main/docs/device-protocol.md)

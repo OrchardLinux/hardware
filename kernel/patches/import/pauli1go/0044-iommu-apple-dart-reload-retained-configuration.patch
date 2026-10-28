@@ -1,0 +1,271 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Sun, 26 Jul 2026 17:19:00 +0200
+Subject: [PATCH 044/117] iommu: apple-dart: reload retained configuration
+
+Expose a narrow API for reloading firmware-retained S5L8960X DART state
+for one stream before its endpoint is released. J172 firmware leaves the
+WLAN availability DART configured, but the controller needs its retained
+remap, TCR and TTBR state re-applied after the PCIe power and clock
+transition.
+
+Reloading before PERST deassertion ensures the endpoint cannot issue DMA
+against stale translation state. Serialize lookup and reload against
+DART group registration, validate the stream ID and restore the retained
+configuration under the existing hardware lock.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: 283661a380641fe321ae899da6700dbe17e20165
+---
+ drivers/iommu/apple-dart.c | 144 ++++++++++++++++++++++++++++++++-----
+ include/linux/apple-dart.h |  21 ++++++
+ 2 files changed, 148 insertions(+), 17 deletions(-)
+ create mode 100644 include/linux/apple-dart.h
+
+diff --git a/drivers/iommu/apple-dart.c b/drivers/iommu/apple-dart.c
+index 85311e95f..01737458b 100644
+--- a/drivers/iommu/apple-dart.c
++++ b/drivers/iommu/apple-dart.c
+@@ -23,6 +23,7 @@
+ #include <linux/iopoll.h>
+ #include <linux/minmax.h>
+ #include <linux/module.h>
++#include <linux/mutex.h>
+ #include <linux/of.h>
+ #include <linux/of_address.h>
+ #include <linux/of_iommu.h>
+@@ -33,6 +34,8 @@
+ #include <linux/swab.h>
+ #include <linux/types.h>
+ 
++#include <linux/apple-dart.h>
++
+ #include "dma-iommu.h"
+ 
+ #define DART_MAX_STREAMS 256
+@@ -64,6 +67,11 @@
+ 
+ #define DART_S5L8960X_TCR			0xc
+ #define DART_S5L8960X_TCR_BITS_PER_STREAM	8
++#define DART_S5L8960X_MAX_STREAMS		4
++
++#define DART_S5L8960X_RELOAD_CONFIG	0x20
++#define DART_S5L8960X_RELOAD_REMAP	0x2c
++#define DART_S5L8960X_RELOAD_CONFIG2	0x30
+ 
+ #define DART_S5L8960X_TTBR	0x40
+ 
+@@ -222,6 +230,8 @@ struct apple_dart {
+ 	u32 save_ttbr[DART_MAX_STREAMS][DART_MAX_TTBR];
+ };
+ 
++static DEFINE_MUTEX(apple_dart_groups_lock);
++
+ struct apple_dart_hw {
+ 	enum dart_type type;
+ 	irqreturn_t (*irq_handler)(int irq, void *dev);
+@@ -367,11 +377,14 @@ static u32 apple_dart_s5l8960x_read_tcr(struct apple_dart *dart, u32 sid)
+ 
+ static void apple_dart_s5l8960x_write_tcr(struct apple_dart *dart, u32 sid, u32 val)
+ {
+-	WARN_ON(sid >= 4);
+-	u32 tcr = readl(dart->regs + dart->hw->tcr);
++	u32 shift = sid * DART_S5L8960X_TCR_BITS_PER_STREAM;
++	u32 tcr;
+ 
+-	tcr &= 0xff << (sid * DART_S5L8960X_TCR_BITS_PER_STREAM);
+-	tcr |= val;
++	WARN_ON(sid >= DART_S5L8960X_MAX_STREAMS);
++	tcr = readl(dart->regs + dart->hw->tcr);
++
++	tcr &= ~(0xff << shift);
++	tcr |= (val & 0xff) << shift;
+ 	writel(tcr, dart->regs + dart->hw->tcr);
+ }
+ 
+@@ -439,23 +452,30 @@ apple_dart_hw_clear_all_ttbrs(struct apple_dart_stream_map *stream_map)
+ }
+ 
+ static int
+-apple_dart_s5l8960x_hw_stream_command(struct apple_dart_stream_map *stream_map,
+-			     u32 command)
++apple_dart_s5l8960x_command_locked(struct apple_dart_stream_map *stream_map,
++				   u32 command)
+ {
+-	unsigned long flags;
+-	int ret;
+ 	u32 command_reg;
+ 
+-	spin_lock_irqsave(&stream_map->dart->lock, flags);
+-
+ 	writel(stream_map->sidmap[0] << DART_S5L8960X_STREAM_COMMAND_SID_SHIFT |
+ 	       command, stream_map->dart->regs + DART_S5L8960X_STREAM_COMMAND);
+ 
+-	ret = readl_poll_timeout_atomic(
+-		stream_map->dart->regs + DART_S5L8960X_STREAM_COMMAND, command_reg,
+-		!(command_reg & DART_S5L8960X_STREAM_COMMAND_BUSY), 1,
+-		DART_STREAM_COMMAND_BUSY_TIMEOUT);
++	return readl_poll_timeout_atomic(stream_map->dart->regs +
++					 DART_S5L8960X_STREAM_COMMAND,
++					 command_reg,
++			!(command_reg & DART_S5L8960X_STREAM_COMMAND_BUSY), 1,
++			DART_STREAM_COMMAND_BUSY_TIMEOUT);
++}
+ 
++static int
++apple_dart_s5l8960x_hw_stream_command(struct apple_dart_stream_map *stream_map,
++				      u32 command)
++{
++	unsigned long flags;
++	int ret;
++
++	spin_lock_irqsave(&stream_map->dart->lock, flags);
++	ret = apple_dart_s5l8960x_command_locked(stream_map, command);
+ 	spin_unlock_irqrestore(&stream_map->dart->lock, flags);
+ 
+ 	if (ret) {
+@@ -599,6 +619,98 @@ static int apple_dart_hw_reset(struct apple_dart *dart)
+ 	return dart->hw->invalidate_tlb(&stream_map);
+ }
+ 
++static int
++apple_dart_s5l8960x_reload_configuration(struct apple_dart *dart, u32 sid)
++{
++	struct apple_dart_stream_map stream_map = { .dart = dart };
++	u32 ttbr[DART_S5L8960X_MAX_STREAMS][DART_MAX_TTBR];
++	u32 shift = sid * DART_S5L8960X_TCR_BITS_PER_STREAM;
++	unsigned long flags;
++	unsigned int idx, stream;
++	u32 config;
++	u32 config2;
++	u32 command = DART_S5L8960X_STREAM_COMMAND_INVALIDATE;
++	u32 remap;
++	u32 tcr;
++	int ret;
++
++	spin_lock_irqsave(&dart->lock, flags);
++	config = readl(dart->regs + DART_S5L8960X_RELOAD_CONFIG);
++	config2 = readl(dart->regs + DART_S5L8960X_RELOAD_CONFIG2);
++	remap = readl(dart->regs + DART_S5L8960X_RELOAD_REMAP);
++	tcr = readl(dart->regs + DART_S5L8960X_TCR);
++
++	for (stream = 0; stream < dart->num_streams; stream++)
++		for (idx = 0; idx < dart->hw->ttbr_count; idx++)
++			ttbr[stream][idx] = readl(dart->regs +
++						       DART_TTBR(dart, stream, idx));
++
++	/*
++	 * Apple's manual-availability path restores the remap and TTBR state,
++	 * invalidates all streams, then restores TCR and the remaining config.
++	 * Keep the selected stream translated while issuing the S5L8960X command.
++	 */
++	tcr &= ~(0xff << shift);
++	tcr |= (dart->hw->tcr_enabled & 0xff) << shift;
++	apple_dart_s5l8960x_write_tcr(dart, sid, dart->hw->tcr_enabled);
++	writel(remap, dart->regs + DART_S5L8960X_RELOAD_REMAP);
++	for (stream = 0; stream < dart->num_streams; stream++)
++		for (idx = 0; idx < dart->hw->ttbr_count; idx++)
++			writel(ttbr[stream][idx], dart->regs +
++						      DART_TTBR(dart, stream, idx));
++
++	bitmap_set(stream_map.sidmap, 0, dart->num_streams);
++	ret = apple_dart_s5l8960x_command_locked(&stream_map, command);
++
++	writel(tcr, dart->regs + DART_S5L8960X_TCR);
++	writel(config2, dart->regs + DART_S5L8960X_RELOAD_CONFIG2);
++	writel(config, dart->regs + DART_S5L8960X_RELOAD_CONFIG);
++	spin_unlock_irqrestore(&dart->lock, flags);
++
++	if (ret)
++		dev_err(dart->dev,
++			"busy bit did not clear while reloading configuration\n");
++
++	return ret;
++}
++
++int apple_dart_reload_configuration(struct device_node *np, u32 sid)
++{
++	struct platform_device *pdev;
++	struct apple_dart *dart;
++	int ret;
++
++	pdev = of_find_device_by_node(np);
++	if (!pdev)
++		return -EPROBE_DEFER;
++
++	dart = platform_get_drvdata(pdev);
++	if (!dart) {
++		ret = -EPROBE_DEFER;
++		goto out_put_device;
++	}
++	if (dart->hw->type != DART_S5L8960X) {
++		ret = -EOPNOTSUPP;
++		goto out_put_device;
++	}
++	if (sid >= dart->num_streams) {
++		ret = -EINVAL;
++		goto out_put_device;
++	}
++
++	mutex_lock(&apple_dart_groups_lock);
++	if (dart->sid2group[sid])
++		ret = -EBUSY;
++	else
++		ret = apple_dart_s5l8960x_reload_configuration(dart, sid);
++	mutex_unlock(&apple_dart_groups_lock);
++
++out_put_device:
++	put_device(&pdev->dev);
++	return ret;
++}
++EXPORT_SYMBOL_GPL(apple_dart_reload_configuration);
++
+ static void apple_dart_domain_flush_tlb(struct apple_dart_domain *domain)
+ {
+ 	int i, j;
+@@ -1003,8 +1115,6 @@ static int apple_dart_of_xlate(struct device *dev,
+ 	return -EINVAL;
+ }
+ 
+-static DEFINE_MUTEX(apple_dart_groups_lock);
+-
+ static void apple_dart_release_group(void *iommu_data)
+ {
+ 	int i, sid;
+@@ -1432,7 +1542,7 @@ static const struct apple_dart_hw apple_dart_hw_s5l8960x = {
+ 	.write_tcr = apple_dart_s5l8960x_write_tcr,
+ 	.oas = 36,
+ 	.fmt = APPLE_DART,
+-	.max_sid_count = 4,
++	.max_sid_count = DART_S5L8960X_MAX_STREAMS,
+ 
+ 	.enable_streams = 0,
+ 	.lock = 0,
+diff --git a/include/linux/apple-dart.h b/include/linux/apple-dart.h
+new file mode 100644
+index 000000000..1bf05582a
+--- /dev/null
++++ b/include/linux/apple-dart.h
+@@ -0,0 +1,21 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef _LINUX_APPLE_DART_H_
++#define _LINUX_APPLE_DART_H_
++
++#include <linux/errno.h>
++#include <linux/kconfig.h>
++#include <linux/types.h>
++
++struct device_node;
++
++#if IS_REACHABLE(CONFIG_APPLE_DART)
++int apple_dart_reload_configuration(struct device_node *np, u32 sid);
++#else
++static inline int apple_dart_reload_configuration(struct device_node *np,
++						  u32 sid)
++{
++	return -ENODEV;
++}
++#endif
++
++#endif

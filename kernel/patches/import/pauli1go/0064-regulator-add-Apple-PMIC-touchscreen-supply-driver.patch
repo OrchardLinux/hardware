@@ -1,0 +1,185 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Sat, 1 Aug 2026 17:17:15 +0200
+Subject: [PATCH 064/117] regulator: add Apple PMIC touchscreen supply driver
+
+The D111 touchscreen power sequence depends on a core switch in Adelyn and
+a high-voltage switch in Chestnut. Driving those PMIC registers from the
+touchscreen consumer would couple two devices, bypass regulator ownership
+and make unbind or error rollback difficult to balance.
+
+Add a platform regulator driver with per-compatible regulator descriptors
+for the two physical rails. The driver obtains the parent-owned regmap,
+registers through devm_regulator_register(), and uses the standard
+regmap-backed enable, disable and state operations. Register addresses and
+masks remain in match data rather than device tree.
+
+The regulator core therefore owns consumer references and sequencing,
+while managed registration covers probe failure and removal without a
+generic MFD, regmap or regulator-core special case. Probe rejects missing
+match data or a parent without a regmap before exposing a regulator. The
+complete series built Image.gz, DTBs and modules, and the D111 hardware
+test exercised both rails through a successful apple-z2 probe with no
+regulator errors. This patch was checked with checkpatch.pl --strict.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: cb07f8756ea0a58701cde87194bd11f2ca2aa1a6
+---
+ MAINTAINERS                                   |  1 +
+ drivers/regulator/Kconfig                     | 11 +++
+ drivers/regulator/Makefile                    |  1 +
+ .../regulator/apple-pmic-touch-regulator.c    | 98 +++++++++++++++++++
+ 4 files changed, 111 insertions(+)
+ create mode 100644 drivers/regulator/apple-pmic-touch-regulator.c
+
+diff --git a/MAINTAINERS b/MAINTAINERS
+index 31d88bd09..0eccf266f 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -2701,6 +2701,7 @@ F:	drivers/pinctrl/pinctrl-apple-gpio.c
+ F:	drivers/power/reset/macsmc-reboot.c
+ F:	drivers/power/supply/macsmc-power.c
+ F:	drivers/pwm/pwm-apple.c
++F:	drivers/regulator/apple-pmic-touch-regulator.c
+ F:	drivers/rtc/rtc-macsmc.c
+ F:	drivers/rtc/rtc-apple-pmic.c
+ F:	drivers/soc/apple/*
+diff --git a/drivers/regulator/Kconfig b/drivers/regulator/Kconfig
+index 89789ac7a..cb63712f7 100644
+--- a/drivers/regulator/Kconfig
++++ b/drivers/regulator/Kconfig
+@@ -133,6 +133,17 @@ config REGULATOR_ADP5055
+ 	  Say M here if you want to include support for the regulator as a
+ 	  module.
+ 
++config REGULATOR_APPLE_PMIC_TOUCH
++	tristate "Apple PMIC touchscreen supply regulators"
++	depends on MFD_SIMPLE_MFD_I2C && OF
++	default y if ARCH_APPLE
++	help
++	  Support the fixed touchscreen core and high-voltage supply switches
++	  provided by Apple Adelyn and Chestnut PMICs on A10 devices. Each
++	  compatible identifies one physical rail and keeps its register layout
++	  inside the driver instead of describing register programming in the
++	  device tree.
++
+ config REGULATOR_ANATOP
+ 	tristate "Freescale i.MX on-chip ANATOP LDO regulators"
+ 	depends on ARCH_MXC || COMPILE_TEST
+diff --git a/drivers/regulator/Makefile b/drivers/regulator/Makefile
+index 5a764cec8..731ea00ec 100644
+--- a/drivers/regulator/Makefile
++++ b/drivers/regulator/Makefile
+@@ -23,6 +23,7 @@ obj-$(CONFIG_REGULATOR_ACT8865) += act8865-regulator.o
+ obj-$(CONFIG_REGULATOR_ACT8945A) += act8945a-regulator.o
+ obj-$(CONFIG_REGULATOR_AD5398) += ad5398.o
+ obj-$(CONFIG_REGULATOR_ADP5055) += adp5055-regulator.o
++obj-$(CONFIG_REGULATOR_APPLE_PMIC_TOUCH) += apple-pmic-touch-regulator.o
+ obj-$(CONFIG_REGULATOR_ANATOP) += anatop-regulator.o
+ obj-$(CONFIG_REGULATOR_ARIZONA_LDO1) += arizona-ldo1.o
+ obj-$(CONFIG_REGULATOR_ARIZONA_MICSUPP) += arizona-micsupp.o
+diff --git a/drivers/regulator/apple-pmic-touch-regulator.c b/drivers/regulator/apple-pmic-touch-regulator.c
+new file mode 100644
+index 000000000..75cae4a84
+--- /dev/null
++++ b/drivers/regulator/apple-pmic-touch-regulator.c
+@@ -0,0 +1,98 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Apple PMIC touchscreen supply regulators
++ *
++ * Copyright (C) 2026 Paul Praschl
++ */
++
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/property.h>
++#include <linux/regmap.h>
++#include <linux/regulator/driver.h>
++#include <linux/regulator/of_regulator.h>
++
++static const struct regulator_ops apple_pmic_touch_regulator_ops = {
++	.enable = regulator_enable_regmap,
++	.disable = regulator_disable_regmap,
++	.is_enabled = regulator_is_enabled_regmap,
++};
++
++static const struct regulator_desc apple_adelyn_touch_core = {
++	.name = "adelyn-touch-core",
++	.ops = &apple_pmic_touch_regulator_ops,
++	.type = REGULATOR_VOLTAGE,
++	.owner = THIS_MODULE,
++	.enable_reg = 0x31f,
++	.enable_mask = 0x01,
++	.enable_val = 0x01,
++	.disable_val = 0,
++	.enable_time = 1000,
++	.off_on_delay = 1000,
++};
++
++static const struct regulator_desc apple_chestnut_touch_hv = {
++	.name = "chestnut-touch-hv",
++	.ops = &apple_pmic_touch_regulator_ops,
++	.type = REGULATOR_VOLTAGE,
++	.owner = THIS_MODULE,
++	.enable_reg = 0x05,
++	.enable_mask = 0x10,
++	.enable_val = 0x10,
++	.disable_val = 0,
++	.enable_time = 1000,
++	.off_on_delay = 1000,
++};
++
++static int apple_pmic_touch_regulator_probe(struct platform_device *pdev)
++{
++	const struct regulator_desc *desc;
++	struct regulator_config config = { };
++	struct device *dev = &pdev->dev;
++	struct regulator_dev *rdev;
++	struct regmap *regmap;
++
++	desc = device_get_match_data(dev);
++	if (!desc)
++		return dev_err_probe(dev, -EINVAL, "missing regulator match data\n");
++
++	regmap = dev_get_regmap(dev->parent, NULL);
++	if (!regmap)
++		return dev_err_probe(dev, -ENODEV,
++				     "parent PMIC has no regmap\n");
++
++	config.dev = dev;
++	config.of_node = dev->of_node;
++	config.init_data = of_get_regulator_init_data(dev, dev->of_node, desc);
++	config.regmap = regmap;
++
++	rdev = devm_regulator_register(dev, desc, &config);
++	return PTR_ERR_OR_ZERO(rdev);
++}
++
++static const struct of_device_id apple_pmic_touch_regulator_of_match[] = {
++	{
++		.compatible = "apple,adelyn-touch-core-regulator",
++		.data = &apple_adelyn_touch_core,
++	},
++	{
++		.compatible = "apple,chestnut-touch-hv-regulator",
++		.data = &apple_chestnut_touch_hv,
++	},
++	{ }
++};
++MODULE_DEVICE_TABLE(of, apple_pmic_touch_regulator_of_match);
++
++static struct platform_driver apple_pmic_touch_regulator_driver = {
++	.probe = apple_pmic_touch_regulator_probe,
++	.driver = {
++		.name = "apple-pmic-touch-regulator",
++		.of_match_table = apple_pmic_touch_regulator_of_match,
++	},
++};
++module_platform_driver(apple_pmic_touch_regulator_driver);
++
++MODULE_AUTHOR("Paul Praschl <praschlpaul@g-p.at>");
++MODULE_DESCRIPTION("Apple PMIC touchscreen supply regulators");
++MODULE_LICENSE("GPL");

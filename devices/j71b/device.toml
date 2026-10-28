@@ -17,12 +17,42 @@ product = "J71b Recovery"
 
 [boot]
 methods = ["checkm8-pongo"]
-launch_manifest = "https://github.com/OrchardLinux/hardware/releases/latest/download/j71b-launcher.boot.toml"
+launch_manifest = "https://github.com/OrchardLinux/hardware/releases/latest/download/j71b-apple-launcher.boot.toml"
+# Installs made before Orchard 0.1.11 (old kernel stack) keep this launcher until they can be updated.
+# CI also republishes it unchanged in every release as j71b-launcher.boot.toml for older CLIs.
+legacy_launch_manifest = "https://github.com/OrchardLinux/hardware/releases/download/v0.1.10/j71b-launcher.boot.toml"
+legacy_launch_manifest_sha256 = "59b0c9dbbaceb27a08ec38b4113463827b985fe4b21b2ea1d556d719746250ae"
+
+[kernel]
+platform = "apple"     # kernel/series/apple, kernel/configs/apple
+dtb = "t8010-j71b"     # arch/arm64/boot/dts/apple/<dtb>.dtb
 
 [firmware]
 recipe = "firmware.json" # Relative to this device.toml; public recipe, not firmware bytes.
 
 [support]
+install = true
+status = "supported"
+caveats = [
+  "Apple chargers and USB-C sources charge at up to 2.4 A; computers, hubs and other USB-A chargers at 500 mA, which may not keep up with heavy use.",
+]
 wifi = true # Static support; provisioning requires runtime-confirmed availability.
 usb_serial = true
 usb_network = true
+
+# States: working, partial, untested, missing, none (features.toml).
+[features]
+display = "working"
+touch = "working"
+wifi = "working"
+bluetooth = "working"
+storage = "working"
+battery = "working"
+charging = "working"
+backlight = "working"
+buttons = "untested"
+audio = "missing"
+camera = "missing"
+cellular = "none"
+suspend = "missing"
+gpu = "missing"

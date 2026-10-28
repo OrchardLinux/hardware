@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Thu, 7 Aug 2025 23:44:57 +0800
+Subject: [PATCH 02/21] gpio: macsmc: Do not probe without OF node
+
+Apple silicon platforms to boots using Device Tree. Do not probe without
+an OF node to allow implementations without this function indicate it
+by not having a reboot node in their SMC node.
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ drivers/gpio/gpio-macsmc.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/drivers/gpio/gpio-macsmc.c b/drivers/gpio/gpio-macsmc.c
+index b0952d066..30d799b5f 100644
+--- a/drivers/gpio/gpio-macsmc.c
++++ b/drivers/gpio/gpio-macsmc.c
+@@ -239,6 +239,9 @@ static int macsmc_gpio_probe(struct platform_device *pdev)
+ 	smc_key key;
+ 	int ret;
+ 
++	if (!pdev->dev.of_node)
++		return -ENODEV;
++
+ 	smcgp = devm_kzalloc(&pdev->dev, sizeof(*smcgp), GFP_KERNEL);
+ 	if (!smcgp)
+ 		return -ENOMEM;

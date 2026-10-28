@@ -1,0 +1,114 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Sat, 1 Aug 2026 17:19:00 +0200
+Subject: [PATCH 068/117] arm64: dts: apple: d111: add touchscreen
+
+The D111 board description lacks the PMIC rails and SPI wiring required by
+its integrated touchscreen. The touchscreen core rail is supplied by
+Adelyn in the iPhone 7 family common design, while D111's high-voltage
+rail is switched by the board's 8-bit Chestnut PMIC.
+
+Add the Adelyn core regulator to the common t8010-7 PMIC, describe
+Chestnut and its high-voltage regulator on D111, and enable SPI2 with the
+board-specific chip select and SIO transmit channel. Add the Z2 child with
+its interrupt, reset, supplies, clock, firmware name and display geometry,
+and provide the required touch clock rate.
+
+Controller resources remain in the T8010 SoC description while board-only
+routing and PMIC topology stay in the board files. Per-device calibration
+is supplied at boot and is not embedded in the DTS. Standard MFD,
+regulator, DMA, clock, GPIO, SPI and input bindings describe the complete
+path, so no generic core exception is needed.
+
+The full kernel built Image.gz, all DTBs and modules. The D111 DTB passed
+PMIC, touch-regulator and apple,z2 schema validation and decompiled with
+Chestnut using only apple,chestnut-pmic. On hardware, Linux booted from
+the internal NVMe root, apple-z2 bound to SPI2, and evtest captured
+balanced touch sequences without relevant kernel errors. This patch was
+checked with checkpatch.pl --strict.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: cded6f7f23c5306358a44a26c684f92fc4fbc3e4
+---
+ arch/arm64/boot/dts/apple/t8010-7.dtsi   |  5 +++
+ arch/arm64/boot/dts/apple/t8010-d111.dts | 52 ++++++++++++++++++++++++
+ 2 files changed, 57 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/t8010-7.dtsi b/arch/arm64/boot/dts/apple/t8010-7.dtsi
+index 67526e659..a00b0d519 100644
+--- a/arch/arm64/boot/dts/apple/t8010-7.dtsi
++++ b/arch/arm64/boot/dts/apple/t8010-7.dtsi
+@@ -63,6 +63,11 @@
+ 		#address-cells = <1>;
+ 		#size-cells = <1>;
+ 
++		touch_core: regulator-touch-core {
++			compatible = "apple,adelyn-touch-core-regulator";
++			regulator-name = "touch-core";
++		};
++
+ 		rtc@500 {
+ 			compatible = "apple,adelyn-pmic-rtc", "apple,antigua-pmic-rtc";
+ 			reg = <0x500 0x10>;
+diff --git a/arch/arm64/boot/dts/apple/t8010-d111.dts b/arch/arm64/boot/dts/apple/t8010-d111.dts
+index 37e395a48..227555b59 100644
+--- a/arch/arm64/boot/dts/apple/t8010-d111.dts
++++ b/arch/arm64/boot/dts/apple/t8010-d111.dts
+@@ -11,4 +11,56 @@
+ / {
+ 	compatible = "apple,d111", "apple,t8010", "apple,arm-platform";
+ 	model = "Apple iPhone 7 Plus (Intel)";
++
++	aliases {
++		touchscreen0 = &touchscreen;
++	};
++};
++
++&i2c0 {
++	status = "okay";
++
++	pmic@27 {
++		compatible = "apple,chestnut-pmic";
++		reg = <0x27>;
++		#address-cells = <1>;
++		#size-cells = <1>;
++
++		touch_hv: regulator-touch-hv {
++			compatible = "apple,chestnut-touch-hv-regulator";
++			regulator-name = "touch-hv";
++		};
++	};
++};
++
++&spi2 {
++	cs-gpios = <&pinctrl_ap 81 GPIO_ACTIVE_LOW>;
++	dmas = <&sio 0x18>;
++	dma-names = "tx";
++	status = "okay";
++
++	touchscreen: touchscreen@0 {
++		compatible = "apple,d111-touchscreen";
++		reg = <0>;
++		spi-max-frequency = <3000000>;
++		spi-cpol;
++		spi-cpha;
++		apple,z2-no-init-ack;
++		interrupts-extended = <&pinctrl_ap 166 IRQ_TYPE_EDGE_FALLING>;
++		reset-gpios = <&pinctrl_ap 161 GPIO_ACTIVE_LOW>;
++		hv-supply = <&touch_hv>;
++		core-supply = <&touch_core>;
++		clocks = <&touchclk>;
++		firmware-name = "apple/dfrmtfw-d111-c1f5e-2.bin";
++		touchscreen-size-x = <1080>;
++		touchscreen-size-y = <1920>;
++	};
++};
++
++&sio {
++	status = "okay";
++};
++
++&touchclk {
++	clock-frequency = <32768>;
+ };

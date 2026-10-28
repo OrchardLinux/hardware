@@ -1,0 +1,30 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Tue, 4 Aug 2026 18:08:40 +0200
+Subject: [PATCH 100/117] dt-bindings: net: brcmfmac: Add D11 BCM4355 Wi-Fi
+
+Allow the D11-specific BCM4355 endpoint compatible alongside D111 while
+retaining the shared PCI device identifier.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: f07b2e14b6b6d811258f6a742c60dfb455644f6c
+---
+ .../devicetree/bindings/net/wireless/brcm,bcm4329-fmac.yaml   | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/net/wireless/brcm,bcm4329-fmac.yaml b/Documentation/devicetree/bindings/net/wireless/brcm,bcm4329-fmac.yaml
+index 9e31844a4..cb99194e5 100644
+--- a/Documentation/devicetree/bindings/net/wireless/brcm,bcm4329-fmac.yaml
++++ b/Documentation/devicetree/bindings/net/wireless/brcm,bcm4329-fmac.yaml
+@@ -57,7 +57,9 @@ properties:
+           - pci14e4,4434  # BCM4388
+           - pci14e4,449d  # BCM43752
+       - items:
+-          - const: apple,d111-bcm4355-wifi
++          - enum:
++              - apple,d11-bcm4355-wifi
++              - apple,d111-bcm4355-wifi
+           - const: pci14e4,43dc
+ 
+   reg:

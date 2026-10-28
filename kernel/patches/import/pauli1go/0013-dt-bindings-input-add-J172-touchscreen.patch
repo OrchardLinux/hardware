@@ -1,0 +1,144 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Tue, 14 Jul 2026 16:01:42 +0200
+Subject: [PATCH 013/117] dt-bindings: input: add J172 touchscreen
+
+The iPad 7 touchscreen uses the Apple Z2 protocol over T8010 SPI3, but its
+platform wiring differs from the existing MacBook Touch Bar users.  J172
+has separate analog and LDO power controls, a dedicated clock and two
+pins that switch between GPIO and display-sync functions during boot.
+
+Add the J172 compatible and properties for its transfer word-width policy
+and initial-ACK behavior.  Require both display-sync GPIOs, both power
+GPIOs, the platform clock and the named display-sync pinctrl state only
+for J172.  Also require its mode-3 SPI flags and boot transfer properties;
+existing J293 and J493 descriptions remain unchanged.
+
+Add a J172 touchscreen MAINTAINERS section for the binding.  The driver and
+board paths are added by their respective commits.
+
+The binding passes dt-doc-validate and the final J172 DT validates with all
+required resources.  That DT completed automatic probe and passed the
+DT620 single- and multi-touch hardware test.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: e3a321c27780d915591660bad371cb16ca32a286
+---
+ .../touchscreen/apple,z2-multitouch.yaml      | 63 +++++++++++++++++--
+ MAINTAINERS                                   |  7 +++
+ 2 files changed, 65 insertions(+), 5 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml b/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml
+index 44158e89e..5422771de 100644
+--- a/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml
++++ b/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml
+@@ -8,18 +8,16 @@ title: Apple touchscreens attached using the Z2 protocol
+ 
+ maintainers:
+   - Sasha Finkelstein <k@chaosmail.tech>
++  - Paul Praschl <praschlpaul@g-p.at>
+ 
+-description: A series of touschscreen controllers used in Apple products
+-
+-allOf:
+-  - $ref: touchscreen.yaml#
+-  - $ref: /schemas/spi/spi-peripheral-props.yaml#
++description: A series of touchscreen controllers used in Apple products
+ 
+ properties:
+   compatible:
+     enum:
+       - apple,j293-touchbar
+       - apple,j493-touchbar
++      - apple,j172-touchscreen
+ 
+   interrupts:
+     maxItems: 1
+@@ -27,6 +25,37 @@ properties:
+   reset-gpios:
+     maxItems: 1
+ 
++  power-ana-gpios:
++    maxItems: 1
++
++  power-ldo-gpios:
++    maxItems: 1
++
++  display-sync-gpios:
++    maxItems: 1
++
++  display-sync1-gpios:
++    maxItems: 1
++
++  spi-cpha: true
++
++  spi-cpol: true
++
++  clocks:
++    maxItems: 1
++
++  apple,z2-bpw16-min-len:
++    $ref: /schemas/types.yaml#/definitions/uint32
++    description:
++      Minimum firmware blob length sent using 16 bits per word.
++    default: 1
++
++  apple,z2-no-init-ack:
++    description:
++      Do not append the standard 0x1a 0xa1 ACK transfer after the initial
++      firmware payload.
++    type: boolean
++
+   firmware-name:
+     maxItems: 1
+ 
+@@ -44,6 +73,30 @@ required:
+   - touchscreen-size-x
+   - touchscreen-size-y
+ 
++allOf:
++  - $ref: touchscreen.yaml#
++  - $ref: /schemas/spi/spi-peripheral-props.yaml#
++  - if:
++      properties:
++        compatible:
++          const: apple,j172-touchscreen
++    then:
++      properties:
++        pinctrl-names:
++          const: display-sync-active
++      required:
++        - clocks
++        - power-ana-gpios
++        - power-ldo-gpios
++        - display-sync-gpios
++        - display-sync1-gpios
++        - pinctrl-0
++        - pinctrl-names
++        - spi-cpha
++        - spi-cpol
++        - apple,z2-bpw16-min-len
++        - apple,z2-no-init-ack
++
+ unevaluatedProperties: false
+ 
+ examples:
+diff --git a/MAINTAINERS b/MAINTAINERS
+index efd1746f4..94f51ffaa 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -2716,6 +2716,13 @@ F:	include/linux/mfd/macsmc.h
+ F:	include/linux/soc/apple/*
+ F:	include/uapi/drm/asahi_drm.h
+ 
++APPLE J172 TOUCHSCREEN SUPPORT
++M:	Paul Praschl <praschlpaul@g-p.at>
++L:	asahi@lists.linux.dev
++L:	linux-input@vger.kernel.org
++S:	Maintained
++F:	Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml
++
+ APPLE T8010 SPI SUPPORT
+ M:	Paul Praschl <praschlpaul@g-p.at>
+ L:	asahi@lists.linux.dev

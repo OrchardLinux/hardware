@@ -20,7 +20,7 @@ class QuietBoot(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / 'out/launcher'
             output.mkdir(parents=True)
-            for name in ('boot.toml', 'j71b-launcher.boot.toml'):
+            for name in ('boot.toml', 'j71b-apple-launcher.boot.toml'):
                 (output / name).write_text('min_orchard = "0.1.8"\nprotocol = 1\n')
             subprocess.run([sys.executable, '-c', script], cwd=directory,
                            env={**os.environ, 'CLI_TAG': 'v0.1.10'}, check=True)

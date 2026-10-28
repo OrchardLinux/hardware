@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Sun, 2 Aug 2026 12:14:45 +0200
+Subject: [PATCH 071/117] dt-bindings: power: supply: add Apple D111 BQ27545
+
+Add the Apple D111-compatible BQ27545 profile. The Apple gauge firmware
+exposes a different remaining-charge register layout while retaining the
+TI HDQ interface.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: d199561de0e9bec86bf88258aaa1bc30d2122b6f
+---
+ .../devicetree/bindings/power/supply/ti,bq27545-hdq.yaml  | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/power/supply/ti,bq27545-hdq.yaml b/Documentation/devicetree/bindings/power/supply/ti,bq27545-hdq.yaml
+index 9d442d10c..f48654164 100644
+--- a/Documentation/devicetree/bindings/power/supply/ti,bq27545-hdq.yaml
++++ b/Documentation/devicetree/bindings/power/supply/ti,bq27545-hdq.yaml
+@@ -13,13 +13,19 @@ description: |
+   The BQ27545 is a single-cell fuel gauge which can communicate using the
+   Texas Instruments single-wire HDQ protocol. An HDQ device has no 1-Wire
+   ROM address, so it is represented as the single child of an HDQ bus.
++  D111 devices use Apple-specific gauge firmware whose charge-remaining
++  register set differs from the generic BQ27545 profile.
+ 
+ allOf:
+   - $ref: power-supply.yaml#
+ 
+ properties:
+   compatible:
+-    const: ti,bq27545-hdq
++    oneOf:
++      - const: ti,bq27545-hdq
++      - items:
++          - const: apple,d111-bq27545
++          - const: ti,bq27545-hdq
+ 
+   power-supplies:
+     maxItems: 1

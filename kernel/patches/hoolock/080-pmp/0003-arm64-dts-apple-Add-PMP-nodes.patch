@@ -1,0 +1,51 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Sun, 3 May 2026 14:30:38 +0800
+Subject: [PATCH 3/3] arm64: dts: apple: Add PMP nodes
+
+Add nodes for the Power Management Processor (PMP).
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ arch/arm64/boot/dts/apple/t8015.dtsi | 28 ++++++++++++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/t8015.dtsi b/arch/arm64/boot/dts/apple/t8015.dtsi
+index 95c602e62..85ab9bf0e 100644
+--- a/arch/arm64/boot/dts/apple/t8015.dtsi
++++ b/arch/arm64/boot/dts/apple/t8015.dtsi
+@@ -426,6 +426,34 @@
+ 			status = "disabled";
+ 		};
+ 
++		pmp: pmp@232300000 {
++			compatible = "apple,t8015-pmp-v1";
++			reg = <0x2 0x32300000 0x0 0x8000>,
++			      <0x2 0x32400000 0x0 0x10000>,
++			      <0x2 0x32500000 0x0 0x20000>;
++			reg-names = "akf", "control", "sram";
++			mboxes = <&pmp_mbox>;
++			mbox-names = "mbox";
++			power-domains = <&ps_pmp>, <&ps_pms_sram>;
++			power-domain-names = "pmp", "sram";
++			firmware-name = "apple/pmp-t8015.bin";
++		};
++
++		pmp_mbox: mbox@232308000 {
++			compatible = "apple,t8015-asc-mailbox";
++			reg = <0x2 0x32308000 0x0 0x4000>;
++			interrupt-parent = <&aic>;
++			interrupts = <AIC_IRQ 229 IRQ_TYPE_LEVEL_HIGH>,
++				     <AIC_IRQ 230 IRQ_TYPE_LEVEL_HIGH>,
++				     <AIC_IRQ 231 IRQ_TYPE_LEVEL_HIGH>,
++				     <AIC_IRQ 232 IRQ_TYPE_LEVEL_HIGH>;
++			interrupt-names = "send-empty", "send-not-empty",
++				"recv-empty", "recv-not-empty";
++			#mbox-cells = <0>;
++			power-domains = <&ps_pmp>;
++		};
++
++
+ 		pinctrl_ap: pinctrl@233100000 {
+ 			compatible = "apple,t8015-pinctrl", "apple,pinctrl";
+ 			reg = <0x2 0x33100000 0x0 0x1000>;

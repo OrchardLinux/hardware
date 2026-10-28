@@ -1,0 +1,34 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Sun, 2 Aug 2026 18:51:19 +0200
+Subject: [PATCH 086/117] arm64: dts: apple: Add T8010 iPhone PMIC GPIO
+
+The D2333 PMIC on T8010 iPhones exposes GPIO 10 as the WLAN rail
+enable. Register its 21-line GPIO child and reserve all lines except
+GPIO 10, which is consumed by board WLAN power.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: b69757f23f9ac020ba777d626a7aec29c92dee66
+---
+ arch/arm64/boot/dts/apple/t8010-7.dtsi | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/t8010-7.dtsi b/arch/arm64/boot/dts/apple/t8010-7.dtsi
+index a00b0d519..c01225bc2 100644
+--- a/arch/arm64/boot/dts/apple/t8010-7.dtsi
++++ b/arch/arm64/boot/dts/apple/t8010-7.dtsi
+@@ -68,6 +68,13 @@
+ 			regulator-name = "touch-core";
+ 		};
+ 
++		pmu_gpio: gpio {
++			compatible = "apple,d2333-pmic-gpio";
++			gpio-controller;
++			#gpio-cells = <2>;
++			gpio-reserved-ranges = <0 10>, <11 10>;
++		};
++
+ 		rtc@500 {
+ 			compatible = "apple,adelyn-pmic-rtc", "apple,antigua-pmic-rtc";
+ 			reg = <0x500 0x10>;

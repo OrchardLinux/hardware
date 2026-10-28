@@ -1,0 +1,94 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Wed, 19 Aug 2026 14:46:59 +0200
+Subject: [PATCH 116/117] iio: light: tsl2583: Add CT819 calibration tests
+
+Fold the three gain ratios of a CT819 factory record through the shared
+helper and check that they reproduce the nominal 8x, 16x and 128x gain
+steps of the part. This pins the version 2 ratio scale, which differs from
+the one the CT821 record uses.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: 56433d234adbff22d9b48bd4e70ad04cc0368208
+---
+ drivers/iio/light/Kconfig        |  8 +++----
+ drivers/iio/light/tsl2583-test.c | 40 ++++++++++++++++++++++++++++++--
+ 2 files changed, 42 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/iio/light/Kconfig b/drivers/iio/light/Kconfig
+index 672021de1..c8d8084a3 100644
+--- a/drivers/iio/light/Kconfig
++++ b/drivers/iio/light/Kconfig
+@@ -643,10 +643,10 @@ config TSL2583_KUNIT_TEST
+ 	depends on KUNIT
+ 	default KUNIT_ALL_TESTS
+ 	help
+-	  Build tests for the CT821 factory-calibration gain-factor parser,
+-	  including rejection of zero and overflowing gain factors from LSCI.
+-	  These tests do not require hardware. If built as a module, it will be
+-	  called tsl2583-test.
++	  Build tests for the Apple CT819 and CT821 factory-calibration
++	  gain-factor parser, including rejection of zero and overflowing gain
++	  factors from LSCI. These tests do not require hardware. If built as a
++	  module, it will be called tsl2583-test.
+ 
+ config TSL2591
+         tristate "TAOS TSL2591 ambient light sensor"
+diff --git a/drivers/iio/light/tsl2583-test.c b/drivers/iio/light/tsl2583-test.c
+index ca403d023..3c35e07b9 100644
+--- a/drivers/iio/light/tsl2583-test.c
++++ b/drivers/iio/light/tsl2583-test.c
+@@ -46,6 +46,41 @@ static void ct821_gain_factor_overflow_test(struct kunit *test)
+ 							&factor));
+ }
+ 
++static void ct819_gain_factor_valid_test(struct kunit *test)
++{
++	u32 factor;
++
++	/*
++	 * The gain ratios of the factory record of an iPad 7 fold into the
++	 * nominal 8x, 16x and 128x gain steps of the part.
++	 */
++	KUNIT_ASSERT_EQ(test, 0,
++			apple_als_calculate_gain_factor(65536, 2010,
++							CT819_CAL_RATIO_SCALE,
++							&factor));
++	KUNIT_EXPECT_EQ(test, 514560U, factor);
++	KUNIT_ASSERT_EQ(test, 0,
++			apple_als_calculate_gain_factor(factor, 521,
++							CT819_CAL_RATIO_SCALE,
++							&factor));
++	KUNIT_EXPECT_EQ(test, 1047210U, factor);
++	KUNIT_ASSERT_EQ(test, 0,
++			apple_als_calculate_gain_factor(factor, 1862,
++							CT819_CAL_RATIO_SCALE,
++							&factor));
++	KUNIT_EXPECT_EQ(test, 7616816U, factor);
++}
++
++static struct kunit_case ct819_gain_factor_test_cases[] = {
++	KUNIT_CASE(ct819_gain_factor_valid_test),
++	{}
++};
++
++static struct kunit_suite ct819_gain_factor_test_suite = {
++	.name = "ct819-gain-factor",
++	.test_cases = ct819_gain_factor_test_cases,
++};
++
+ static struct kunit_case ct821_gain_factor_test_cases[] = {
+ 	KUNIT_CASE(ct821_gain_factor_valid_test),
+ 	KUNIT_CASE(ct821_gain_factor_zero_test),
+@@ -58,7 +93,8 @@ static struct kunit_suite ct821_gain_factor_test_suite = {
+ 	.test_cases = ct821_gain_factor_test_cases,
+ };
+ 
+-kunit_test_suite(ct821_gain_factor_test_suite);
++kunit_test_suites(&ct819_gain_factor_test_suite,
++		  &ct821_gain_factor_test_suite);
+ 
+-MODULE_DESCRIPTION("KUnit tests for the CT821 calibration gain factors");
++MODULE_DESCRIPTION("KUnit tests for the Apple ALS calibration gain factors");
+ MODULE_LICENSE("GPL");

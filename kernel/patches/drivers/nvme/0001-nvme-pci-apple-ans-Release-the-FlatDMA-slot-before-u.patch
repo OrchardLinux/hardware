@@ -1,0 +1,84 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Orchard migration <noreply@orchardlinux>
+Date: Wed, 28 Oct 2026 09:32:55 +0800
+Subject: [PATCH 2/6] nvme-pci: apple-ans: Release the FlatDMA slot before
+ unmapping its pages
+
+nvme_pci_apple_ans_unmap_data() unmapped the request's pages first and
+cleared the controller's FlatDMA slot afterwards. Until the slot is
+cleared the controller can still reach the old IOVAs, which may already
+belong to a new mapping.
+
+Clear the slot first. If clearing fails, keep the slot marked as used so
+a later request cannot reprogram a slot the controller may still hold,
+and report the failure.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/nvme/host/pci-apple-ans.c | 23 ++++++++++++++---------
+ 1 file changed, 14 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/nvme/host/pci-apple-ans.c b/drivers/nvme/host/pci-apple-ans.c
+index f477e8923..624bcb944 100644
+--- a/drivers/nvme/host/pci-apple-ans.c
++++ b/drivers/nvme/host/pci-apple-ans.c
+@@ -261,8 +261,8 @@ static blk_status_t nvme_pci_apple_ans_alloc_req(struct nvme_dev *dev,
+ 	return BLK_STS_OK;
+ }
+ 
+-static void nvme_pci_apple_ans_free_req(struct nvme_dev *dev,
+-					struct apple_ans_nvme_req *req)
++static int nvme_pci_apple_ans_free_req(struct nvme_dev *dev,
++				       struct apple_ans_nvme_req *req)
+ {
+ 	struct apple_ans_nvme *ans = nvme_pci_apple_ans(dev);
+ 	unsigned long flags;
+@@ -270,21 +270,25 @@ static void nvme_pci_apple_ans_free_req(struct nvme_dev *dev,
+ 	int ret;
+ 
+ 	if (!ans || !req)
+-		return;
++		return -EINVAL;
+ 
+ 	tag = req - ans->req;
+ 	if (tag >= APPLE_ANS_NVMMU_MAX_REQS)
+-		return;
++		return -EINVAL;
+ 
+ 	ret = apple_ans_nvmmu_map(dev->dev, tag, NULL, 0, NULL);
+-	if (ret)
+-		dev_warn_ratelimited(dev->dev,
+-				     "failed to release ANS DMA slot %u: %d\n",
+-				     tag, ret);
++	if (ret) {
++		/* The controller may still hold this slot: never reuse it. */
++		dev_err_ratelimited(dev->dev,
++				    "failed to release ANS DMA slot %u: %d\n",
++				    tag, ret);
++		return ret;
++	}
+ 
+ 	spin_lock_irqsave(&ans->req_lock, flags);
+ 	__clear_bit(tag, ans->used_req);
+ 	spin_unlock_irqrestore(&ans->req_lock, flags);
++	return 0;
+ }
+ 
+ static blk_status_t nvme_pci_apple_ans_map_bvec(struct nvme_dev *dev,
+@@ -359,6 +363,8 @@ static bool nvme_pci_apple_ans_unmap_data(struct request *req)
+ 	if (!iod->dma_private)
+ 		return false;
+ 
++	/* Detach the controller from the pages before unmapping them. */
++	nvme_pci_apple_ans_free_req(dev, iod->dma_private);
+ 	for (i = 0; i < iod->nr_dma_vecs; i++)
+ 		dma_unmap_page(dev->dev, iod->dma_vecs[i].addr,
+ 			       iod->dma_vecs[i].len, rq_dma_dir(req));
+@@ -368,7 +374,6 @@ static bool nvme_pci_apple_ans_unmap_data(struct request *req)
+ 	}
+ 	iod->nr_dma_vecs = 0;
+ 
+-	nvme_pci_apple_ans_free_req(dev, iod->dma_private);
+ 	iod->dma_private = NULL;
+ 	iod->cmd.common.flags &= ~NVME_CMD_APPLE_ANS_FLATDMA;
+ 	return true;

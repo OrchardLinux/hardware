@@ -1,0 +1,97 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Wed, 22 Jul 2026 12:47:02 +0200
+Subject: [PATCH 023/117] power: supply: bq27xxx: add BQ27545 HDQ OF matching
+
+The existing BQ27xxx HDQ family assumes a BQ27000 selected through a
+legacy W1 family identifier. J172 instead describes a BQ27545 as the
+single child of an explicit HDQ bus.
+
+Add an OF match table so ti,bq27545-hdq selects the BQ27545 register
+map and the cache-only sampling required by the UART-backed transport.
+Use the W1 read-block result to propagate transport failures rather
+than accepting an invalid byte as gauge data.
+
+The driver remains read-only and does not issue control, chemistry or
+data-flash writes. Legacy non-DT BQ27000 devices remain unchanged.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: 8667727e8c4f8729ad8d0c155a3b2f00c24011f1
+---
+ drivers/power/supply/bq27xxx_battery_hdq.c | 26 ++++++++++++++++++----
+ 1 file changed, 22 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/power/supply/bq27xxx_battery_hdq.c b/drivers/power/supply/bq27xxx_battery_hdq.c
+index 922759ab2..8bc901a48 100644
+--- a/drivers/power/supply/bq27xxx_battery_hdq.c
++++ b/drivers/power/supply/bq27xxx_battery_hdq.c
+@@ -9,6 +9,7 @@
+ #include <linux/kernel.h>
+ #include <linux/module.h>
+ #include <linux/device.h>
++#include <linux/of.h>
+ #include <linux/types.h>
+ #include <linux/platform_device.h>
+ #include <linux/mutex.h>
+@@ -28,13 +29,14 @@ MODULE_PARM_DESC(F_ID, "1-wire slave FID for BQ27xxx device");
+ static int w1_bq27000_read(struct w1_slave *sl, unsigned int reg)
+ {
+ 	u8 val;
++	int ret;
+ 
+ 	mutex_lock(&sl->master->bus_mutex);
+ 	w1_write_8(sl->master, HDQ_CMD_READ | reg);
+-	val = w1_read_8(sl->master);
++	ret = w1_read_block(sl->master, &val, 1);
+ 	mutex_unlock(&sl->master->bus_mutex);
+ 
+-	return val;
++	return ret == 1 ? val : -EIO;
+ }
+ 
+ static int bq27xxx_battery_hdq_read(struct bq27xxx_device_info *di, u8 reg,
+@@ -74,6 +76,7 @@ static int bq27xxx_battery_hdq_read(struct bq27xxx_device_info *di, u8 reg,
+ 
+ static int bq27xxx_battery_hdq_add_slave(struct w1_slave *sl)
+ {
++	const struct of_device_id *match;
+ 	struct bq27xxx_device_info *di;
+ 
+ 	di = devm_kzalloc(&sl->dev, sizeof(*di), GFP_KERNEL);
+@@ -83,8 +86,16 @@ static int bq27xxx_battery_hdq_add_slave(struct w1_slave *sl)
+ 	dev_set_drvdata(&sl->dev, di);
+ 
+ 	di->dev = &sl->dev;
+-	di->chip = BQ27000;
+-	di->name = "bq27000-battery";
++	match = of_match_node(sl->family->of_match_table, sl->dev.of_node);
++	if (match) {
++		di->chip = (uintptr_t)match->data;
++		di->name = "battery";
++		di->cache_only = true;
++		di->cache_refresh_ms = 30000;
++	} else {
++		di->chip = BQ27000;
++		di->name = "bq27000-battery";
++	}
+ 	di->bus.read = bq27xxx_battery_hdq_read;
+ 
+ 	return bq27xxx_battery_setup(di);
+@@ -102,9 +113,16 @@ static const struct w1_family_ops bq27xxx_battery_hdq_fops = {
+ 	.remove_slave	= bq27xxx_battery_hdq_remove_slave,
+ };
+ 
++static const struct of_device_id bq27xxx_battery_hdq_of_match[] = {
++	{ .compatible = "ti,bq27545-hdq", .data = (void *)BQ27545 },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, bq27xxx_battery_hdq_of_match);
++
+ static struct w1_family bq27xxx_battery_hdq_family = {
+ 	.fid = W1_FAMILY_BQ27000,
+ 	.fops = &bq27xxx_battery_hdq_fops,
++	.of_match_table = bq27xxx_battery_hdq_of_match,
+ };
+ 
+ static int __init bq27xxx_battery_hdq_init(void)
