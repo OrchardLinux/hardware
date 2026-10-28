@@ -81,7 +81,9 @@
               "maxLength": 256
             }
           },
-          "required": ["product"],
+          "required": [
+            "product"
+          ],
           "additionalProperties": false
         }
       },
@@ -112,6 +114,24 @@
       ],
       "additionalProperties": false
     },
+    "kernel": {
+      "type": "object",
+      "properties": {
+        "platform": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]*$"
+        },
+        "dtb": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$"
+        }
+      },
+      "required": [
+        "platform",
+        "dtb"
+      ],
+      "additionalProperties": false
+    },
     "firmware": {
       "type": "object",
       "properties": {
@@ -120,7 +140,9 @@
           "minLength": 1
         }
       },
-      "required": ["recipe"],
+      "required": [
+        "recipe"
+      ],
       "additionalProperties": false
     },
     "support": {
@@ -149,6 +171,7 @@
     "kind",
     "device",
     "match",
+    "kernel",
     "boot",
     "firmware",
     "support"
