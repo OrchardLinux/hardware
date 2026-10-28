@@ -265,3 +265,19 @@ boards we can't run. Triggers:
   use `apple/j71b-fwstart.z2fw`. Use one scheme, mainline's `dfrmtfw-*`
   naming, together with the firmware recipe.
 
+
+## m1n1 (2026-10-28)
+
+`boot/m1n1/patches/0001` replaces the J71b-only loader patch and checks no
+board compatibles. Validated on J71b with the torvalds-base kernel:
+- Wi-Fi `local-mac-address` (6 bytes) and `brcm,cal-blob` (1780 bytes) are
+  filled from the ADT, and no antenna SKU is set; association, DHCP and SSH
+  work;
+- the NVMe HMB `reg` is filled from `nvme-mmu0 sart-region`;
+- Bluetooth uses the unit's address (`local-bd-address` via `bluetooth0`).
+  btbcm flags the BCM4355C1 default address as invalid, so hci_bcm takes the
+  DT address. The "Using default device address" log line is printed before
+  that.
+The calibration mechanism for all T8010 boards is therefore the ADT (no host
+SysCfg payload), which settles that backlog item for J71b. Whether the J172
+and iPhone 7 ADTs carry `wifi-calibration-msf` is unverified.
