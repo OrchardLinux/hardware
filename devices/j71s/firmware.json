@@ -1,0 +1,78 @@
+{
+  "schema": 2,
+  "device": "iPad6,11",
+  "ipsw": {
+    "version": "16.7.10",
+    "build": "20H350",
+    "url": "https://updates.cdn-apple.com/2024SpringFCS/fullrestores/062-47889/FBBD9227-79D6-4FAA-91B9-D20E087BE0E7/iPad_64bit_TouchID_ASTC_16.7.10_20H350_Restore.ipsw",
+    "bytes": 5586431671,
+    "sha256": "1709e8e27b1c0c98dc7c64ae27b4e208b49835c24a95074d1aebe135342b3112"
+  },
+  "inputs": {
+    "BlueTool": {
+      "ipsw": {
+        "rootfs": "usr/sbin/BlueTool"
+      },
+      "device": "/usr/sbin/BlueTool"
+    },
+    "kernelcache": {
+      "ipsw": {
+        "kernelcache": true
+      },
+      "device": {
+        "kernelcache": "active"
+      }
+    },
+    "J71s.mtprops": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/multitouch/J71s.mtprops"
+      },
+      "device": "/usr/share/firmware/multitouch/J71s.mtprops",
+      "sha256": "69f27fe207cc5810a748dac3dfe640b1c5a755709f49513b4b5125660784f0fc"
+    }
+  },
+  "outputs": [
+    {
+      "destination": "lib/firmware/brcm/BCM.apple,j71s.hcd",
+      "sha256": "5513d25b9ebd3103263d27a14e709a884508feab5723521d18780cf26f0c24b2",
+      "steps": [
+        {
+          "step": "bluetool-hcd@1",
+          "input": "BlueTool"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/apple/s8000-smartio.bin",
+      "sha256": "da53095ed3364689ffd56f6576f036e4741a98836147a181c335626389ef5a36",
+      "steps": [
+        {
+          "step": "smartio-from-kernelcache@2",
+          "input": "kernelcache",
+          "kext": "com.apple.driver.AppleS8000SmartIO"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/apple/vxd-deva.bin",
+      "sha256": "bf5167652e81540471aaca141943fd33d71c3990c137f145471305f5f5ade83b",
+      "steps": [
+        {
+          "step": "vxd-firmware-from-kernelcache@1",
+          "input": "kernelcache"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/apple/dfrmtfw-j71s-c1f15-1.bin",
+      "sha256": "98f73566489fed958a04bb73b87f63d8abd6948b7ceacd89d1bc638e64b8998d",
+      "steps": [
+        {
+          "step": "z2-packet-from-mtprops@1",
+          "input": "J71s.mtprops",
+          "profile": "C1F15,1"
+        }
+      ]
+    }
+  ]
+}

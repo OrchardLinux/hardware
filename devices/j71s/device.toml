@@ -1,0 +1,55 @@
+# iPad 5 (Wi-Fi, Samsung) (J71S, S8000 Samsung): hardware identity and firmware recipe.
+# The S8000 PCIe block has no phy-ip and iOS has no lane init for it, so storage
+# and Wi-Fi aren't described yet: this model can't install.
+schema = 1
+kind = "hardware.device"
+
+[device]
+profile = "j71s"
+name = "iPad 5 (Wi-Fi, Samsung)"
+apple_products = ["iPad6,11"]
+dt_compatible = ["apple,j71s"]
+
+# BDID: ApChipID/ApBoardID of the j71sap identities in the 20H350 (iPadOS 16.7.10) BuildManifest.plist.
+[match.dfu]
+chip = 0x8000
+board = 0x10
+
+[match.linux]
+product = "J71S Recovery"
+
+[boot]
+methods = ["checkm8-pongo"]
+
+[kernel]
+platform = "apple"
+dtb = "s8000-j71s"
+
+[firmware]
+recipe = "firmware.json"
+
+[support]
+install = false
+status = "experimental"
+caveats = [
+  "Internal storage and Wi-Fi need PCIe on the S8000 (Samsung) SoC, which isn't supported yet; RAM boot only.",
+]
+wifi = false
+usb_serial = true
+usb_network = true
+
+[features]
+display = "untested"
+touch = "untested"
+wifi = "missing"
+bluetooth = "untested"
+storage = "missing"
+battery = "untested"
+charging = "untested"
+backlight = "untested"
+buttons = "untested"
+audio = "untested"
+camera = "missing"
+cellular = "none"
+suspend = "missing"
+gpu = "missing"
