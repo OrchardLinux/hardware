@@ -1,0 +1,60 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Orchard migration <noreply@orchardlinux>
+Date: Wed, 28 Oct 2026 11:31:01 +0800
+Subject: [PATCH] PCI: apple-h9p: Parse manual-availability DART with a fixed
+ stream cell
+
+apple,manual-availability-iommu names a DART and the stream whose retained
+configuration is reloaded during link bring-up. The driver parsed it with
+the DART's #iommu-cells and then required exactly one argument, so the
+property broke as soon as the DART used the standard five-cell specifier
+that carries the DMA window.
+
+The property only ever carries the stream ID. Parse it with one fixed
+argument cell and describe the cells in the binding.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../devicetree/bindings/pci/apple,t8010-pcie.yaml     |  5 ++++-
+ drivers/pci/controller/pcie-apple-h9p.c               | 11 +++--------
+ 2 files changed, 7 insertions(+), 9 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/pci/apple,t8010-pcie.yaml b/Documentation/devicetree/bindings/pci/apple,t8010-pcie.yaml
+index ee357b24d..0e1cc7b0b 100644
+--- a/Documentation/devicetree/bindings/pci/apple,t8010-pcie.yaml
++++ b/Documentation/devicetree/bindings/pci/apple,t8010-pcie.yaml
+@@ -144,7 +144,10 @@ patternProperties:
+ 
+       apple,manual-availability-iommu:
+         $ref: /schemas/types.yaml#/definitions/phandle-array
+-        maxItems: 1
++        items:
++          - items:
++              - description: phandle of the DART
++              - description: stream ID
+         description:
+           DART and stream whose retained configuration must be reloaded while
+           this root port is brought up. This models Apple's manual-availability
+diff --git a/drivers/pci/controller/pcie-apple-h9p.c b/drivers/pci/controller/pcie-apple-h9p.c
+index 0da07dfeb..59bb4d22a 100644
+--- a/drivers/pci/controller/pcie-apple-h9p.c
++++ b/drivers/pci/controller/pcie-apple-h9p.c
+@@ -1867,15 +1867,10 @@ static int apple_h9p_pcie_parse_ports(struct apple_h9p_pcie *pcie)
+ 		{
+ 			struct of_phandle_args dart;
+ 
+-			ret = of_parse_phandle_with_args(np,
+-							 "apple,manual-availability-iommu",
+-							 "#iommu-cells", 0, &dart);
++			ret = of_parse_phandle_with_fixed_args(np,
++							       "apple,manual-availability-iommu",
++							       1, 0, &dart);
+ 			if (!ret) {
+-				if (dart.args_count != 1) {
+-					of_node_put(dart.np);
+-					ret = -EINVAL;
+-					goto out_put_child;
+-				}
+ 				pcie->manual_dart[port] = dart.np;
+ 				pcie->manual_dart_sid[port] = dart.args[0];
+ 			} else if (ret != -ENOENT) {
