@@ -40,10 +40,11 @@ step storage-fence
 modprobe nvme
 n=0
 while [ "$(cat /sys/class/nvme/nvme0/state 2>/dev/null)" != live ]; do n=$((n+1)); [ "$n" -le 20 ]; sleep 1; done
-# Every NVMe disk and partition stays read-only. The installer opens only its
-# verified target, and only while writing (storage.py).
+# Every NVMe partition stays read-only. The installer opens only its verified
+# target, and only while writing (storage.py). The whole disk stays writable:
+# a read-only disk would keep its partitions read-only after blockdev --setrw.
 found=0
-for block in /sys/class/block/nvme*; do
+for block in /sys/class/block/nvme*n*p*; do
  [ -d "$block" ] || continue
  found=1
  blockdev --setro "/dev/${block##*/}"
