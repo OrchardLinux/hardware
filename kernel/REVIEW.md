@@ -122,7 +122,7 @@ difference while porting J71b to the J172 model".
   overlap check; bq27540 entry and the cache-only question.
 - linux-wireless: brcmfmac cancel of uninitialized reset work.
 
-## Status of shared fixes (patches/shared/fixes/)
+## Status of shared fixes (now patches/drivers/<subsystem>/)
 
 Committed on the stack (verified to apply; not yet compiled):
 1. iommu: apple-dart: no master-config dereference in the S5L8960X fault handler

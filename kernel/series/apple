@@ -1,0 +1,7 @@
+# Ordered patch layers for the apple platform (all Orchard devices),
+# relative to kernel/. Every *.patch below each directory is applied in
+# path order.
+patches/hoolock
+patches/import/pauli1go
+patches/drivers
+patches/devices

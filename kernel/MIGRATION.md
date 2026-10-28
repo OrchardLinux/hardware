@@ -114,7 +114,11 @@ into the shared cache, replay them onto the stack, then run the semantic review
 
 ## Notes
 
-- Layer order per device lives in `kernel/series/<device>`; `kernel/series.py`
+- One kernel per platform (`apple`): `kernel/series/apple`, `kernel/configs/apple`,
+  all DTBs built; devices select their DTB in `device.toml` `[kernel]`.
+  Patch layers: `hoolock/`, `import/pauli1go/`, `drivers/<subsystem>/` (driver
+  code, even when one device needs it first), `devices/` (DT and board data only).
+- Layer order lives in `kernel/series/<platform>`; `kernel/series.py`
   lists the patches. `kernel/build`, `audit-patches.py` and the tests read it.
   The CLI's cached kernel path (`cli/.../kernel.py`) still reads
   `patches/<device>/` and must adopt `series.py` before `./orchard build` uses the

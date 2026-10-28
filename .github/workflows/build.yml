@@ -140,7 +140,7 @@ jobs:
       - name: Archive components and corresponding kernel source
         run: |
           tar -C out -czf out/kernel-components.tar.gz components
-          tar -C kernel/.work/j71b/source --exclude=.git -czf out/kernel-source.tar.gz .
+          tar -C kernel/.work/apple/source --exclude=.git -czf out/kernel-source.tar.gz .
       - uses: actions/upload-artifact@v4
         with:
           name: hardware-kernel

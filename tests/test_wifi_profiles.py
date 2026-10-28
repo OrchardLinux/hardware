@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'kernel'))
 from series import patches as series_patches  # noqa: E402
 
-SELECTION = ROOT / 'kernel/patches/shared/fixes/0006-wifi-brcmfmac-Select-Apple-NVRAM-by-OTP-when-there-i.patch'
+SELECTION = ROOT / 'kernel/patches/drivers/wifi/0002-wifi-brcmfmac-Select-Apple-NVRAM-by-OTP-when-there-i.patch'
 NVRAM = 'brcmfmac4355c1-pcie'
 
 
