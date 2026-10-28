@@ -159,6 +159,19 @@
         },
         "install": {
           "type": "boolean"
+        },
+        "status": {
+          "enum": [
+            "supported",
+            "experimental"
+          ]
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       },
       "required": [

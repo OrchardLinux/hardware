@@ -31,7 +31,14 @@ dtb = "t8010-d10"     # arch/arm64/boot/dts/apple/<dtb>.dtb
 recipe = "firmware.json" # Relative to this device.toml; public recipe, not firmware bytes.
 
 [support]
-install = true # Experimental: never installed on this model yet.
+install = true
+status = "experimental"
+limitations = [
+  "No touchscreen yet",
+  "No Wi-Fi yet",
+  "Bluetooth needs its module vendor chosen; not loaded yet",
+  "No phone or cellular functions",
+]
 wifi = false # The t8010-d10 DT has no Wi-Fi node.
 usb_serial = false # No Orchard launcher/gadget validated on this board yet.
 usb_network = false
