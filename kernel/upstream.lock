@@ -1,3 +1,2 @@
-url=https://github.com/OrchardLinux/linux.git
-original=https://github.com/HoolockLinux/linux.git
-commit=6831bc701a6ce059e71e5aaa9488c9195bea6927
+url=https://github.com/torvalds/linux.git
+commit=cee9395acd8043be0644b25c34bfa86623f2b935

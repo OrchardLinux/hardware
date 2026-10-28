@@ -30,11 +30,14 @@ class J71bData(unittest.TestCase):
         self.assertFalse(self.recipe_path.is_symlink())
 
     def test_upstream_source_pins(self):
-        for relative, project, commit in (
-                ('boot/m1n1/upstream.lock', 'm1n1', 'd5a10ac52a6468484854419a6c5130f1d62073eb'),
-                ('kernel/upstream.lock', 'linux', '6831bc701a6ce059e71e5aaa9488c9195bea6927')):
+        for relative, url, commit in (
+                ('boot/m1n1/upstream.lock', 'https://github.com/OrchardLinux/m1n1.git',
+                 'd5a10ac52a6468484854419a6c5130f1d62073eb'),
+                # torvalds v7.3-rc1; Hoolock and contributors are patch layers.
+                ('kernel/upstream.lock', 'https://github.com/torvalds/linux.git',
+                 'cee9395acd8043be0644b25c34bfa86623f2b935')):
             lock = dict(line.split('=', 1) for line in (HARDWARE / relative).read_text().splitlines() if '=' in line)
-            self.assertEqual(lock['url'], 'https://github.com/OrchardLinux/' + project + '.git')
+            self.assertEqual(lock['url'], url)
             self.assertEqual(lock['commit'], commit)
 
     def test_firmware_recipe_integrity(self):

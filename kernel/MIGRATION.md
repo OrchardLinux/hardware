@@ -114,6 +114,15 @@ into the shared cache, replay them onto the stack, then run the semantic review
 
 ## Notes
 
+- Layer order per device lives in `kernel/series/<device>`; `kernel/series.py`
+  lists the patches. `kernel/build`, `audit-patches.py` and the tests read it.
+  The CLI's cached kernel path (`cli/.../kernel.py`) still reads
+  `patches/<device>/` and must adopt `series.py` before `./orchard build` uses the
+  new stack.
+- Local macOS kernel checkouts clobber 10 case-paired netfilter files
+  (`xt_DSCP.c`/`xt_dscp.c`, …). Harmless while J71b's config leaves those targets
+  off; CI builds on Linux. Moving the checkout to a case-sensitive volume would
+  remove the trap.
 - Never check out Linux on macOS for this work. The tree has case-only filename
   pairs (`xt_CONNMARK.h`/`xt_connmark.h`) that a case-insensitive filesystem
   corrupts. Use bare-repo operations (`merge-tree`, `apply --cached`).

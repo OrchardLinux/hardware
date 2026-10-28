@@ -19,9 +19,9 @@ if [[ ! "$device" =~ ^[a-z0-9][a-z0-9_-]*$ || -z "$dest" || -e "$dest" ]]; then
 fi
 config="$here/configs/$device/config"
 patches=()
-for patch in "$here/patches/$device/"*.patch; do
-  [[ -f "$patch" ]] && patches+=("$patch")
-done
+while IFS= read -r patch; do
+  patches+=("$patch")
+done < <(python3 "$here/series.py" "$device")
 dtb_builder="$here/devicetree/$device/build"
 [[ -f "$config" && -x "$dtb_builder" ]] || {
   echo "Missing kernel config or device-tree builder for $device" >&2; exit 1;
@@ -32,7 +32,7 @@ if [[ ${ORCHARD_BUILD_NATIVE:-0} != 1 ]]; then
 fi
 url=$(awk -F= '$1=="url" {print substr($0,5)}' "$here/upstream.lock")
 commit=$(awk -F= '$1=="commit" {print $2}' "$here/upstream.lock")
-[[ "$url" == https://github.com/OrchardLinux/linux.git && "$commit" =~ ^[0-9a-f]{40}$ ]] || {
+[[ "$url" == https://github.com/torvalds/linux.git && "$commit" =~ ^[0-9a-f]{40}$ ]] || {
   echo 'Unexpected kernel/upstream.lock' >&2; exit 1;
 }
 work="$here/.work/$device"
@@ -59,7 +59,7 @@ if "$resume"; then
   applied="$work/applied-patches"
   if [[ -f "$applied" ]]; then
     cmp "$applied" <(for patch in "${patches[@]}"; do
-      printf '%s %s\n' "$(git hash-object "$patch")" "${patch##*/}"
+      printf '%s %s\n' "$(git hash-object "$patch")" "${patch#"$here"/}"
     done) || { echo 'Kernel patch set changed; use a fresh build directory' >&2; exit 1; }
   else
     for patch in "${patches[@]}"; do
@@ -68,7 +68,7 @@ if "$resume"; then
       git -C "$source" apply "$patch"
     done
     for patch in "${patches[@]}"; do
-      printf '%s %s\n' "$(git hash-object "$patch")" "${patch##*/}"
+      printf '%s %s\n' "$(git hash-object "$patch")" "${patch#"$here"/}"
     done > "$applied"
   fi
 else
@@ -86,7 +86,7 @@ else
     git -C "$source" apply "$patch"
   done
   for patch in "${patches[@]}"; do
-    printf '%s %s\n' "$(git hash-object "$patch")" "${patch##*/}"
+    printf '%s %s\n' "$(git hash-object "$patch")" "${patch#"$here"/}"
   done > "$work/applied-patches"
 fi
 cp "$config" "$build_output/.config"
@@ -103,9 +103,9 @@ python3 -m orchard_hardware.buildenv run \
     export KBUILD_BUILD_VERSION=1 KBUILD_BUILD_TIMESTAMP="2026-10-22T00:00:00Z"
     make -C "$ORCHARD_SRC" O="$ORCHARD_OUT" LLVM=-19 ARCH=arm64 olddefconfig
     cmp "$ORCHARD_OUT/.config" "$ORCHARD_CONFIG/$device/config"
-    make -C "$ORCHARD_SRC" O="$ORCHARD_OUT" -j2 LLVM=-19 ARCH=arm64 \
+    make -C "$ORCHARD_SRC" O="$ORCHARD_OUT" -j"$2" LLVM=-19 ARCH=arm64 \
       LOCALVERSION="-orchard-$device" DTC_FLAGS=-@ Image.gz modules dtbs
-  ' bash "$device"
+  ' bash "$device" "${ORCHARD_KERNEL_JOBS:-2}"
 echo 'Staging kernel modules and final device tree...'
 stage=$(mktemp -d "$work/stage.XXXXXX")
 trap 'rm -rf "$stage"' EXIT

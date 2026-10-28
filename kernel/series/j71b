@@ -1,0 +1,6 @@
+# Ordered patch layers for j71b, relative to kernel/. Every *.patch below
+# each directory is applied in path order.
+patches/hoolock
+patches/import/pauli1go
+patches/shared/fixes
+patches/devices/j71b
