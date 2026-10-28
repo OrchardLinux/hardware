@@ -35,7 +35,7 @@ orchard_hardware = [
   "boot/initramfs/j71b/recovery/install-toolchain",
   "boot/initramfs/j71b/busybox/*.py", "boot/initramfs/j71b/busybox/Containerfile",
   "boot/quiet/*.py", "boot/quiet/*.patch",
-  "boot/m1n1/build", "boot/m1n1/install-toolchain", "boot/m1n1/Containerfile", "boot/m1n1/upstream.lock", "boot/m1n1/patches/*/*.patch",
+  "boot/m1n1/build", "boot/m1n1/install-toolchain", "boot/m1n1/Containerfile", "boot/m1n1/upstream.lock", "boot/m1n1/patches/*.patch", "boot/m1n1/patches/*/*.patch",
   "kernel/Containerfile", "kernel/install-toolchain", "kernel/build", "kernel/build-modules", "kernel/stage-modules.py",
   "kernel/upstream.lock", "kernel/configs/*/*", "kernel/devicetree/*/*",
   "kernel/patches/*/*.patch", "kernel/modules/*/*/*"

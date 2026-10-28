@@ -133,10 +133,15 @@ int main(void) {
                             str(source), '-o', str(binary)], check=True, capture_output=True)
             subprocess.run([str(binary)], check=True, capture_output=True)
 
-    def test_no_single_unit_calibration_size(self):
-        loader = (ROOT / 'boot/m1n1/patches/j71b/0001-j71b-boot-support.patch').read_text()
-        self.assertNotIn('cal_len != 1780', loader)
-        self.assertIn('!cal_len ||', loader)
+    def test_loader_patches_are_device_generic(self):
+        patches = sorted((ROOT / 'boot/m1n1/patches').glob('*.patch'))
+        self.assertTrue(patches)
+        for path in patches:
+            added = [line for line in path.read_text().splitlines()
+                     if line.startswith('+') and not line.startswith('+++')]
+            # Board data comes from the ADT and DT aliases, never board compatibles.
+            self.assertFalse([line for line in added if 'check_compatible' in line], path.name)
+            self.assertFalse([line for line in added if 'cal_len !=' in line], path.name)
 
     def test_existing_device_match_names_not_removed(self):
         for path in series_patches('j71b'):

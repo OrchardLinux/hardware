@@ -23,8 +23,12 @@ if [[ ! "$device" =~ ^[a-z0-9][a-z0-9_-]*$ || -z "$output" ]]; then
   exit 2
 fi
 [[ ! -e "$output" && ! -L "$output" ]] || { echo "Output exists: $output" >&2; exit 1; }
-patches=("$here/patches/$device/"*.patch)
-[[ -f "${patches[0]}" ]] || { echo "No m1n1 patches for $device" >&2; exit 1; }
+# Patches for every device first, then any for this device only.
+patches=()
+for patch in "$here/patches/"*.patch "$here/patches/$device/"*.patch; do
+  [[ -f "$patch" ]] && patches+=("$patch")
+done
+[[ ${#patches[@]} -gt 0 ]] || { echo 'No m1n1 patches' >&2; exit 1; }
 if [[ -n "$extra_patch" ]]; then
   [[ -f "$extra_patch" ]] || { echo 'Missing extra patch' >&2; exit 1; }
   patches+=("$extra_patch")
