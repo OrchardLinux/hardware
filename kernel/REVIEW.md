@@ -150,3 +150,36 @@ The J71b/J71t CBTL1610 charging source is built from our research and the
 device-tested `j71b_adaptive_charge` module as a `power_supply` source for
 Paul's D2365 charger. `apple_tristar_power.c` from #6 is reference only.
 J71t integration gets the same hunk-by-hunk review as our own delta.
+
+## Touch (`apple_z2.c`)
+
+Our out-of-tree `kernel/modules/j71b/touch/j71b_z2.c` is Paul's `apple_z2.c` plus
+J71b additions (~500 changed lines), booted through a separate
+`verified-bootstrap.h` path. Plan: a `J71B` variant in Paul's driver, next to
+J172/D11/D111, using his normal boot path.
+
+Real J71b differences (keep, as variant code or DT):
+- Power-on: reset held; analog rail, 10 ms, LDO, 1 ms, clock, 15 ms.
+- Boot: 4-byte zero preamble at 500 kHz under reset; reset released, not
+  pulsed; one firmware-ready IRQ (J172: two); display-sync pins untouched;
+  no init ACK (`apple,z2-no-init-ack`); 16-bit words from 17 bytes
+  (`apple,z2-bpw16-min-len = <17>`).
+- Runtime ("generation 1" firmware):
+  - packet length payload+5 (min. 16);
+  - data phase sends `EB, tag, 1` plus checksum, not `A5` filler;
+  - separate TX/RX buffers, CPHA off and 500 kHz above 16 bytes;
+  - handles empty-queue, no-data and control replies;
+  - framed second phase for feature reads; surface descriptor phase byte may be 1;
+  - reports 0x73/0x9d optional, so no J172 BF writes.
+- Timing: CS setup/inactive 1 ms, hold 0. Level-low IRQ at runtime, up to 4
+  reports drained per IRQ. RX buffer 8 KiB.
+- DT: `firmware-name`, touch size (hard-coded 1535x2047 today).
+
+Scaffolding (drop): `enable_runtime` and counter parameters, `J71B_*` logs and
+dev_dbg→dev_info changes, single-attempt latches, probe gating on machine,
+compatible, SPI speed and SIO state, whole-firmware preflight (the Orchard recipe
+verifies hashes), SIO payload counters, the readiness DT and driver,
+`quiesce-api.h`.
+
+Risk: this combined path has never run on J71b. Touch is the first item of the
+staged on-device check.
