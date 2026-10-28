@@ -102,6 +102,25 @@ exported `withdrawals`, `last_withdraw_us` and `max_withdraw_us`. Repeat
 the session with logging before relying on these numbers in a review
 ([CH-03](experiments.md#ch-03)).
 
+## Driver session (`apple_tristar_charger`, 2026-10-28)
+
+RAM boot of the stack kernel with the in-tree driver built in, fallback
+still 425 mA (now 500 mA). Logged over Wi-Fi SSH while the cable moved
+between sources; battery current from the gauge after the ramp.
+
+| Source | Driver identification | Grant | Battery |
+|---|---|---|---|
+| USB-A power bank | BrickID 5 on bank 1 (D+ 2630 mV, D− 2627 mV; bank 0 39 mV) | 2400 mA | +514 mA |
+| Apple 140 W USB-C, first orientation | 3 A (CC 1731 mV, other lane 646 mV) | 2400 mA | +927 mA |
+| Same, plug flipped | 3 A (CC 1736 mV, other lane 948 mV) | 2400 mA | +938 mA |
+| Mac USB-C port | 3 A (CC 1785 mV, other lane 39 mV) | 2400 mA | +527 mA |
+| Mac hub (USB-A) | no signature after two retries | fallback | −271 mA |
+
+- Withdrawal, PMU interrupt to verified `0xa03` readback: 981, 980, 1006
+  and 1003 µs on the four unplugs.
+- Battery temperature 31.3–31.5 °C throughout.
+- For comparison, the same idle desktop at iBoot's 100 mA drained −740 mA.
+
 ## Gauge
 
 First read: 38 %, 3.805 V, −541 mA, 28.8 °C, 312 cycles. Later readings

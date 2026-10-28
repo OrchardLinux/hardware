@@ -34,8 +34,8 @@ kernelcache; `…5e69b38` abbreviates `0xfffffff005e69b38`.
 | USB-C Rp current (1.5 A / 3 A) | Works on demand | 140 W wall, power bank, Mac, hardware |
 | Withdrawal on unplug or source change | Works, <1 ms edge to verified write | Prototype owner, hardware |
 | Prototype that grants identified current | Hardware-tested in one RAM session | hardware commit `11073db` |
-| In-tree driver `apple_tristar_charger` | Written, built in; hardware test pending | [Linux driver](#5-linux-driver) |
-| Computers / generic chargers (BC1.2, CDP) | Not implemented, held at 425 mA | [CH-04](experiments.md#ch-04) |
+| In-tree driver `apple_tristar_charger` | Works: power bank, 140 W USB-C both orientations, Mac USB-C and Mac hub identified; withdrawal ~1 ms | [Linux driver](#5-linux-driver), [measurements](measurements.md#driver-session-apple_tristar_charger-2026-10-28) |
+| Computers / generic chargers (BC1.2, CDP) | Not implemented, held at 500 mA | [CH-04](experiments.md#ch-04) |
 | USB PD | Not implemented | [CH-05](experiments.md#ch-05) |
 | Suspend | Not tested with charging | [CH-06](experiments.md#ch-06) |
 | Live USB-C Rp changes without detach | Not detected (CC is sampled on demand) | [CH-07](experiments.md#ch-07) |
@@ -91,15 +91,17 @@ than the port can deliver.
 | Register | D2365 `0xa03`, one byte | Firmware (`AppleD2365PMU` read `…6b84f40`, write `…6b84f94`), hardware readback | [pmic-d2365.md](pmic-d2365.md) |
 | Encoding | mA = code × 12.5 + 75 | Fits all six programmed codes and the 2400 mA ceiling; firmware compares the calibrated target against 75 before writing | [pmic-d2365.md](pmic-d2365.md) |
 | Handoff value | `0x02` = 100 mA | Observed at Linux start; every owner refused to start on any other unexplained value | [measurements.md](measurements.md) |
-| Project default | `0x1c` = 425 mA | Chosen, see below | — |
+| Fallback for unidentified sources | `0x22` = 500 mA (the old stack used `0x1c` = 425 mA) | Chosen, see below | — |
 | Board maximum | `0xba` = 2400 mA | ADT `usb-input-limit-max`; manual trials at 2400 mA | [measurements.md](measurements.md) |
 | VBUS loss does not reset it | `0x1c` stayed for 4.9 s after unplug, until software restored `0x02` | Hardware | [pmu-events.md](pmu-events.md) |
 | Pack charge current is separate | `0xa08` (limit) and `0xa0c` (cap), 50 mA steps, J71b cap field `0x34` = 2600 mA | Firmware, hardware read | [pmic-d2365.md](pmic-d2365.md) |
 
-Why 425 mA: USB 2.0 allows a configured device 500 mA. 425 mA is that minus
-a 15 % margin, and it is the highest value we hold without knowing the source.
-It is a project choice, not something the hardware or iPadOS defines. A
-computer port that only allows 100 mA (unconfigured) is not protected by it.
+Why 500 mA: it is what a USB 2.0 port provides to a configured device, and
+every charger and computer port we know of delivers at least that. The old
+stack held 425 mA (500 mA less a 15 % margin); the driver uses the standard
+value. It is a project choice, not something the hardware or iPadOS defines.
+A port that only allows 100 mA (an unconfigured device, or a bus-powered hub)
+is not protected by it.
 The handoff value `0x02` = 100 mA equals one USB 2.0 unit load. That iBoot
 chose it for this reason is our inference.
 

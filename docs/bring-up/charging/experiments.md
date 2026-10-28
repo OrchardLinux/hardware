@@ -10,7 +10,7 @@ reasoning as *inferred*.
 
 1. **Never set the input limit above the device's default before withdrawal
    is measured on that device** ([CH-03](#ch-03)).
-   - J71b: default 425 mA (`0xa03` = `0x1c`), handoff 100 mA (`0x02`).
+   - J71b: fallback 500 mA (`0xa03` = `0x22`; 425 mA `0x1c` in the old stack), handoff 100 mA (`0x02`).
    - Other boards: the default is what [CH-00](#ch-00) records.
    - No entry below raises the limit unless it says so.
 2. **One owner.** Do not run two drivers or modules that write the input
@@ -199,6 +199,11 @@ Send back:
 <a id="ch-03"></a>
 ## CH-03: Withdrawal latency, end to end (E1)
 
+> **Result on J71b (2026-10-28):** 980–1006 µs from the PMU interrupt to a
+> verified write, four unplugs, with `apple_tristar_charger`
+> ([measurements](measurements.md#driver-session-apple_tristar_charger-2026-10-28)).
+> Still open: physical unplug to GPIO38 assertion, and other boards.
+
 - **Devices**: J71b first; any D2365 board after CH-02.
 - **Why**: higher current is only safe if a detach or swap drops the limit
   before the new source is overloaded.
@@ -260,7 +265,7 @@ Send back: the per-row log, the histogram, and the shortest gap.
 
 - **Devices**: J71b; J71t/J71s and J72x after CH-02.
 - **Why**: Computers, hubs and generic chargers carry no Apple divider, so
-  Linux holds them at 425 mA. iPadOS has a port-type path for them:
+  Linux holds them at 500 mA. iPadOS has a port-type path for them:
   - `sdp`/`cdp`/`dcp`/`cp`, 500–1500 mA ([brickid.md](brickid.md#port-type-table));
   - it reported 1500 mA on a Mac USB-A hub that macOS accounted as 500 mA.
 
@@ -479,6 +484,12 @@ Send back: `0xa03` values with timestamps per repetition.
 
 <a id="ch-10"></a>
 ## CH-10: Lightning orientation bit and lane selection
+
+> **Result on J71b (2026-10-28):** the bit follows the plug. After a flip
+> the driver still sampled the CC lane (1731 then 1736 mV, other lane 646
+> then 948 mV) and granted 3 A both times
+> ([measurements](measurements.md#driver-session-apple_tristar_charger-2026-10-28)).
+> Still open on other CBTL1610 boards.
 
 - **Devices**: J71b; any CBTL1610 board.
 - **Why**: Tristar `0x0c` bit 6 chooses the CC lane.

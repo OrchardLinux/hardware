@@ -34,7 +34,7 @@ recipe = "firmware.json" # Relative to this device.toml; public recipe, not firm
 install = true
 status = "supported"
 caveats = [
-  "Charging uses the bootloader's conservative input limit until the kernel charging driver lands.",
+  "Apple chargers and USB-C sources charge at up to 2.4 A; computers, hubs and other USB-A chargers at 500 mA, which may not keep up with heavy use.",
 ]
 wifi = true # Static support; provisioning requires runtime-confirmed availability.
 usb_serial = true
@@ -48,7 +48,7 @@ wifi = "working"
 bluetooth = "working"
 storage = "working"
 battery = "working"
-charging = "partial"
+charging = "working"
 backlight = "working"
 buttons = "untested"
 audio = "missing"

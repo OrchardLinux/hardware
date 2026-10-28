@@ -10,12 +10,12 @@ it advertises, up to the board maximum:
 - USB-C cables: the CC level on the orientation-selected lane, read
   through the Tristar mux and the PMIC ADC (1.5 A or 3 A);
 - USB-A cables: the Apple BrickID divider on D+/D-, on both mux banks;
-- anything else (computers, hubs, generic chargers): 425 mA, the USB 2.0
-  500 mA less a 15% margin.
+- anything else (computers, hubs, generic chargers): 500 mA, what a
+  USB 2.0 port provides.
 
 The capability frame that tells the cable types apart follows the
 Tristar firmware's decoder. Unplugging does not reset the limit, so
-every PMU event interrupt drops a grant to 425 mA before the events are
+every PMU event interrupt drops a grant to 500 mA before the events are
 attributed; ADC completion and USB endpoint events are benign, anything
 else starts a new identification. Grants ramp in 500 mA steps and stay
 inside battery temperature, voltage and current limits.
@@ -34,7 +34,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  create mode 100644 drivers/power/supply/apple_tristar_charger.c
 
 diff --git a/drivers/power/supply/Kconfig b/drivers/power/supply/Kconfig
-index 55605e640..c58426a52 100644
+index 55605e640..a3465c5ef 100644
 --- a/drivers/power/supply/Kconfig
 +++ b/drivers/power/supply/Kconfig
 @@ -373,6 +373,22 @@ config APPLE_D2365_CHARGER
@@ -51,7 +51,7 @@ index 55605e640..c58426a52 100644
 +	  The driver identifies the attached source (Apple USB-A chargers by
 +	  their BrickID, USB-C sources by their CC advertisement) and raises
 +	  the PMIC input-current limit to what the source supports, up to the
-+	  board maximum. Unidentified sources get 425 mA. Every source change
++	  board maximum. Unidentified sources get 500 mA. Every source change
 +	  drops the limit before the new source is identified.
 +
 +	  This driver can also be built as a module. If so, the module will be
@@ -74,7 +74,7 @@ index 0da5546d1..fedeaf842 100644
  obj-$(CONFIG_CHARGER_DA9150)	+= da9150-charger.o
 diff --git a/drivers/power/supply/apple_tristar_charger.c b/drivers/power/supply/apple_tristar_charger.c
 new file mode 100644
-index 000000000..effc8dd6d
+index 000000000..126f89a6e
 --- /dev/null
 +++ b/drivers/power/supply/apple_tristar_charger.c
 @@ -0,0 +1,1069 @@
@@ -88,7 +88,7 @@ index 000000000..effc8dd6d
 + * board maximum:
 + *   USB-C cable: CC level on the orientation-selected lane (1.5 A / 3 A)
 + *   USB-A cable: Apple D+/D- divider (BrickID) on both Tristar mux banks
-+ * Anything unidentified gets the fallback, 500 mA (USB 2.0) less 15%.
++ * Anything unidentified gets the fallback, the 500 mA of a USB 2.0 port.
 + *
 + * A source change does not reset the limit in hardware, so every PMU event
 + * interrupt first drops a grant to the fallback, then the events are
@@ -134,7 +134,7 @@ index 000000000..effc8dd6d
 +
 +/* Input-current limit encoding: mA = code * 12.5 + 75 */
 +#define TRISTAR_CHG_HANDOFF_CODE	0x02	/* 100 mA, as iBoot leaves it */
-+#define TRISTAR_CHG_FALLBACK_CODE	0x1c	/* 425 mA */
++#define TRISTAR_CHG_FALLBACK_CODE	0x22	/* 500 mA */
 +
 +/* Tristar (CBTL1610) registers */
 +#define CBTL_MUX_ROUTE			0x01
