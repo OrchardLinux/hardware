@@ -1,0 +1,164 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 21:43:16 +0800
+Subject: [PATCH] usb: gadget: composite: Report an Apple host's current grant
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+macOS, and Windows with Apple's device support, grant an Apple device more
+than the USB 2.0 500 mA with a zero-length vendor request (bmRequestType
+0x40, bRequest 0x40). wIndex carries the extra active current and wValue
+the suspend current, both signed mA. iOS stores both and resolves the
+allowance as 500 mA plus the extra while the bus is active; on a Mac this
+gives the iPad 2400 mA. The host sends it only to Apple devices it knows.
+
+Answer the request in the composite core when the gadget presents Apple's
+vendor ID, and report the result through usb_gadget_vbus_draw() like any
+other configuration change, so the UDC passes it on to its PHY or power
+supply. A bus reset, a disconnect or a suspend ends the grant; set_config
+keeps it, since the host may send it before SET_CONFIGURATION.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux e44a80b0 and 0dd7ae0c (J71t ledger 6.7, 6.8, 7.4); reworked onto the existing vbus_draw path instead of a new UDC core budget, notifier and query API; gated on the Apple vendor ID instead of a DT opt-in; no board cap in the core (the charger caps at its board maximum); OUT request only]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/gadget/composite.c | 59 ++++++++++++++++++++++++++++++----
+ include/linux/usb/composite.h  |  4 +++
+ 2 files changed, 57 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/usb/gadget/composite.c b/drivers/usb/gadget/composite.c
+index df39e3487..1da3effb2 100644
+--- a/drivers/usb/gadget/composite.c
++++ b/drivers/usb/gadget/composite.c
+@@ -944,6 +944,36 @@ static void reset_config(struct usb_composite_dev *cdev)
+ 	cdev->delayed_status = 0;
+ }
+ 
++/*
++ * Apple hosts (macOS, and Windows with Apple's device support) grant an
++ * Apple device more current than USB 2.0 allows with a zero-length vendor
++ * request: bmRequestType 0x40, bRequest 0x40, wIndex the extra active current
++ * and wValue the suspend current, both in mA and signed. The host sends it
++ * only to Apple devices it knows, before or after SET_CONFIGURATION. Like
++ * iOS (IOUSBDeviceFamily), allow 500 mA plus the extra while the host allows
++ * any current at all; a bus reset, disconnect or suspend ends the grant.
++ */
++#define USB_APPLE_VENDOR_ID		0x05ac
++#define USB_APPLE_REQ_CURRENT_LIMIT	0x40
++
++static void composite_vbus_draw(struct usb_composite_dev *cdev, unsigned int mA)
++{
++	cdev->vbus_draw_ma = mA;
++	if (mA && cdev->apple_extra_ma)
++		mA = max(500 + cdev->apple_extra_ma, 0);
++	usb_gadget_vbus_draw(cdev->gadget, mA);
++}
++
++static int composite_apple_current_limit(struct usb_composite_dev *cdev,
++					 u16 w_value, u16 w_index)
++{
++	cdev->apple_extra_ma = (s16)w_index;
++	DBG(cdev, "Apple host current grant: extra %d mA, suspend %d mA\n",
++	    (s16)w_index, (s16)w_value);
++	composite_vbus_draw(cdev, cdev->vbus_draw_ma);
++	return 0;
++}
++
+ static int set_config(struct usb_composite_dev *cdev,
+ 		const struct usb_ctrlrequest *ctrl, unsigned number)
+ {
+@@ -1056,7 +1086,7 @@ done:
+ 	else
+ 		usb_gadget_set_selfpowered(gadget);
+ 
+-	usb_gadget_vbus_draw(gadget, power);
++	composite_vbus_draw(cdev, power);
+ 	if (result >= 0 && cdev->delayed_status)
+ 		result = USB_GADGET_DELAYED_STATUS;
+ 	return result;
+@@ -2191,6 +2221,15 @@ unknown:
+ 			goto check_value;
+ 		}
+ 
++		if (ctrl->bRequestType == (USB_DIR_OUT | USB_TYPE_VENDOR |
++					   USB_RECIP_DEVICE) &&
++		    ctrl->bRequest == USB_APPLE_REQ_CURRENT_LIMIT && !w_length &&
++		    le16_to_cpu(cdev->desc.idVendor) == USB_APPLE_VENDOR_ID) {
++			value = composite_apple_current_limit(cdev, w_value,
++							      w_index);
++			goto check_value;
++		}
++
+ 		VDBG(cdev,
+ 			"non-core control req%02x.%02x v%04x i%04x l%d\n",
+ 			ctrl->bRequestType, ctrl->bRequest,
+@@ -2304,18 +2343,24 @@ static void __composite_disconnect(struct usb_gadget *gadget)
+ 
+ void composite_disconnect(struct usb_gadget *gadget)
+ {
+-	usb_gadget_vbus_draw(gadget, 0);
++	struct usb_composite_dev *cdev = get_gadget_data(gadget);
++
++	cdev->apple_extra_ma = 0;
++	composite_vbus_draw(cdev, 0);
+ 	__composite_disconnect(gadget);
+ }
+ 
+ void composite_reset(struct usb_gadget *gadget)
+ {
++	struct usb_composite_dev *cdev = get_gadget_data(gadget);
++
+ 	/*
+ 	 * Section 1.4.13 Standard Downstream Port of the USB battery charging
+ 	 * specification v1.2 states that a device connected on a SDP shall only
+ 	 * draw at max 100mA while in a connected, but unconfigured state.
+ 	 */
+-	usb_gadget_vbus_draw(gadget, 100);
++	cdev->apple_extra_ma = 0;
++	composite_vbus_draw(cdev, 100);
+ 	__composite_disconnect(gadget);
+ }
+ 
+@@ -2603,7 +2648,9 @@ void composite_suspend(struct usb_gadget *gadget)
+ 	    cdev->config->bmAttributes & USB_CONFIG_ATT_SELFPOWER)
+ 		usb_gadget_set_selfpowered(gadget);
+ 
+-	usb_gadget_vbus_draw(gadget, 2);
++	/* A grant applies to the active bus; resuming needs a new one. */
++	cdev->apple_extra_ma = 0;
++	composite_vbus_draw(cdev, 2);
+ }
+ 
+ void composite_resume(struct usb_gadget *gadget)
+@@ -2642,11 +2689,11 @@ void composite_resume(struct usb_gadget *gadget)
+ 		else
+ 			usb_gadget_set_selfpowered(gadget);
+ 
+-		usb_gadget_vbus_draw(gadget, maxpower);
++		composite_vbus_draw(cdev, maxpower);
+ 	} else {
+ 		maxpower = CONFIG_USB_GADGET_VBUS_DRAW;
+ 		maxpower = min(maxpower, 100U);
+-		usb_gadget_vbus_draw(gadget, maxpower);
++		composite_vbus_draw(cdev, maxpower);
+ 	}
+ 
+ 	cdev->suspended = 0;
+diff --git a/include/linux/usb/composite.h b/include/linux/usb/composite.h
+index c18041faf..5c703f8e8 100644
+--- a/include/linux/usb/composite.h
++++ b/include/linux/usb/composite.h
+@@ -499,6 +499,10 @@ struct usb_composite_dev {
+ 	/* protects deactivations and delayed_status counts*/
+ 	spinlock_t			lock;
+ 
++	/* current allowed by the configuration state, and an Apple host grant */
++	unsigned int			vbus_draw_ma;
++	int				apple_extra_ma;
++
+ 	/* public: */
+ 	unsigned int			setup_pending:1;
+ 	unsigned int			os_desc_pending:1;

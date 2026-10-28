@@ -1,0 +1,128 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <henrik@goat-code.com>
+Date: Wed, 28 Oct 2026 21:42:12 +0800
+Subject: [PATCH] usb: dwc2: gadget: Report the VBUS draw to a power supply
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+dwc2's vbus_draw only reaches a legacy usb_phy. Controllers with a generic
+PHY have nowhere to report what the host allows, so a charger behind the
+port never learns about a configuration, a suspend or a host grant above
+the USB 2.0 default.
+
+Do what dwc3 does: with usb-psy-name set and no usb_phy, store the current
+and pass it from a work item to that power supply as its input current
+limit. The supply is looked up when the work runs, so the charger may bind
+after the controller; without it the call does nothing.
+
+J71t ledger 6.8 (gadget current reported through vbus_draw instead of a new
+UDC core budget API).
+
+Reported-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/dwc2/core.h   |  7 +++++++
+ drivers/usb/dwc2/gadget.c | 37 +++++++++++++++++++++++++++++++++++--
+ 2 files changed, 42 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/usb/dwc2/core.h b/drivers/usb/dwc2/core.h
+index 767251aa1..8ecf019ea 100644
+--- a/drivers/usb/dwc2/core.h
++++ b/drivers/usb/dwc2/core.h
+@@ -1052,6 +1052,10 @@ struct dwc2_hregs_backup {
+  * @new_connection:	Used in host mode. True if there are new connected
+  *			device
+  * @enabled:		Indicates the enabling state of controller
++ * @usb_psy_name:	Name of the power supply told what the host allows
++ *			the device to draw (vbus_draw), or NULL
++ * @vbus_draw_work:	Work passing @vbus_draw_ma to that power supply
++ * @vbus_draw_ma:	Current the gadget may draw, from vbus_draw
+  *
+  */
+ struct dwc2_hsotg {
+@@ -1225,6 +1229,9 @@ struct dwc2_hsotg {
+ 	unsigned int remote_wakeup_allowed:1;
+ 	struct dwc2_hsotg_ep *eps_in[MAX_EPS_CHANNELS];
+ 	struct dwc2_hsotg_ep *eps_out[MAX_EPS_CHANNELS];
++	const char *usb_psy_name;
++	struct work_struct vbus_draw_work;
++	unsigned int vbus_draw_ma;
+ #endif /* CONFIG_USB_DWC2_PERIPHERAL || CONFIG_USB_DWC2_DUAL_ROLE */
+ };
+ 
+diff --git a/drivers/usb/dwc2/gadget.c b/drivers/usb/dwc2/gadget.c
+index 07220a0bc..0dc6eee14 100644
+--- a/drivers/usb/dwc2/gadget.c
++++ b/drivers/usb/dwc2/gadget.c
+@@ -22,6 +22,8 @@
+ #include <linux/delay.h>
+ #include <linux/io.h>
+ #include <linux/slab.h>
++#include <linux/power_supply.h>
++#include <linux/property.h>
+ 
+ #include <linux/usb/ch9.h>
+ #include <linux/usb/gadget.h>
+@@ -4762,13 +4764,39 @@ static int dwc2_hsotg_vbus_session(struct usb_gadget *gadget, int is_active)
+  *
+  * Report how much power the device may consume to the phy.
+  */
++static void dwc2_hsotg_vbus_draw_work(struct work_struct *work)
++{
++	struct dwc2_hsotg *hsotg = container_of(work, struct dwc2_hsotg,
++						vbus_draw_work);
++	union power_supply_propval val;
++	struct power_supply *psy;
++	int ret;
++
++	psy = power_supply_get_by_name(hsotg->usb_psy_name);
++	if (!psy)
++		return;
++	val.intval = READ_ONCE(hsotg->vbus_draw_ma) * 1000;
++	ret = power_supply_set_property(psy, POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT,
++					&val);
++	if (ret)
++		dev_dbg(hsotg->dev, "setting VBUS draw (%d uA) failed: %d\n",
++			val.intval, ret);
++	power_supply_put(psy);
++}
++
+ static int dwc2_hsotg_vbus_draw(struct usb_gadget *gadget, unsigned int mA)
+ {
+ 	struct dwc2_hsotg *hsotg = to_hsotg(gadget);
+ 
+-	if (IS_ERR_OR_NULL(hsotg->uphy))
++	if (!IS_ERR_OR_NULL(hsotg->uphy))
++		return usb_phy_set_power(hsotg->uphy, mA);
++	if (!hsotg->usb_psy_name)
+ 		return -ENOTSUPP;
+-	return usb_phy_set_power(hsotg->uphy, mA);
++
++	/* Called in atomic context; the power supply may sleep. */
++	WRITE_ONCE(hsotg->vbus_draw_ma, mA);
++	schedule_work(&hsotg->vbus_draw_work);
++	return 0;
+ }
+ 
+ static void dwc2_gadget_set_speed(struct usb_gadget *g, enum usb_device_speed speed)
+@@ -5018,6 +5046,9 @@ int dwc2_gadget_init(struct dwc2_hsotg *hsotg)
+ 
+ 	hsotg->gadget.ops = &dwc2_hsotg_gadget_ops;
+ 	hsotg->gadget.name = dev_name(dev);
++	if (!device_property_read_string(dev, "usb-psy-name",
++					 &hsotg->usb_psy_name))
++		INIT_WORK(&hsotg->vbus_draw_work, dwc2_hsotg_vbus_draw_work);
+ 	hsotg->gadget.otg_caps = &hsotg->params.otg_caps;
+ 	hsotg->remote_wakeup_allowed = 0;
+ 
+@@ -5102,6 +5133,8 @@ int dwc2_gadget_init(struct dwc2_hsotg *hsotg)
+ int dwc2_hsotg_remove(struct dwc2_hsotg *hsotg)
+ {
+ 	usb_del_gadget_udc(&hsotg->gadget);
++	if (hsotg->usb_psy_name)
++		cancel_work_sync(&hsotg->vbus_draw_work);
+ 	dwc2_hsotg_ep_free_request(&hsotg->eps_out[0]->ep, hsotg->ctrl_req);
+ 
+ 	return 0;

@@ -1,0 +1,51 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 21:40:51 +0800
+Subject: [PATCH] dt-bindings: power: supply: apple,tristar-charger: Add the
+ iPad 5 (J71t)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The iPad 5 charges through the same hardware as the iPad 6: a D2365 charger
+at 0x180 with the input limit at 0xa03, and a Tristar CBTL1610 on i2c0 at
+0x1a. Its PMU event line is AP GPIO 76. Add its board compatible so it uses
+the shared charger.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux f5ce1082 (J71t ledger 6.1); the separate apple_j71t_charger becomes a board compatible of the shared Tristar charger]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../bindings/power/supply/apple,tristar-charger.yaml   | 10 ++++++----
+ 1 file changed, 6 insertions(+), 4 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/power/supply/apple,tristar-charger.yaml b/Documentation/devicetree/bindings/power/supply/apple,tristar-charger.yaml
+index 5e59cf90d..e3507f5cb 100644
+--- a/Documentation/devicetree/bindings/power/supply/apple,tristar-charger.yaml
++++ b/Documentation/devicetree/bindings/power/supply/apple,tristar-charger.yaml
+@@ -11,10 +11,11 @@ maintainers:
+ 
+ description: |
+   Charging on Apple devices whose Lightning port uses a Tristar (NXP CBTL1610)
+-  port controller and a D2365-family PMIC. The node is a child of the PMIC.
+-  It identifies the attached source through the Tristar and the PMIC ADC and
+-  sets the PMIC input-current limit, which iBoot leaves at 100 mA. PMU events
+-  come from the PMIC's event interrupt controller (the PMIC GPIO node).
++  port controller and a D2365-family PMIC, such as the iPad 5 and iPad 6. The
++  node is a child of the PMIC. It identifies the attached source through the
++  Tristar and the PMIC ADC and sets the PMIC input-current limit, which iBoot
++  leaves at 100 mA. PMU events come from the PMIC's event interrupt
++  controller (the PMIC GPIO node).
+ 
+ allOf:
+   - $ref: power-supply.yaml#
+@@ -24,6 +25,7 @@ properties:
+     items:
+       - enum:
+           - apple,j71b-tristar-charger
++          - apple,j71t-tristar-charger
+       - const: apple,tristar-charger
+ 
+   reg:

@@ -1,0 +1,50 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <henrik@goat-code.com>
+Date: Wed, 28 Oct 2026 21:47:48 +0800
+Subject: [PATCH] arm64: dts: apple: t8010-ipad6: Pass the USB host's allowance
+ to the charger
+
+Name the Lightning charger as the dwc2 power supply, so a configuration,
+a suspend or an Apple host's current grant reported through vbus_draw
+reaches it. The iPad 7 has no Tristar charger and drops the property.
+
+J71t ledger 6.7, 6.8.
+
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/arm64/boot/dts/apple/t8010-ipad6.dtsi | 5 +++++
+ arch/arm64/boot/dts/apple/t8010-ipad7.dtsi | 4 ++++
+ 2 files changed, 9 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/t8010-ipad6.dtsi b/arch/arm64/boot/dts/apple/t8010-ipad6.dtsi
+index ac106e5cf..690790064 100644
+--- a/arch/arm64/boot/dts/apple/t8010-ipad6.dtsi
++++ b/arch/arm64/boot/dts/apple/t8010-ipad6.dtsi
+@@ -271,6 +271,11 @@
+ 	status = "okay";
+ };
+ 
++/* Tell the Lightning charger what the USB host allows. */
++&usbdev {
++	usb-psy-name = "lightning";
++};
++
+ &wlan_uart2 {
+ 	pinctrl-0 = <&wlan_uart2_pins>;
+ 	pinctrl-names = "default";
+diff --git a/arch/arm64/boot/dts/apple/t8010-ipad7.dtsi b/arch/arm64/boot/dts/apple/t8010-ipad7.dtsi
+index 3f530a1b4..8955e04e3 100644
+--- a/arch/arm64/boot/dts/apple/t8010-ipad7.dtsi
++++ b/arch/arm64/boot/dts/apple/t8010-ipad7.dtsi
+@@ -17,6 +17,10 @@
+ /delete-node/ &tristar_charger;
+ /delete-node/ &tristar;
+ 
++&usbdev {
++	/delete-property/ usb-psy-name;
++};
++
+ /* The PMU event line of the iPad 7 is not described yet. */
+ &pmu_gpio {
+ 	/delete-property/ interrupt-controller;
