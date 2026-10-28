@@ -86,9 +86,9 @@ Record: `TYPEC-STATUS-SEQUENCE-RESULT.md`.
 | Quick Mac → A1357 | 425 mA | 6822 µs (two assertions 2.289 s apart) |
 | Prototype, every unplug | granted (up to 2400 mA) | < 1 ms |
 
-## Prototype session (hardware commit `11073db`, 2026-10-28)
+## Prototype session (2026-10-28)
 
-The commit record lists the sources tested:
+The prototype's commit record listed the sources tested:
 
 - power bank USB-A → ID5 2400 mA;
 - Mac hub → no signature, 425 mA;

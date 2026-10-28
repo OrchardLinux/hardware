@@ -58,7 +58,7 @@ iOS observation on J71b, same Lightning to USB-C cable:
 | 20 W power bank (label: USB-C 5 V 3 A, total 5 V 2.4 A) | 2400 mA | 1780 mV, later 1766, 1770, 1792 mV | |
 | Mac, direct USB-C | 2400 mA (macOS sent a 2400 mA configuration override) | 961 mV (1.5 A band) | macOS override is a host-side Apple mechanism |
 
-Prototype (hardware commit `11073db`) on the same kind of sources:
+The prototype, on the same kind of sources:
 
 - 140 W in both orientations → 3 A class → granted 2400 mA;
 - power bank → granted 2400 mA;

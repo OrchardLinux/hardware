@@ -70,7 +70,7 @@ into the shared cache, replay them onto the stack, then run the semantic review
    **Verified:** for each of Paul's files, the replay equals a whole-file 3-way
    merge, except the three hand-ported files and the skipped README.
    torvalds + hoolock + pauli1go (215 patches) applies to exactly the replayed tree.
-3. **Semantic review of Orchard's delta. ✅ Reviewed (`REVIEW.md`); patches pending.** Our current tree compared with Paul's
+3. **Semantic review of Orchard's delta. ✅ Done** (`REVIEW.md`; fixes in `patches/drivers/`). Our current tree compared with Paul's
    latest, over the files `0001` touches:
    - 15 files identical to Paul's (no Orchard delta);
    - ~480 lines of J71b-only additions (DTs, readiness touch driver, NVMe
@@ -92,7 +92,8 @@ into the shared cache, replay them onto the stack, then run the semantic review
    kernel builds, then a J71b RAM-boot checklist over Wi-Fi SSH (storage fence,
    touch, Wi-Fi, Bluetooth, battery, charging, backlight) against today's kernel.
    The current stack stays as the fallback until this passes.
-4. **J71b on Paul's model.** Write J71b's DT on the shared `t8010.dtsi` nodes,
+4. **J71b on Paul's model. ✅ Done:** RAM boot and an Omarchy install on J71b
+   passed on 2026-10-28. Write J71b's DT on the shared `t8010.dtsi` nodes,
    modelled on J172 (`t8010-ipad7.dtsi`), using in-tree drivers only. Apply the
    `shared/` fixes from `REVIEW.md`. Drop the bring-up DT chain, the out-of-tree
    touch/SIO/GPIO module copies and the charging lease. Switch `kernel/build` to
@@ -120,9 +121,7 @@ into the shared cache, replay them onto the stack, then run the semantic review
   code, even when one device needs it first), `devices/` (DT and board data only).
 - Layer order lives in `kernel/series/<platform>`; `kernel/series.py`
   lists the patches. `kernel/build`, `audit-patches.py` and the tests read it.
-  The CLI's cached kernel path (`cli/.../kernel.py`) still reads
-  `patches/<device>/` and must adopt `series.py` before `./orchard build` uses the
-  new stack.
+  The CLI's build path (`cli/.../build.py`) reads it too.
 - Local macOS kernel checkouts clobber 10 case-paired netfilter files
   (`xt_DSCP.c`/`xt_dscp.c`, …). Harmless while J71b's config leaves those targets
   off; CI builds on Linux. Moving the checkout to a case-sensitive volume would

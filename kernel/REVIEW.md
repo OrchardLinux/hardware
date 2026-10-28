@@ -121,7 +121,7 @@ Tracked in [NOTIFY.md](NOTIFY.md).
 
 ## Status of shared fixes (now patches/drivers/<subsystem>/)
 
-Committed on the stack (verified to apply; not yet compiled):
+Committed on the stack (built with `W=1`, validated on J71b):
 1. iommu: apple-dart: no master-config dereference in the S5L8960X fault handler
    (found by our own code review; PR #6 happens to change the same line)
 2. nvme-pci: apple-ans: release the FlatDMA slot before unmapping its pages

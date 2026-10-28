@@ -33,7 +33,7 @@ kernelcache; `…5e69b38` abbreviates `0xfffffff005e69b38`.
 | USB-A Apple charger current | Works, both orientations | ID4 and ID5 sources, hardware |
 | USB-C Rp current (1.5 A / 3 A) | Works on demand | 140 W wall, power bank, Mac, hardware |
 | Withdrawal on unplug or source change | Works, <1 ms edge to verified write | Prototype owner, hardware |
-| Prototype that grants identified current | Hardware-tested in one RAM session | hardware commit `11073db` |
+| Prototype that grants identified current | Hardware-tested in one RAM session; superseded by the driver below | [measurements](measurements.md#prototype-session-2026-10-28) |
 | In-tree driver `apple_tristar_charger` | Works: power bank, 140 W USB-C both orientations, Mac USB-C and Mac hub identified; withdrawal ~1 ms | [Linux driver](#5-linux-driver), [measurements](measurements.md#driver-session-apple_tristar_charger-2026-10-28) |
 | Computers / generic chargers (BC1.2, CDP) | Not implemented, held at 500 mA | [CH-04](experiments.md#ch-04) |
 | USB PD | Not implemented | [CH-05](experiments.md#ch-05) |
@@ -267,7 +267,7 @@ safe rule does not need them:
 | Implementation | Edge to verified `0xa03` readback | Evidence |
 |---|---|---|
 | Bounded IRQ trials (read events, then write) | 6.7 ms, 58.5 ms, 6.8 ms | Hardware, three trials from 425 mA |
-| Prototype `j71b_adaptive_charge` (write first in IRQ thread) | < 1 ms on every unplug | Hardware, commit `11073db` (module counters; raw log not kept in the archive) |
+| Prototype `j71b_adaptive_charge` (write first in IRQ thread) | < 1 ms on every unplug | Hardware, out-of-tree prototype (module counters; raw log not kept in the archive) |
 
 What these numbers do not cover:
 
@@ -468,8 +468,7 @@ workspace root:
 | Static trace, iOS observation, early probes | `ipadlinux/experiments/power-001/` (`CHARGER-SOURCE-TRACE.md`, `IOS-SOURCE-OBSERVATION.md`, `IRQ-INVALIDATION.md`, `CLASSIFICATION-V1.md`, `ROUTE11-TRIAL.md`, `CHARGER-DRIVER.md`) |
 | Hardware logs of the early phase | `ipadlinux/logs/power-001-*.log` |
 | Event attribution, two-bank detector, Type-C, capability frame | `charging/event-attribution/` (`DETECTION-STATUS.md`, `README.md` and one `*-RESULT.md` per trial) |
-| Status and E1 plan | `worktrees/charging-deluxe/docs/charging/` |
-| Prototype owner | hardware commit `11073db` (`kernel/modules/j71b/power/j71b_adaptive_charge.c`, `j71b-capability.h`, `j71b-event-demux.h`) |
+| Prototype logic | `kernel/patches/drivers/power/0003` (`apple_tristar_charger`); the out-of-tree prototype module was not kept |
 | PR #8 port and review | `worktrees/charging-experiments/hardware/kernel/modules/j71b/power/`, `examples/charging-pr8/` |
 | J71t PR review (charging sections) | `notes/2026-10-28/j71t-pr-review.md` |
 | Paul's drivers | stack `kernel/.work/apple/source/drivers/power/supply/` |

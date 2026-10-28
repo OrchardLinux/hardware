@@ -36,17 +36,17 @@ reasoning as *inferred*.
    cable, which end you moved, and the plug orientation. Put a dot of tape on
    one side of the Lightning plug so "A" and "B" are unambiguous.
 
-Tooling: Orchard does not ship a register probe yet. The J71b prototype
-(hardware branch `feature/charging-deluxe`, commit `11073db`,
-`kernel/modules/j71b/power/j71b_adaptive_charge.c`) shows how to:
+Tooling: Orchard does not ship a register probe yet. The J71b charging
+driver (`apple_tristar_charger`, `kernel/patches/drivers/power/0003`) shows
+how to:
 
 - own GPIO38;
 - read the event block once per edge;
 - sample the mux and restore it;
-- time a withdrawal.
+- withdraw a grant before attributing the event.
 
-It refuses to load on anything but `apple,j71b`. Port the parts you need
-and keep the guards.
+It binds through the board's device tree, so another board needs its own
+charger node. Port the parts you need and keep the guards.
 
 What to send back (all entries): the device, board, iOS version if used,
 kernel commit, the table the entry asks for, and anything that surprised
@@ -211,7 +211,6 @@ Send back:
     That session's log is not archived.
   - The I²C driver can wait up to 100 ms per transfer.
   - The time from physical unplug to the edge is unknown.
-  - Plan: `worktrees/charging-deluxe/docs/charging/E1-PLAN.md` (local).
 - **Equipment**: J71b, Apple A1357 (or another ID4/ID5 brick), the 20 W bank
   or another USB-A ID5 source, a Mac with a USB-A hub, Wi-Fi SSH.
 - **Time**: about 20 min of user-paced swaps in one RAM boot. **Risk**: low.

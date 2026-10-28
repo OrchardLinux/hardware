@@ -85,7 +85,7 @@ attribution that follows. Close this in the final driver.
 | Unplug → `0x18a` = 0 → reattach `0x40` → `0x42` | `0x40` lasted 116 ms and 119 ms in two captures | `charging/event-attribution/SWAP-OBSERVE-RESULT.md`, `DEMUX-RESULT.md` |
 | ADC select log → GPIO38 low | 8.4 ms (includes logging and I²C) | `ADC-RETRY1-RESULT.md` |
 | IRQ fall → verified `0x02`, bounded trial (events read first) | 6686 µs, 58453 µs, 6822 µs | `ipadlinux/experiments/power-001/IRQ-INVALIDATION.md` |
-| IRQ fall → verified `0x1c`, prototype (write first) | < 1 ms, every unplug | hardware commit `11073db` (commit record; module exports `last_withdraw_us`, `max_withdraw_us`) |
+| IRQ fall → verified `0x1c`, prototype (write first) | < 1 ms, every unplug | out-of-tree prototype (its commit record; the module exported `last_withdraw_us`, `max_withdraw_us`) |
 | Type-C acquisition, trigger → qualified | 166 ms (full telemetry in guards), 23.1 ms (fast guards) | `TYPEC-LIVE-TIMING.md`, `TYPEC-FRESH-RESULT.md` |
 | Type-C repeated acquisition | second renewal took 45.4 ms, over a 30 ms budget | `TYPEC-FRESH-RESULT.md` |
 
