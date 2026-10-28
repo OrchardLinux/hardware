@@ -9,12 +9,13 @@ Fill in A9-A11 iPhone/iPad device data generically
 - Copy touchscreen calibration (touchscreen0 alias) the same way as the
   touch bar's, skipping unprovisioned "syscfg/" references. This covers
   the iPhone 7 Plus properties and the iPad's display offset, firefly and
-  pressure correction blobs.
+  pressure correction blobs, and the iPad 7 Firefly P100 and
+  external multi-touch calibration.
 
 Replaces the J71b-only patch: no board compatibles are checked.
 
 diff --git a/src/kboot.c b/src/kboot.c
-index 2840651..c258b37 100644
+index 2840651..790721e 100644
 --- a/src/kboot.c
 +++ b/src/kboot.c
 @@ -352,6 +352,34 @@ static int dt_set_uboot_config(void)
@@ -104,7 +105,7 @@ index 2840651..c258b37 100644
          return 0;
      }
  
-@@ -865,11 +917,51 @@ static int dt_set_bluetooth(void)
+@@ -865,11 +917,53 @@ static int dt_set_bluetooth(void)
      return 0;
  }
  
@@ -120,6 +121,8 @@ index 2840651..c258b37 100644
 +        {"shape-dynamic-accel-cal", "apple,z2-shape-accel-cal-blob"},
 +        {"multitouch-to-display-offset", "apple,z2-display-offset-cal-blob"},
 +        {"firefly-calibration", "apple,z2-firefly-cal-blob"},
++        {"firefly-p100-calibration", "apple,z2-firefly-p100-cal-blob"},
++        {"ext-multi-touch-calibration", "apple,z2-ext-cal-blob"},
 +        {"pressure-effect-correction", "apple,z2-pressure-cal-blob"},
 +    };
 +    const char *path = fdt_get_alias(dt, "touchscreen0");
@@ -157,7 +160,7 @@ index 2840651..c258b37 100644
  
      int node = fdt_path_offset(dt, path);
      if (node < 0)
-@@ -998,21 +1090,17 @@ static int dt_set_nvram(void)
+@@ -998,21 +1092,17 @@ static int dt_set_nvram(void)
  
  static int dt_set_wifi(void)
  {
@@ -181,7 +184,7 @@ index 2840651..c258b37 100644
      const char *path = fdt_get_alias(dt, "wifi0");
      if (path == NULL)
          return 0;
-@@ -1021,9 +1109,13 @@ static int dt_set_wifi(void)
+@@ -1021,9 +1111,13 @@ static int dt_set_wifi(void)
      if (node < 0)
          return 0;
  
@@ -198,7 +201,7 @@ index 2840651..c258b37 100644
  
      u32 len;
      const u8 *cal_blob = adt_getprop(adt, anode, "wifi-calibration-msf", &len);
-@@ -3030,6 +3122,8 @@ int kboot_prepare_dt(void *fdt)
+@@ -3030,6 +3124,8 @@ int kboot_prepare_dt(void *fdt)
       */
      if (dt_set_memory())
          return -1;
