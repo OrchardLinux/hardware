@@ -91,7 +91,7 @@ difference while porting J71b to the J172 model".
 |---|---|---|
 | `core.c`: don't cancel uninitialized reset work when firmware lookup fails before attach | **shared/** | General bug fix; linux-wireless candidate |
 | `pcie.c`: `brcmf_fw_crashed()` only if the device came up | **shared/** | **Flag:** confirm generality |
-| Exact OTP-tuple NVRAM (`BRCMF_FW_REQF_EXACT`), MAC required, RX `DMA_BIDIRECTIONAL`, `J71B_WIFI_*` logs | **j71b/** | In B compare with Paul's NVMEM calibration on the same BCM4355C1; find why J71b needs bidirectional RX |
+| Exact OTP-tuple NVRAM (`BRCMF_FW_REQF_EXACT`), MAC required, RX `DMA_BIDIRECTIONAL`, `J71B_WIFI_*` logs | **j71b/** | In B compare with Paul's NVMEM calibration on the same BCM4355C1; find why J71b needs bidirectional RX. **2026-10-28, new stack without it:** firmware boots and scans, and association starts. At each EAPOL retry (1 s apart) the DART reports a READ FAULT on stream 0 (a mapped but non-readable page), and afterwards every firmware command times out. Stale-TLB is the other explanation; not yet confirmed which. Untested: whether J172 (same BCM4355C1) has the same problem. |
 
 ### Bluetooth (`hci_bcm.c`)
 | Hunk | Verdict | Notes |
@@ -117,10 +117,7 @@ difference while porting J71b to the J172 model".
 
 ## Upstream reports to send (later)
 
-- Nick Chan (Hoolock): DART S5L8960X fault-handler NULL dereference.
-- Paul Praschl: ANS slot release ordering; SmartIO IRQ lifecycle; H9P System-RAM
-  overlap check; bq27540 entry and the cache-only question.
-- linux-wireless: brcmfmac cancel of uninitialized reset work.
+Tracked in [NOTIFY.md](NOTIFY.md).
 
 ## Status of shared fixes (now patches/drivers/<subsystem>/)
 
@@ -197,13 +194,20 @@ staged on-device check.
 
 ## Device trees (2026-10-28)
 
-`patches/devices/t8010/`: board nodes shared by the iPad 6 (J71b/J72b) and
-iPad 7 (J171/J172) move into `t8010-ipad6.dtsi`, which the iPad 7 already
-includes. `t8010-ipad7.dtsi` keeps iPad 7 differences; new `t8010-j7xb.dtsi`
-holds iPad 6 differences; `t8010-j71b.dts`/`t8010-j72b.dts` hold per-model
-Wi-Fi board type and touch firmware name.
+`patches/devices/t8010/0001` follows mainline's layout. `t8010-ipad6.dtsi`
+describes the whole iPad 6 board (J71b/J72b include it directly), and
+`t8010-ipad7.dtsi` includes it and overrides only what differs on the
+iPad 7. The bring-up layer `t8010-j7xb.dtsi` is gone. The WLAN UART
+platform-control block is a disabled SoC node in `t8010.dtsi` (it was
+added from the board file through `&{/soc}`). The PMIC GPIO controller
+sits inside the PMIC node. `t8010-j71b.dts`/`t8010-j72b.dts` hold the
+per-model Wi-Fi board type and touch firmware name.
 
-Verified by decompiling all 104 Apple DTBs before and after:
+Checked with an FDT-level comparison against the DTBs that booted on
+2026-10-28: J71b, J72b, J171 and J172 are identical apart from label names.
+D10, D11, D101, D111 and N112 only gain the disabled WLAN UART node.
+
+Earlier check, against the first version of this patch: Verified by decompiling all 104 Apple DTBs before and after:
 - 100 unchanged byte for byte;
 - J171/J172: only a `wifi` label symbol and a `wifi0` alias added, otherwise
   identical apart from phandle numbering;
@@ -221,3 +225,43 @@ Open: J72b needs its own touch firmware (`apple/j72b-fwstart.z2fw`) and Wi-Fi
 NVRAM names from its IPSW (firmware recipe, CLI phase). The iPad 6 battery
 capacity (8827 mAh) is the published figure, not read from the gauge.
 `t8010.dtsi` carries a pre-existing `simple_bus_reg` warning (bus@20c000000).
+
+## Mainline-practice fixes for the imported pauli1go layer (backlog)
+
+Orchard maintains this code now; Paul is not expected to. Backlogged
+2026-10-28: nothing here blocks a device. Fix in place, in the relevant
+layer, and verify on J71b plus FDT and build checks for the iPad 7/iPhone 7
+boards we can't run. Triggers:
+- Wi-Fi calibration mechanism: decide during the m1n1 audit.
+- Touch firmware names: settle with the firmware recipe (build
+  pipeline/CLI).
+- Everything else: when preparing upstream submissions.
+
+- **apple_z2 tuning in DT:** `apple,z2-bpw16-min-len`, `apple,z2-no-init-ack`
+  and the SPI chip-select timings are driver knowledge per controller
+  variant. They belong in the per-compatible match data, not in DT
+  properties. `power-ldo-gpios`/`power-ana-gpios` are rails, so model them
+  as `*-supply` (fixed regulators) unless the sequencing needs GPIOs.
+  The driver also needs `spi_device_id` entries (the kernel warns for
+  `apple,j71b-touchscreen`).
+- **Board compatible on an SoC block:** `pcie-apple-h9p` matches
+  `apple,j172-pcie` to enable a bridge quirk. Mainline keys board quirks
+  on a property describing the hardware behavior, or on the SoC
+  compatible plus match data, not on a board-named controller compatible.
+- **H9P per-port bring-up booleans** (`apple,link-retry-after-power-cycle`,
+  `apple,hardware-trained-phy-lane`, `apple,endpoint-power-after-link-setup`,
+  `apple,inherited-perst-before-link-setup`): check which describe the
+  hardware and which are driver policy. Policy moves into the driver.
+- **`apple,antenna-sku = "XX"`** on the iPad 7 is a placeholder. Mobile
+  devices have no antenna SKU (`patches/drivers/wifi/0002` handles that),
+  so drop it once J172 NVRAM selection by OTP is confirmed by file names.
+- **WLAN UART provider:** a custom compatible on what looks like SoC UART2
+  (`0x20a0c8000`). Check whether it is a plain `apple,s5l-uart` that the
+  Wi-Fi power sequence only needs to keep powered. If so, describe it as
+  `serial2` and reference it from the Wi-Fi node.
+- **Wi-Fi calibration source:** Paul loads it from NVMEM SysCfg (pauli1go
+  0036); we use the m1n1 `brcm,cal-blob`. Pick one mechanism for all devices.
+- **Touch firmware names:** J172 uses `apple/dfrmtfw-j172-k1f19-6.bin` and we
+  use `apple/j71b-fwstart.z2fw`. Use one scheme, mainline's `dfrmtfw-*`
+  naming, together with the firmware recipe.
+
