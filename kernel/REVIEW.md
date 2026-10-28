@@ -121,3 +121,20 @@ difference while porting J71b to the J172 model".
 - Paul Praschl: ANS slot release ordering; SmartIO IRQ lifecycle; H9P System-RAM
   overlap check; bq27540 entry and the cache-only question.
 - linux-wireless: brcmfmac cancel of uninitialized reset work.
+
+## Status of shared fixes (patches/shared/fixes/)
+
+Committed on the stack (verified to apply; not yet compiled):
+1. iommu: apple-dart: no master-config dereference in the S5L8960X fault handler
+   (PR #6 for J71t independently found the same bug)
+2. nvme-pci: apple-ans: release the FlatDMA slot before unmapping its pages
+3. soc: apple: sio: take RX interrupts only while the coprocessor runs
+4. power: supply: bq27xxx_hdq: BQ27540 (iPad 5/6), live reads; cache-only stays BQ27545
+5. wifi: brcmfmac: don't cancel never-initialized reset work
+6. wifi: brcmfmac: Apple OTP NVRAM selection without antenna SKU (replaces J71b's
+   exact-OTP code; same filenames, no fallback files packaged)
+
+Revised after the no-scaffolding decision:
+- H9P module support: dropped. Only J71b's fence boot order needed it.
+- brcmfmac crash-report guard: dropped. Mainline brcmf_fw_crashed() already
+  returns early without drvr.

@@ -1,0 +1,31 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Orchard migration <noreply@orchardlinux>
+Date: Wed, 28 Oct 2026 09:34:19 +0800
+Subject: [PATCH 5/6] wifi: brcmfmac: Don't cancel reset work that was never
+ initialized
+
+brcmf_bus_cancel_reset_work() runs from removal paths, including a
+firmware request that fails before brcmf_attach() has initialized
+drvr->bus_reset. Cancelling the uninitialized work item trips debug
+object and lockdep checks.
+
+Check bus_reset.func like brcmf_bus_schedule_reset() already does.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/net/wireless/broadcom/brcm80211/brcmfmac/core.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/core.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/core.c
+index dad6f4563..0f121ebbc 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/core.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/core.c
+@@ -1184,7 +1184,7 @@ void brcmf_bus_cancel_reset_work(struct brcmf_bus *bus_if)
+ {
+ 	mutex_lock(&bus_if->bus_reset_lock);
+ 	bus_if->removing = true;
+-	if (bus_if->drvr)
++	if (bus_if->drvr && bus_if->drvr->bus_reset.func)
+ 		cancel_work_sync(&bus_if->drvr->bus_reset);
+ 	mutex_unlock(&bus_if->bus_reset_lock);
+ }

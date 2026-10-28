@@ -1,0 +1,44 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Orchard migration <noreply@orchardlinux>
+Date: Wed, 28 Oct 2026 09:32:39 +0800
+Subject: [PATCH 1/6] iommu: apple-dart: Don't dereference a master config in
+ the S5L8960X fault handler
+
+apple_dart_s5l8960x_irq() looks up dev_iommu_priv_get(dart->dev) to add
+the master's DMA window base to the reported fault address. dart->dev is
+the DART itself, which is not behind an IOMMU, so the lookup returns NULL
+and every translation fault oopses in interrupt context.
+
+A fault cannot be attributed to one master's window here anyway, so
+report the address register as read.
+
+Fixes: S5L8960X DART support from the Hoolock 090-dart series.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/iommu/apple-dart.c | 5 ++---
+ 1 file changed, 2 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/iommu/apple-dart.c b/drivers/iommu/apple-dart.c
+index 01737458b..f7eee85ea 100644
+--- a/drivers/iommu/apple-dart.c
++++ b/drivers/iommu/apple-dart.c
+@@ -1292,7 +1292,6 @@ static const struct iommu_ops apple_dart_iommu_ops = {
+ static irqreturn_t apple_dart_s5l8960x_irq(int irq, void *dev)
+ {
+ 	struct apple_dart *dart = dev;
+-	struct apple_dart_master_cfg *cfg = dev_iommu_priv_get(dart->dev);
+ 	const char *fault_name = NULL;
+ 	u32 error = readl(dart->regs + DART_S5L8960X_ERROR);
+ 	u32 error_code = FIELD_GET(DART_S5L8960X_ERROR_CODE, error);
+@@ -1318,8 +1317,8 @@ static irqreturn_t apple_dart_s5l8960x_irq(int irq, void *dev)
+ 
+ 	dev_err_ratelimited(
+ 		dart->dev,
+-		"translation fault: status:0x%x stream:%d code:0x%x (%s) at 0x%llx",
+-		error, stream_idx, error_code, fault_name, addr | cfg->dma_min);
++		"translation fault: status:0x%x stream:%d code:0x%x (%s) at 0x%x",
++		error, stream_idx, error_code, fault_name, addr);
+ 
+ 	writel(error, dart->regs + DART_S5L8960X_ERROR);
+ 	return IRQ_HANDLED;

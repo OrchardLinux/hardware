@@ -1,0 +1,92 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Orchard migration <noreply@orchardlinux>
+Date: Wed, 28 Oct 2026 09:34:20 +0800
+Subject: [PATCH 6/6] wifi: brcmfmac: Select Apple NVRAM by OTP when there is
+ no antenna SKU
+
+Apple boards are matched by board type plus the module, vendor and
+version read from OTP, optionally qualified by an antenna SKU. Mobile
+devices such as the iPad 5/6/7 have no antenna SKU in their device tree,
+so the whole OTP-based lookup was skipped and only the bare board type
+was tried; device trees had to invent a placeholder SKU.
+
+Use the OTP-based names whenever a board type and valid OTP are present,
+and only add the SKU-specific names when a SKU exists. Boards with a SKU
+get the same lookup order as before.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../broadcom/brcm80211/brcmfmac/pcie.c        | 56 +++++++++----------
+ 1 file changed, 27 insertions(+), 29 deletions(-)
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/pcie.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/pcie.c
+index 55f4d7b97..1f3e7021b 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/pcie.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/pcie.c
+@@ -2264,39 +2264,37 @@ brcmf_pcie_prepare_fw_request(struct brcmf_pciedev_info *devinfo)
+ 	fwreq->bus_nr = devinfo->pdev->bus->number;
+ 
+ 	/* Apple platforms with fancy firmware/NVRAM selection */
+-	if (devinfo->settings->board_type &&
+-	    devinfo->settings->antenna_sku &&
+-	    devinfo->otp.valid) {
++	if (devinfo->settings->board_type && devinfo->otp.valid) {
+ 		const struct brcmf_otp_params *otp = &devinfo->otp;
++		const char *board = devinfo->settings->board_type;
++		const char *sku = devinfo->settings->antenna_sku;
+ 		struct device *dev = &devinfo->pdev->dev;
+ 		const char **bt = fwreq->board_types;
+-
+-		brcmf_dbg(PCIE, "Apple board: %s\n",
+-			  devinfo->settings->board_type);
+-
+-		/* Example: apple,shikoku-RASP-m-6.11-X3 */
+-		bt[0] = devm_kasprintf(dev, GFP_KERNEL, "%s-%s-%s-%s-%s",
+-				       devinfo->settings->board_type,
+-				       otp->module, otp->vendor, otp->version,
+-				       devinfo->settings->antenna_sku);
+-		bt[1] = devm_kasprintf(dev, GFP_KERNEL, "%s-%s-%s-%s",
+-				       devinfo->settings->board_type,
+-				       otp->module, otp->vendor, otp->version);
+-		bt[2] = devm_kasprintf(dev, GFP_KERNEL, "%s-%s-%s",
+-				       devinfo->settings->board_type,
+-				       otp->module, otp->vendor);
+-		bt[3] = devm_kasprintf(dev, GFP_KERNEL, "%s-%s",
+-				       devinfo->settings->board_type,
+-				       otp->module);
+-		bt[4] = devm_kasprintf(dev, GFP_KERNEL, "%s-%s",
+-				       devinfo->settings->board_type,
+-				       devinfo->settings->antenna_sku);
+-		bt[5] = devinfo->settings->board_type;
+-
+-		if (!bt[0] || !bt[1] || !bt[2] || !bt[3] || !bt[4]) {
+-			kfree(fwreq);
+-			return NULL;
++		unsigned int i, n = 0;
++
++		brcmf_dbg(PCIE, "Apple board: %s\n", board);
++
++		/* Example: apple,shikoku-RASP-m-6.11-X3; mobile devices have no SKU. */
++		if (sku)
++			bt[n++] = devm_kasprintf(dev, GFP_KERNEL, "%s-%s-%s-%s-%s",
++						 board, otp->module, otp->vendor,
++						 otp->version, sku);
++		bt[n++] = devm_kasprintf(dev, GFP_KERNEL, "%s-%s-%s-%s", board,
++					 otp->module, otp->vendor, otp->version);
++		bt[n++] = devm_kasprintf(dev, GFP_KERNEL, "%s-%s-%s", board,
++					 otp->module, otp->vendor);
++		bt[n++] = devm_kasprintf(dev, GFP_KERNEL, "%s-%s", board,
++					 otp->module);
++		if (sku)
++			bt[n++] = devm_kasprintf(dev, GFP_KERNEL, "%s-%s", board,
++						 sku);
++		for (i = 0; i < n; i++) {
++			if (!bt[i]) {
++				kfree(fwreq);
++				return NULL;
++			}
+ 		}
++		bt[n] = board;
+ 	} else {
+ 		brcmf_dbg(PCIE, "Board: %s\n", devinfo->settings->board_type);
+ 		fwreq->board_types[0] = devinfo->settings->board_type;

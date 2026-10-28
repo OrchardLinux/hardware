@@ -1,0 +1,93 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Orchard migration <noreply@orchardlinux>
+Date: Wed, 28 Oct 2026 09:33:25 +0800
+Subject: [PATCH 3/6] soc: apple: sio: Only take RX interrupts while the
+ coprocessor runs
+
+The RX interrupt was requested enabled before the firmware was loaded and
+stayed requested while probe failure and remove tore down the state its
+handler uses. An interrupt pending from an earlier boot stage, or one
+raised during teardown, could start shared-region setup or touch freed
+allocators.
+
+Request the interrupt disabled, enable it just before starting the
+coprocessor, disable it when stopping, and free it before the firmware
+buffer and allocators are released on the error and remove paths.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/soc/apple/apple-sio-core.c | 21 ++++++++++++++++++++-
+ 1 file changed, 20 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/soc/apple/apple-sio-core.c b/drivers/soc/apple/apple-sio-core.c
+index c40e9bfeb..baf6b441a 100644
+--- a/drivers/soc/apple/apple-sio-core.c
++++ b/drivers/soc/apple/apple-sio-core.c
+@@ -101,6 +101,9 @@ struct apple_sio_async {
+ 
+ struct apple_sio {
+ 	struct device *dev;
++	int irq;
++	bool irq_requested;
++	bool irq_enabled;
+ 	void __iomem *base;
+ 	void *firmware_buffer;
+ 	dma_addr_t firmware_dma;
+@@ -656,6 +659,11 @@ static void apple_sio_stop(struct apple_sio *sio)
+ 	WRITE_ONCE(sio->running, false);
+ 	WRITE_ONCE(sio->stopping, true);
+ 
++	/* Quiesce the handler before stopping the CPU and freeing its state. */
++	if (sio->irq_enabled) {
++		disable_irq(sio->irq);
++		sio->irq_enabled = false;
++	}
+ 	mutex_lock(&sio->tx_lock);
+ 	spin_lock_irq(&sio->tx_hw_lock);
+ 	control = readl(sio->base + APPLE_SIO_CPU_CONTROL);
+@@ -732,6 +740,9 @@ static int apple_sio_start(struct apple_sio *sio, const char *firmware_name)
+ 	writel(upper_32_bits(counter), sio->base + APPLE_SIO_TIME_HI);
+ 	writel(control | BIT(1), sio->base + APPLE_SIO_TIME_CONTROL);
+ 
++	/* Requested disabled: a stale interrupt must not start region setup. */
++	sio->irq_enabled = true;
++	enable_irq(sio->irq);
+ 	control = readl(sio->base + APPLE_SIO_CPU_CONTROL);
+ 	writel(control | APPLE_SIO_CPU_RUN,
+ 	       sio->base + APPLE_SIO_CPU_CONTROL);
+@@ -841,12 +852,14 @@ static int apple_sio_probe(struct platform_device *pdev)
+ 		goto out_pm_put;
+ 	}
+ 
+-	ret = devm_request_irq(dev, irq, apple_sio_irq, 0,
++	sio->irq = irq;
++	ret = devm_request_irq(dev, irq, apple_sio_irq, IRQF_NO_AUTOEN,
+ 			       dev_name(dev), sio);
+ 	if (ret) {
+ 		ret = dev_err_probe(dev, ret, "failed to request RX interrupt\n");
+ 		goto out_pm_put;
+ 	}
++	sio->irq_requested = true;
+ 
+ 	ret = dma_set_mask_and_coherent(dev, DMA_BIT_MASK(64));
+ 	if (ret) {
+@@ -912,6 +925,10 @@ out_stop:
+ 	sio->firmware_buffer = NULL;
+ 
+ out_pm_put:
++	if (sio->irq_requested) {
++		devm_free_irq(dev, sio->irq, sio);
++		sio->irq_requested = false;
++	}
+ 	pm_runtime_put_sync(dev);
+ out_destroy_allocators:
+ 	xa_destroy(&sio->pending);
+@@ -925,6 +942,8 @@ static void apple_sio_remove(struct platform_device *pdev)
+ 
+ 	platform_device_unregister(sio->dma_pdev);
+ 	apple_sio_stop(sio);
++	devm_free_irq(sio->dev, sio->irq, sio);
++	sio->irq_requested = false;
+ 	dma_free_coherent(sio->dev, sio->firmware_size,
+ 			  sio->firmware_buffer, sio->firmware_dma);
+ 	pm_runtime_put_sync(sio->dev);
