@@ -15,18 +15,38 @@ absorb other projects' work, share drivers between devices, and upstream cleanly
 - Measured: torvalds `v7.3-rc1` → Hoolock `6831bc70` is 104 files, +6639/−178,
   almost entirely additive Apple drivers, bindings and DTs.
 
-## Target layout
+## Target layout: one stack, many contributors
+
+Orchard integrates every Linux-on-iOS-device effort (all checkm8 devices and
+beyond) as contributors to one shared stack:
+
+- Hoolock (Nick Chan): the staging-upstream layer;
+- Pauli1Go (Paul Praschl): iPad 7, iPhone 7/7 Plus;
+- henrikklee: iPad 6;
+- brkosebay (Berkay Kösebay): iPad 5;
+- and further repos as they are found.
+
+Series are organized by layer and subsystem, not by contributor, because
+contributions interleave (fixes land in other people's drivers). Authorship
+stays in each patch (`From:`, `Co-developed-by:`), as in mainline.
 
 ```
-kernel/upstream.lock        torvalds tag (shallow; v7.3-rc1 now)
+kernel/upstream.lock          torvalds tag (shallow)
+kernel/sources.toml           every absorbed repo: url, pinned commit, contributor,
+                              devices, license, status (found/reviewed/integrated/upstreamed)
 kernel/patches/
-  hoolock/                  Nick Chan's series, pinned to 6831bc70; drop as it lands upstream
-  pauli1go/                 Paul Praschl's A10 series (J172, D10/D11/D111), authorship kept
-  orchard/                  our changes, one series per subsystem
-  <device>/                 device DT and quirks only (j71b, later j71t, j172, …)
+  hoolock/<bits>/             staging-upstream layer, hash-verified against Hoolock
+  shared/<subsystem>/         A9/A10 drivers, any author (nvme-ans, pcie-h9p, sio,
+                              touch, hdq-battery, charging, …)
+  <device>/                   board DT and quirks only (j71b, j172, d10-d11, j71t, …)
+CONTRIBUTORS.md               generated from sources.toml and patch authors
 ```
 
-The build applies the shared series, then the device's own, in order.
+The build applies hoolock, then shared, then the device's own series.
+
+Importing a new repo: add it to `sources.toml`, fetch its commits shallowly
+into the shared cache, replay them onto the stack, then run the semantic review
+(step 3) to decide shared vs device-specific vs drop.
 
 ## Steps (each verified before the next)
 
