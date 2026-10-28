@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "orchard-hardware"
-version = "0.1.10"
+version = "0.1.11"
 description = "Hardware support, public recipes, runtime and image construction"
 readme = "README.md"
 license = "GPL-2.0-only AND GPL-2.0-or-later AND MIT AND ISC"
