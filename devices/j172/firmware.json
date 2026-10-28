@@ -1,0 +1,144 @@
+{
+  "schema": 2,
+  "device": "iPad7,12",
+  "ipsw": {
+    "version": "18.7.11",
+    "build": "22H384",
+    "url": "https://updates.cdn-apple.com/2026WinterFCS/cae87706-e21d-4989-a880-3210b045ef28/iPad_10.2_18.7.11_22H384_Restore.ipsw",
+    "bytes": 7891326747,
+    "sha256": "579973d0a5bbbe6b8c47ffaa8ccf05b30ace59f984d885c0675074d1f877b571"
+  },
+  "inputs": {
+    "rudderb.trx": {
+      "ipsw": {
+        "rootfs": "System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C1/rudderb.trx"
+      },
+      "device": "/System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C1/rudderb.trx",
+      "sha256": "29276526471d794c59646b0ba89c31c2e5c48b88435412f22e3cfee32c8d441d"
+    },
+    "rudderb.clmb": {
+      "ipsw": {
+        "rootfs": "System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C1/rudderb.clmb"
+      },
+      "device": "/System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C1/rudderb.clmb",
+      "sha256": "bfe78741f0cb1e80aea37cd99727af2adef8e9357bfe02fa4d7a278f6a088d87"
+    },
+    "rudderb.txcb": {
+      "ipsw": {
+        "rootfs": "System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C1/rudderb.txcb"
+      },
+      "device": "/System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C1/rudderb.txcb",
+      "sha256": "3fc2d256403ed4b429e160dc83990092402098a82003a0bc241282ce3cd7fcee"
+    },
+    "P-rudderb_M-YSBU_V-u__m-4.3.txt": {
+      "ipsw": {
+        "rootfs": "System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C1/P-rudderb_M-YSBU_V-u__m-4.3.txt"
+      },
+      "device": "/System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C1/P-rudderb_M-YSBU_V-u__m-4.3.txt",
+      "sha256": "26fa336993183f93f342a2294326b9be51cc57f95f65a70dc48a44daefa66a67"
+    },
+    "P-rudderb_M-YSBU_V-m__m-2.5.txt": {
+      "ipsw": {
+        "rootfs": "System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C1/P-rudderb_M-YSBU_V-m__m-2.5.txt"
+      },
+      "device": "/System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C1/P-rudderb_M-YSBU_V-m__m-2.5.txt",
+      "sha256": "23d0be41c025c935db90b95143c62ef2203e5e7543c20a1bfadefd56fd5b68a1"
+    },
+    "kernelcache": {
+      "ipsw": {
+        "kernelcache": true
+      },
+      "device": {
+        "kernelcache": "active"
+      }
+    },
+    "BlueTool": {
+      "ipsw": {
+        "rootfs": "usr/sbin/BlueTool"
+      },
+      "device": "/usr/sbin/BlueTool"
+    }
+  },
+  "outputs": [
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355c1-pcie.apple,rudderb.bin",
+      "sha256": "29276526471d794c59646b0ba89c31c2e5c48b88435412f22e3cfee32c8d441d",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "rudderb.trx"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355c1-pcie.apple,rudderb.clm_blob",
+      "sha256": "bfe78741f0cb1e80aea37cd99727af2adef8e9357bfe02fa4d7a278f6a088d87",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "rudderb.clmb"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355c1-pcie.apple,rudderb.txcap_blob",
+      "sha256": "3fc2d256403ed4b429e160dc83990092402098a82003a0bc241282ce3cd7fcee",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "rudderb.txcb"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355c1-pcie.apple,rudderb-YSBU-u-4.3.txt",
+      "sha256": "26fa336993183f93f342a2294326b9be51cc57f95f65a70dc48a44daefa66a67",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-rudderb_M-YSBU_V-u__m-4.3.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355c1-pcie.apple,rudderb-YSBU-m-2.5.txt",
+      "sha256": "23d0be41c025c935db90b95143c62ef2203e5e7543c20a1bfadefd56fd5b68a1",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-rudderb_M-YSBU_V-m__m-2.5.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/apple/t8010-smartio.bin",
+      "sha256": "71d274a106f5912ed33552ba75ae76cc5081fc7063935ec938f9cb503df38199",
+      "steps": [
+        {
+          "step": "smartio-from-kernelcache@1",
+          "input": "kernelcache"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/BCM.apple,j172-MUR.hcd",
+      "sha256": "27b778a87f086d8c23f0ad06c77e4b62de9af83182f100ddf4a6e59b1d4249b7",
+      "steps": [
+        {
+          "step": "bluetool-hcd@1",
+          "input": "BlueTool"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/BCM.apple,j172-USI.hcd",
+      "sha256": "645b98f945a21bb3353a4dfdb30decb937aaefd519547459b9bcc3c28d640824",
+      "steps": [
+        {
+          "step": "bluetool-hcd@1",
+          "input": "BlueTool"
+        }
+      ]
+    }
+  ]
+}

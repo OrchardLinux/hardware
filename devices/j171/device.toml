@@ -1,0 +1,37 @@
+# iPad 7 (Wi-Fi) — J171: hardware identity, boot assets and firmware recipe.
+schema = 1
+kind = "hardware.device"
+
+[device]
+profile = "j171"
+name = "iPad 7 (Wi-Fi)"
+apple_products = ["iPad7,11"]
+dt_compatible = ["apple,j171"]
+
+# BDID: ApBoardID/ApChipID of the j171ap identities in the 22H384 (iPadOS 18.7.11) BuildManifest.plist;
+# cross-checked with api.ipsw.me/v4/device/iPad7,11 ("bdid").
+[match.dfu]
+chip = 0x8010
+board = 0x1c
+
+# USB product of the Orchard recovery system ("<Board> Recovery").
+[match.linux]
+product = "J171 Recovery"
+
+[boot]
+methods = ["checkm8-pongo"]
+# Not published yet: no j171 launcher release exists. Mirrors the j71b URL pattern.
+launch_manifest = "https://github.com/OrchardLinux/hardware/releases/latest/download/j171-launcher.boot.toml"
+
+[kernel]
+platform = "apple"     # kernel/series/apple, kernel/configs/apple
+dtb = "t8010-j171"     # arch/arm64/boot/dts/apple/<dtb>.dtb
+
+[firmware]
+recipe = "firmware.json" # Relative to this device.toml; public recipe, not firmware bytes.
+
+[support]
+install = false # No qualified install path on this board yet.
+wifi = false # DT board-type is apple,rudderb but Apple's J171 ADT says module-instance "ruddera"; unvalidated.
+usb_serial = false # No Orchard launcher/gadget validated on this board yet.
+usb_network = false
