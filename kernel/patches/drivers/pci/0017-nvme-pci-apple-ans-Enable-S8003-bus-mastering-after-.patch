@@ -1,0 +1,101 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Thu, 29 Oct 2026 04:39:45 +0800
+Subject: [PATCH] nvme-pci: apple-ans: Enable S8003 bus mastering after the
+ preinit
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+nvme_pci_enable() lets the controller master the bus before the ANS
+glue's preinit has stopped it (CC.EN = 0) and reset its NVMMU slots.
+The validated A9 bring-up enables bus mastering only after that, so the
+controller can't issue DMA through mappings left from before Linux.
+
+Let the glue ask for bus mastering after the preinit, and do so on
+S8003. Other controllers, T8010 included, are unchanged.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: restores the bus mastering order of brkosebay/linux 9c088fd8
+ (nvme_pci_enable) for S8003 as host data, independent of boot modes]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/nvme/host/pci-apple-ans.c | 5 +++++
+ drivers/nvme/host/pci-internal.h  | 2 ++
+ drivers/nvme/host/pci.c           | 6 +++++-
+ 3 files changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/nvme/host/pci-apple-ans.c b/drivers/nvme/host/pci-apple-ans.c
+index eb613ed35..5ba239e47 100644
+--- a/drivers/nvme/host/pci-apple-ans.c
++++ b/drivers/nvme/host/pci-apple-ans.c
+@@ -53,11 +53,14 @@ struct apple_ans_nvme_req {
+  * @enable_settle_ms: time between setting CC.EN and the first CSTS read
+  * @rdy_timeout_ms: give up on a CSTS.RDY transition after this long, rather
+  *                  than after CAP.TO (0: CAP.TO only)
++ * @late_bus_master: let the controller master the bus only after the
++ *                   preinit has stopped it and reset the NVMMU slots
+  */
+ struct apple_ans_host {
+ 	u32 l1ss_ctl1;
+ 	unsigned int enable_settle_ms;
+ 	unsigned int rdy_timeout_ms;
++	bool late_bus_master;
+ };
+ 
+ static const struct apple_ans_host apple_ans_host_s8003 = {
+@@ -68,6 +71,7 @@ static const struct apple_ans_host apple_ans_host_s8003 = {
+ 	 */
+ 	.enable_settle_ms = 100,
+ 	.rdy_timeout_ms = 5000,
++	.late_bus_master = true,
+ };
+ 
+ static const struct apple_ans_host apple_ans_host_t8010 = {
+@@ -143,6 +147,7 @@ static int nvme_pci_apple_ans_init(struct nvme_dev *dev, int node)
+ 		return -ENOMEM;
+ 
+ 	ans->host = match->data;
++	dev->late_bus_master = ans->host->late_bus_master;
+ 	spin_lock_init(&ans->req_lock);
+ 	dev->dma_data = ans;
+ 	return 0;
+diff --git a/drivers/nvme/host/pci-internal.h b/drivers/nvme/host/pci-internal.h
+index 0567a75e2..a62777abd 100644
+--- a/drivers/nvme/host/pci-internal.h
++++ b/drivers/nvme/host/pci-internal.h
+@@ -78,6 +78,8 @@ struct nvme_dev {
+ 	mempool_t *dmavec_mempool;
+ 	const struct nvme_pci_dma_ops *dma_ops;
+ 	void *dma_data;
++	/* Enable bus mastering only once the glue's preinit has run */
++	bool late_bus_master;
+ 
+ 	/* shadow doorbell buffer support: */
+ 	__le32 *dbbuf_dbs;
+diff --git a/drivers/nvme/host/pci.c b/drivers/nvme/host/pci.c
+index 38b1c39ea..9ffe2fb74 100644
+--- a/drivers/nvme/host/pci.c
++++ b/drivers/nvme/host/pci.c
+@@ -3176,7 +3176,8 @@ static int nvme_pci_enable(struct nvme_dev *dev)
+ 	if (pci_enable_device_mem(pdev))
+ 		return result;
+ 
+-	pci_set_master(pdev);
++	if (!dev->late_bus_master)
++		pci_set_master(pdev);
+ 
+ 	if (readl(dev->bar + NVME_REG_CSTS) == -1) {
+ 		dev_dbg(dev->ctrl.device, "reading CSTS register failed\n");
+@@ -3242,6 +3243,9 @@ static int nvme_pci_enable(struct nvme_dev *dev)
+ 			goto free_irq;
+ 	}
+ 
++	if (dev->late_bus_master)
++		pci_set_master(pdev);
++
+ 	nvme_map_cmb(dev);
+ 
+ 	pci_save_state(pdev);

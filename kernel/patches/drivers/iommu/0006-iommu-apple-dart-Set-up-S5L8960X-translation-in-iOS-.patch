@@ -1,0 +1,295 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 21:30:53 +0800
+Subject: [PATCH] iommu: apple-dart: Set up S5L8960X translation in iOS's order
+ and fail closed
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+apple_dart_setup_translation() wrote the TTBRs, enabled translation and
+invalidated, and discarded the result of the invalidation; so did
+iotlb_sync_map(). A stuck busy bit printed one error and DMA went on
+through whatever the DART had cached.
+
+iOS's AppleS5L8960XDART hardware init (0xfffffff005fb5b58 in the
+iPad6,11 iOS 16.7.10 kernelcache) runs the reflector, the stream tables,
+the TCR, read back and checked, then the fetch and diag configuration,
+and panics on any DART fault. The S5L8960X DART only invalidates with
+translation enabled, and a DART inside a PCIe port comes back reset when
+its port powers up, so nothing it held can be assumed.
+
+Set up S5L8960X translation in that order and check what can be read
+back: the owned streams' TCR bytes after disabling and after enabling
+(only those bytes: stream 0 expects 0x80, not 0x80808080), the
+invalidation, then the TTBRs. A failure, or a later failed invalidation,
+disables the domain's streams and makes the domain refuse new mappings.
+iotlb_sync_map() now returns the invalidation result for every DART
+type, so a mapping that can't be made visible isn't reported as made.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux 9c088fd8 and omarchy-ipad5
+ docs/boot/ds-nvme-a-dart-fault.md §2.7, §7 (J71t ledger 1.7); without
+ the attach/reinit logging; blocking limited to S5L8960X DARTs, the
+ error propagation applies to all]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/iommu/apple-dart.c | 163 +++++++++++++++++++++++++++++++++----
+ 1 file changed, 147 insertions(+), 16 deletions(-)
+
+diff --git a/drivers/iommu/apple-dart.c b/drivers/iommu/apple-dart.c
+index 6d764cc29..9a476dbab 100644
+--- a/drivers/iommu/apple-dart.c
++++ b/drivers/iommu/apple-dart.c
+@@ -312,6 +312,9 @@ struct apple_dart_atomic_stream_map {
+  *
+  * @pgtbl_ops: pagetable ops allocated by io-pgtable
+  * @finalized: true if the domain has been completely initialized
++ * @flush_error: S5L8960X: first failed TLB invalidation or translation setup;
++ *               the domain's streams stay blocked and no new mappings are
++ *               accepted once it is set
+  * @init_lock: protects domain initialization
+  * @stream_maps: streams attached to this domain (valid for DMA/UNMANAGED only)
+  * @domain: core iommu domain pointer
+@@ -320,6 +323,7 @@ struct apple_dart_domain {
+ 	struct io_pgtable_ops *pgtbl_ops;
+ 
+ 	bool finalized;
++	int flush_error;
+ 	u64 mask;
+ 	struct mutex init_lock;
+ 	struct apple_dart_atomic_stream_map stream_maps[MAX_DARTS_PER_DEVICE];
+@@ -438,6 +442,12 @@ apple_dart_hw_enable_bypass(struct apple_dart_stream_map *stream_map)
+ 		       dart->regs + DART_TCR(dart, sid));
+ }
+ 
++static u32 apple_dart_ttbr_value(struct apple_dart *dart, phys_addr_t paddr)
++{
++	return dart->hw->ttbr_valid |
++	       (paddr >> dart->hw->ttbr_shift) << dart->hw->ttbr_addr_field_shift;
++}
++
+ static void apple_dart_hw_set_ttbr(struct apple_dart_stream_map *stream_map,
+ 				   u8 idx, phys_addr_t paddr)
+ {
+@@ -446,8 +456,7 @@ static void apple_dart_hw_set_ttbr(struct apple_dart_stream_map *stream_map,
+ 
+ 	WARN_ON(paddr & ((1 << dart->hw->ttbr_shift) - 1));
+ 	for_each_set_bit(sid, stream_map->sidmap, dart->num_streams)
+-		writel(dart->hw->ttbr_valid |
+-		       (paddr >> dart->hw->ttbr_shift) << dart->hw->ttbr_addr_field_shift,
++		writel(apple_dart_ttbr_value(dart, paddr),
+ 		       dart->regs + DART_TTBR(dart, sid, idx));
+ }
+ 
+@@ -763,9 +772,31 @@ out_put_device:
+ }
+ EXPORT_SYMBOL_GPL(apple_dart_reload_configuration);
+ 
+-static void apple_dart_domain_flush_tlb(struct apple_dart_domain *domain)
++/*
++ * A DART that didn't confirm an invalidation may still translate through stale
++ * entries. An S5L8960X DART can lose its state together with the PCIe port it
++ * sits in, so fail closed there: block the domain's streams and refuse new
++ * mappings from then on.
++ */
++static void apple_dart_domain_block(struct apple_dart_domain *domain,
++				    struct apple_dart_stream_map *stream_map,
++				    int error)
+ {
+-	int i, j;
++	if (stream_map->dart->hw->type != DART_S5L8960X)
++		return;
++
++	apple_dart_hw_disable_dma(stream_map);
++	if (!READ_ONCE(domain->flush_error)) {
++		WRITE_ONCE(domain->flush_error, error);
++		dev_err(stream_map->dart->dev,
++			"blocking DMA for streams %lx: %d\n",
++			stream_map->sidmap[0], error);
++	}
++}
++
++static int apple_dart_domain_flush_tlb(struct apple_dart_domain *domain)
++{
++	int i, j, ret, err = 0;
+ 	struct apple_dart_atomic_stream_map *domain_stream_map;
+ 	struct apple_dart_stream_map stream_map;
+ 
+@@ -775,8 +806,14 @@ static void apple_dart_domain_flush_tlb(struct apple_dart_domain *domain)
+ 		for (j = 0; j < BITS_TO_LONGS(stream_map.dart->num_streams); j++)
+ 			stream_map.sidmap[j] = atomic_long_read(&domain_stream_map->sidmap[j]);
+ 
+-		stream_map.dart->hw->invalidate_tlb(&stream_map);
++		ret = stream_map.dart->hw->invalidate_tlb(&stream_map);
++		if (ret) {
++			apple_dart_domain_block(domain, &stream_map, ret);
++			err = ret;
++		}
+ 	}
++
++	return err ?: READ_ONCE(domain->flush_error);
+ }
+ 
+ static void apple_dart_flush_iotlb_all(struct iommu_domain *domain)
+@@ -793,8 +830,7 @@ static void apple_dart_iotlb_sync(struct iommu_domain *domain,
+ static int apple_dart_iotlb_sync_map(struct iommu_domain *domain,
+ 				     unsigned long iova, size_t size)
+ {
+-	apple_dart_domain_flush_tlb(to_dart_domain(domain));
+-	return 0;
++	return apple_dart_domain_flush_tlb(to_dart_domain(domain));
+ }
+ 
+ static phys_addr_t apple_dart_iova_to_phys(struct iommu_domain *domain,
+@@ -819,6 +855,8 @@ static int apple_dart_map_pages(struct iommu_domain *domain, unsigned long iova,
+ 
+ 	if (!ops)
+ 		return -ENODEV;
++	if (READ_ONCE(dart_domain->flush_error))
++		return READ_ONCE(dart_domain->flush_error);
+ 
+ 	return ops->map_pages(ops, iova & dart_domain->mask, paddr, pgsize,
+ 			      pgcount, prot, gfp, mapped);
+@@ -836,7 +874,99 @@ static size_t apple_dart_unmap_pages(struct iommu_domain *domain,
+ 				gather);
+ }
+ 
+-static void
++static bool apple_dart_streams_tcr_is(struct apple_dart_stream_map *stream_map,
++				      u32 tcr)
++{
++	struct apple_dart *dart = stream_map->dart;
++	int sid;
++
++	/* Only the streams of this map: other bytes belong to other masters */
++	for_each_set_bit(sid, stream_map->sidmap, dart->num_streams)
++		if (dart->hw->read_tcr(dart, sid) != tcr)
++			return false;
++
++	return true;
++}
++
++static bool apple_dart_streams_ttbrs_are(struct apple_dart_stream_map *stream_map,
++					 struct io_pgtable_cfg *pgtbl_cfg)
++{
++	struct apple_dart *dart = stream_map->dart;
++	unsigned int n_ttbrs = pgtbl_cfg->apple_dart_cfg.n_ttbrs;
++	int sid, i;
++	u32 expected;
++
++	for_each_set_bit(sid, stream_map->sidmap, dart->num_streams) {
++		for (i = 0; i < dart->hw->ttbr_count; i++) {
++			expected = 0;
++			if (i < n_ttbrs)
++				expected = apple_dart_ttbr_value(dart,
++						pgtbl_cfg->apple_dart_cfg.ttbr[i]);
++			if (readl(dart->regs + DART_TTBR(dart, sid, i)) != expected)
++				return false;
++		}
++	}
++
++	return true;
++}
++
++/*
++ * The S5L8960X sequence of iOS's AppleS5L8960XDART hardware init
++ * (0xfffffff005fb5b58): streams off, error reflector, stream tables, TCR
++ * (read back), fetch and diag configuration, then the invalidation, which
++ * this DART only accepts with translation enabled. Every step that can be
++ * read back is checked, and a failure leaves the streams blocked.
++ */
++static int
++apple_dart_s5l8960x_setup_translation(struct apple_dart_domain *domain,
++				      struct apple_dart_stream_map *stream_map,
++				      struct io_pgtable_cfg *pgtbl_cfg)
++{
++	struct apple_dart *dart = stream_map->dart;
++	int i, ret;
++
++	apple_dart_hw_disable_dma(stream_map);
++	if (!apple_dart_streams_tcr_is(stream_map, dart->hw->tcr_disabled)) {
++		ret = -EIO;
++		goto fail;
++	}
++
++	apple_dart_s5l8960x_set_reflector(dart);
++
++	for (i = 0; i < pgtbl_cfg->apple_dart_cfg.n_ttbrs; ++i)
++		apple_dart_hw_set_ttbr(stream_map, i,
++				       pgtbl_cfg->apple_dart_cfg.ttbr[i]);
++	for (; i < dart->hw->ttbr_count; ++i)
++		apple_dart_hw_clear_ttbr(stream_map, i);
++
++	apple_dart_hw_enable_translation(stream_map,
++					 pgtbl_cfg->apple_dart_cfg.n_levels);
++	if (!apple_dart_streams_tcr_is(stream_map, dart->hw->tcr_enabled)) {
++		ret = -EIO;
++		goto fail;
++	}
++
++	apple_dart_s5l8960x_set_configs(dart);
++
++	ret = dart->hw->invalidate_tlb(stream_map);
++	if (ret)
++		goto fail;
++
++	if (!apple_dart_streams_ttbrs_are(stream_map, pgtbl_cfg)) {
++		ret = -EIO;
++		goto fail;
++	}
++
++	return 0;
++
++fail:
++	dev_err(dart->dev, "translation setup for streams %lx failed: %d\n",
++		stream_map->sidmap[0], ret);
++	apple_dart_domain_block(domain, stream_map, ret);
++	return ret;
++}
++
++static int
+ apple_dart_setup_translation(struct apple_dart_domain *domain,
+ 			     struct apple_dart_stream_map *stream_map)
+ {
+@@ -844,10 +974,10 @@ apple_dart_setup_translation(struct apple_dart_domain *domain,
+ 	struct io_pgtable_cfg *pgtbl_cfg =
+ 		&io_pgtable_ops_to_pgtable(domain->pgtbl_ops)->cfg;
+ 	struct apple_dart *dart = stream_map->dart;
+-	bool s5l8960x = dart->hw->type == DART_S5L8960X;
+ 
+-	if (s5l8960x)
+-		apple_dart_s5l8960x_set_reflector(dart);
++	if (dart->hw->type == DART_S5L8960X)
++		return apple_dart_s5l8960x_setup_translation(domain, stream_map,
++							     pgtbl_cfg);
+ 
+ 	for (i = 0; i < pgtbl_cfg->apple_dart_cfg.n_ttbrs; ++i)
+ 		apple_dart_hw_set_ttbr(stream_map, i,
+@@ -857,9 +987,7 @@ apple_dart_setup_translation(struct apple_dart_domain *domain,
+ 
+ 	apple_dart_hw_enable_translation(stream_map,
+ 					 pgtbl_cfg->apple_dart_cfg.n_levels);
+-	if (s5l8960x)
+-		apple_dart_s5l8960x_set_configs(dart);
+-	dart->hw->invalidate_tlb(stream_map);
++	return dart->hw->invalidate_tlb(stream_map);
+ }
+ 
+ static int apple_dart_finalize_domain(struct apple_dart_domain *dart_domain,
+@@ -987,8 +1115,11 @@ static int apple_dart_attach_dev_paging(struct iommu_domain *domain,
+ 	if (ret)
+ 		return ret;
+ 
+-	for_each_stream_map(i, cfg, stream_map)
+-		apple_dart_setup_translation(dart_domain, stream_map);
++	for_each_stream_map(i, cfg, stream_map) {
++		ret = apple_dart_setup_translation(dart_domain, stream_map);
++		if (ret)
++			return ret;
++	}
+ 	return 0;
+ }
+ 

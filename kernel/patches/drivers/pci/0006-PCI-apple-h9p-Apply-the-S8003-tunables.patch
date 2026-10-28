@@ -1,0 +1,188 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 21:38:43 +0800
+Subject: [PATCH] PCI: apple-h9p: Apply the S8003 tunables
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+iOS applies four tunable lists to the S8003 root complex, which iBoot
+puts into the live Apple device tree (they are missing from the IPSW's
+device tree): apcie-phy-tunables and apcie-common-tunables after the
+common init, and per bridge pcie-rc-tunables (root port configuration
+space) and apcie-config-tunables (port block) after the root port's
+LNKCTL2 write. Each record is applied as (reg & ~mask) | value.
+
+The j71t live ADT (iOS 16.7.10 iBoot) carries 4 PHY, 34 common and,
+for both bridges alike, 2 root port and 6 port block records. The two
+bridges' values being identical suggests they are SoC constants, so
+keep them as static S8003 tables in the match data, like the T8010
+tables, rather than as device tree properties. Apply them where and in
+the order iOS does, with the existing masked-write helper, which skips
+registers that already hold the value.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux 66148506, cf4b8100, 4f70c407 (J71t
+ ledger 2.4); values from his s8003.dtsi apple,tunable-* properties,
+ moved into match data; whether they match other J71t/J71s/J72t units
+ is still open]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/pci/controller/pcie-apple-h9p.c | 100 ++++++++++++++++++++++++
+ 1 file changed, 100 insertions(+)
+
+diff --git a/drivers/pci/controller/pcie-apple-h9p.c b/drivers/pci/controller/pcie-apple-h9p.c
+index f4fcb5aa7..c5aa9b3ac 100644
+--- a/drivers/pci/controller/pcie-apple-h9p.c
++++ b/drivers/pci/controller/pcie-apple-h9p.c
+@@ -288,6 +288,79 @@ static const struct apple_h9p_tunable h9p_port_tunables[] = {
+ 	{ 0x0140, 0x0073ffff, 0x00704c4b },
+ };
+ 
++/*
++ * S8003 tunables, which iBoot puts in the live ADT; copied from the j71t
++ * live ADT (iOS 16.7.10 iBoot), where both bridges carry the same values.
++ * apcie-phy-tunables and apcie-common-tunables apply after the common init,
++ * in that order.
++ */
++static const struct apple_h9p_tunable s8003_phy_tunables[] = {
++	{ 0x0098, 0x0000000f, 0x00000000 },
++	{ 0x0154, 0x00f8ff00, 0x00000000 },
++	{ 0x0000, 0x0000318c, 0x00002108 },
++	{ 0x0004, 0x0000318c, 0x00002108 },
++};
++
++static const struct apple_h9p_tunable s8003_rc_common_tunables[] = {
++	{ 0x0008, 0x7f7f7f7f, 0x00000000 },
++	{ 0x000c, 0x00073f3f, 0x00043f00 },
++	{ 0x0010, 0x00000700, 0x00000000 },
++	{ 0x0018, 0x00ffffff, 0x000c0960 },
++	{ 0x001c, 0x00001fff, 0x0000092c },
++	{ 0x0028, 0xffffffff, 0x02001000 },
++	{ 0x0030, 0x000000ff, 0x00000009 },
++	{ 0x0100, 0x31100010, 0x01000010 },
++	{ 0x0104, 0x00000011, 0x00000001 },
++	{ 0x0108, 0x00000007, 0x00000000 },
++	{ 0x010c, 0x00073f3f, 0x00043f00 },
++	{ 0x0110, 0x0333003f, 0x0111000f },
++	{ 0x0120, 0x000000ff, 0x00000040 },
++	{ 0x0128, 0x0000007f, 0x0000003e },
++	{ 0x0130, 0x00000707, 0x00000000 },
++	{ 0x0134, 0x00073f3f, 0x00043f00 },
++	{ 0x0180, 0x31100010, 0x01000000 },
++	{ 0x0190, 0x0333003f, 0x0111000f },
++	{ 0x01a0, 0x000000ff, 0x00000040 },
++	{ 0x01a8, 0x0000007f, 0x0000003e },
++	{ 0x01b0, 0x00000707, 0x00000000 },
++	{ 0x01b4, 0x00073f3f, 0x00043f00 },
++	{ 0x0200, 0x31100010, 0x01000000 },
++	{ 0x0210, 0x0333003f, 0x0111000f },
++	{ 0x0220, 0x000000ff, 0x00000040 },
++	{ 0x0228, 0x0000007f, 0x0000003e },
++	{ 0x0230, 0x00000707, 0x00000000 },
++	{ 0x0234, 0x00073f3f, 0x00043f00 },
++	{ 0x0280, 0x31100010, 0x01000000 },
++	{ 0x0290, 0x0333003f, 0x0111000f },
++	{ 0x02a0, 0x000000ff, 0x00000040 },
++	{ 0x02a8, 0x0000007f, 0x0000003e },
++	{ 0x02b0, 0x00000707, 0x00000000 },
++	{ 0x02b4, 0x00073f3f, 0x00043f00 },
++};
++
++/* Per root port, pcie-rc-tunables (root port configuration space) */
++static const struct apple_h9p_tunable s8003_config_tunables[] = {
++	{ 0x0098, 0x0000000f, 0x00000000 },
++	{ 0x0154, 0x00f8ff00, 0x00000000 },
++};
++
++/* Per root port, apcie-config-tunables (port block) */
++static const struct apple_h9p_tunable s8003_port_tunables[] = {
++	{ 0x0090, 0x000000ff, 0x00000028 },
++	{ 0x0130, 0x00000005, 0x00000005 },
++	{ 0x0134, 0x00000001, 0x00000001 },
++	{ 0x0138, 0x00007f7f, 0x00000000 },
++	{ 0x013c, 0x00000003, 0x00000002 },
++	{ 0x0140, 0x0073ffff, 0x00704c4b },
++};
++
++struct apple_h9p_tunables {
++	const struct apple_h9p_tunable *regs;
++	unsigned int count;
++};
++
++#define H9P_TUNABLES(table)	{ .regs = (table), .count = ARRAY_SIZE(table) }
++
+ struct apple_h9p_nvmmu {
+ 	struct apple_h9p_pcie *pcie;
+ 	void __iomem *base;
+@@ -330,6 +403,10 @@ enum apple_h9p_port_result {
+  *                   complex is switched into NVMe mode before they power up
+  * @link_settle_ms: delay between link training and the first configuration
+  *                  request below the root ports
++ * @phy_tunables: "phy" block tunables (S8003 only, T8010 has none)
++ * @common_tunables: root complex tunables (S8003 only; see T8010's code)
++ * @config_tunables: root port configuration space tunables (S8003 only)
++ * @port_tunables: port block tunables (S8003 only)
+  * @has_clocks: the controller takes "aux" and "ref" clocks
+  * @port_irq_after_link: enable a port's interrupt only once its link is up
+  * @port3_link_event_ack: acknowledge port 3 link events in the root complex
+@@ -342,6 +419,10 @@ struct apple_h9p_hw {
+ 			  enum apple_h9p_port_result *result);
+ 	u32 nvme_mode_ports;
+ 	unsigned int link_settle_ms;
++	struct apple_h9p_tunables phy_tunables;
++	struct apple_h9p_tunables common_tunables;
++	struct apple_h9p_tunables config_tunables;
++	struct apple_h9p_tunables port_tunables;
+ 	bool has_clocks;
+ 	bool port_irq_after_link;
+ 	bool port3_link_event_ack;
+@@ -442,6 +523,12 @@ static void apple_h9p_apply_tunables(void __iomem *base,
+ 	}
+ }
+ 
++static void apple_h9p_apply_tunable_set(void __iomem *base,
++					const struct apple_h9p_tunables *set)
++{
++	apple_h9p_apply_tunables(base, set->regs, set->count);
++}
++
+ static void apple_h9p_save_bridge_header(void __iomem *config, u32 *header)
+ {
+ 	unsigned int i;
+@@ -1837,6 +1924,11 @@ static int apple_s8003_setup_common(struct apple_h9p_pcie *pcie)
+ 		return dev_err_probe(pcie->dev, ret, "common init timeout\n");
+ 
+ 	writel(1, pcie->base_rc + S8003_RC_COMMON_DONE);
++
++	/* iOS: apcie-phy-tunables, then apcie-common-tunables */
++	apple_h9p_apply_tunable_set(pcie->base_phy, &pcie->hw->phy_tunables);
++	apple_h9p_apply_tunable_set(pcie->base_rc,
++				    &pcie->hw->common_tunables);
+ 	return 0;
+ }
+ 
+@@ -2076,6 +2168,10 @@ static int apple_s8003_start_link(struct apple_h9p_pcie *pcie,
+ 	h9p_rmww(config + cap + PCI_EXP_LNKCTL2, PCI_EXP_LNKCTL2_TLS |
+ 		 PCI_EXP_LNKCTL2_ENTER_COMP, speed);
+ 
++	/* iOS: pcie-rc-tunables, then apcie-config-tunables */
++	apple_h9p_apply_tunable_set(config, &pcie->hw->config_tunables);
++	apple_h9p_apply_tunable_set(pb, &pcie->hw->port_tunables);
++
+ 	writel(H9P_PORT_IRQMASK_PRE_LINK, pb + H9P_PORT_IRQMASK);
+ 	writel(H9P_PORT_IRQSTAT_PRE_LINK, pb + H9P_PORT_IRQSTAT);
+ 	h9p_rmw(pb + H9P_PORT_ENABLE, 0, H9P_PORT_ENABLE_APPLE);
+@@ -2610,6 +2706,10 @@ static const struct apple_h9p_hw apple_h9p_hw_s8003 = {
+ 	.setup_port = apple_s8003_setup_port,
+ 	.nvme_mode_ports = BIT(0),
+ 	.link_settle_ms = 100,
++	.phy_tunables = H9P_TUNABLES(s8003_phy_tunables),
++	.common_tunables = H9P_TUNABLES(s8003_rc_common_tunables),
++	.config_tunables = H9P_TUNABLES(s8003_config_tunables),
++	.port_tunables = H9P_TUNABLES(s8003_port_tunables),
+ 	.port_irq_after_link = true,
+ };
+ 

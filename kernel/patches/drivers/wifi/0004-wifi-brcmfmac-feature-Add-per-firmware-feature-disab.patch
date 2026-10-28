@@ -1,0 +1,90 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 21:25:05 +0800
+Subject: [PATCH] wifi: brcmfmac: feature: Add per-firmware feature disables
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Apple's iOS 16 firmware for the BCM4355C0 module of the iPad 5
+(9.44.205.0.3.50.46, FWID 01-9787ef4d) answers the "p2p" iovar, so
+brcmfmac advertises a P2P device. The firmware then rejects
+"p2p_da_override", and every P2P device creation fails:
+
+  brcmf_p2p_set_firmware: failed to update device address ret -52
+  brcmf_p2p_create_p2pdev: set p2p_disc error
+  brcmf_cfg80211_add_iface: add iface p2p-dev-wld0 type 10 failed: err=-52
+
+NetworkManager tries this on every start. Apple uses AWDL rather than
+Wi-Fi P2P on this firmware.
+
+Add a table of features to clear per firmware ID, the counterpart of
+brcmf_feat_fwfeat_map, and list P2P for this firmware. The table is
+applied after the vendor-specific feature attach so that nothing turns
+a cleared feature back on.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux 57ff1534 and omarchy-ipad5
+ patches/pcie/kernel/0033 (J71t ledger 4.6); the lookup mirrors
+ brcmf_feat_firmware_overrides() and logs at debug level instead of
+ info, and runs after brcmf_fwvid_feat_attach()]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../broadcom/brcm80211/brcmfmac/feature.c     | 35 +++++++++++++++++++
+ 1 file changed, 35 insertions(+)
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/feature.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/feature.c
+index 488364ef8..9f0a969b2 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/feature.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/feature.c
+@@ -128,6 +128,40 @@ static void brcmf_feat_firmware_overrides(struct brcmf_pub *drv)
+ 	drv->feat_flags |= feat_flags;
+ }
+ 
++/* Features a firmware build reports but does not implement correctly */
++static const struct brcmf_feat_fwfeat brcmf_feat_fwfeat_disable_map[] = {
++	/*
++	 * Apple BCM4355C0 firmware 9.44.205.0.3.50.46 (iOS 16): answers the
++	 * "p2p" iovar but rejects "p2p_da_override" (-EBADE from the firmware),
++	 * so every P2P device creation fails.
++	 */
++	{ "01-9787ef4d", BIT(BRCMF_FEAT_P2P) },
++};
++
++static void brcmf_feat_firmware_disables(struct brcmf_pub *drv)
++{
++	const struct brcmf_feat_fwfeat *e;
++	u32 feat_flags = 0;
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(brcmf_feat_fwfeat_disable_map); i++) {
++		e = &brcmf_feat_fwfeat_disable_map[i];
++		if (!strcmp(e->fwid, drv->fwver)) {
++			feat_flags = e->feat_flags;
++			break;
++		}
++	}
++
++	if (!feat_flags)
++		return;
++
++	for (i = 0; i < BRCMF_FEAT_LAST; i++)
++		if (feat_flags & BIT(i))
++			brcmf_dbg(INFO, "disabling firmware feature: %s\n",
++				  brcmf_feat_names[i]);
++	drv->feat_flags &= ~feat_flags;
++}
++
+ struct brcmf_feat_wlcfeat {
+ 	u16 min_ver_major;
+ 	u16 min_ver_minor;
+@@ -345,6 +379,7 @@ void brcmf_feat_attach(struct brcmf_pub *drvr)
+ 	brcmf_feat_firmware_overrides(drvr);
+ 
+ 	brcmf_fwvid_feat_attach(ifp);
++	brcmf_feat_firmware_disables(drvr);
+ 
+ 	if (drvr->settings->feature_disable) {
+ 		brcmf_dbg(INFO, "Features: 0x%02x, disable: 0x%02x\n",

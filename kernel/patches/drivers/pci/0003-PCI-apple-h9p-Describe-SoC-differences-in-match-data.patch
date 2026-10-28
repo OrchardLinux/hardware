@@ -1,0 +1,223 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <henrik@goat-code.com>
+Date: Wed, 28 Oct 2026 21:33:33 +0800
+Subject: [PATCH] PCI: apple-h9p: Describe SoC differences in match data
+
+The driver handles the T8010 root complex, plus a J172 board quirk
+selected by a boolean in the match data. The A9 (S8003) root complex
+shares the register map but needs its own common and per-port bring-up
+sequences, and has no separate clocks.
+
+Turn the match data into a struct apple_h9p_hw that holds the common
+and per-port setup functions, whether the controller takes clocks, and
+the J172 bridge quirk. Rename the T8010 sequences accordingly. No
+functional change.
+
+This prepares the S8003 support from the J71t (iPad 5) integration
+(J71t ledger 2.1).
+
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/pci/controller/pcie-apple-h9p.c | 90 ++++++++++++++++---------
+ 1 file changed, 59 insertions(+), 31 deletions(-)
+
+diff --git a/drivers/pci/controller/pcie-apple-h9p.c b/drivers/pci/controller/pcie-apple-h9p.c
+index 59bb4d22a..e95b45421 100644
+--- a/drivers/pci/controller/pcie-apple-h9p.c
++++ b/drivers/pci/controller/pcie-apple-h9p.c
+@@ -255,11 +255,34 @@ struct apple_h9p_port_irq {
+ 
+ struct apple_h9p_j172_bridge_quirk_state;
+ 
++enum apple_h9p_port_result {
++	APPLE_H9P_PORT_READY,
++	APPLE_H9P_PORT_LINK_FAILED,
++	APPLE_H9P_PORT_DISABLED,
++};
++
++/*
++ * SoC (and, for J172, board) differences.
++ *
++ * @setup_common: root complex bring-up, once, before any port
++ * @setup_port: power up one root port and train its link
++ * @has_clocks: the controller takes "aux" and "ref" clocks
++ * @j172_bridge_quirk: replay J172 firmware's bridge transactions on port 3
++ */
++struct apple_h9p_hw {
++	int (*setup_common)(struct apple_h9p_pcie *pcie);
++	int (*setup_port)(struct apple_h9p_pcie *pcie, unsigned int port,
++			  enum apple_h9p_port_result *result);
++	bool has_clocks;
++	bool j172_bridge_quirk;
++};
++
+ struct apple_h9p_pcie {
+ 	struct device *dev;
+ 	struct platform_device *pdev;
+ 	struct pci_host_bridge *bridge;
+ 	struct pci_config_window *cfgwin;
++	const struct apple_h9p_hw *hw;
+ 	struct apple_h9p_j172_bridge_quirk_state *j172_quirk_state;
+ 
+ 	void __iomem *base_config;
+@@ -288,7 +311,6 @@ struct apple_h9p_pcie {
+ 	u32 inherited_perst_ports;
+ 	u32 inherited_perst_pending;
+ 	bool pwrctrl_powered;
+-	bool j172_bridge_quirk;
+ 
+ 	struct apple_h9p_nvmmu nvmmu;
+ 
+@@ -315,12 +337,6 @@ struct apple_h9p_j172_bridge_quirk_state {
+ 	bool nvme_valid;
+ };
+ 
+-enum apple_h9p_port_result {
+-	APPLE_H9P_PORT_READY,
+-	APPLE_H9P_PORT_LINK_FAILED,
+-	APPLE_H9P_PORT_DISABLED,
+-};
+-
+ static inline void h9p_rmw(void __iomem *addr, u32 clear, u32 set)
+ {
+ 	writel((readl(addr) & ~clear) | set, addr);
+@@ -1453,8 +1469,8 @@ static void apple_h9p_program_phy_port(struct apple_h9p_pcie *pcie,
+ 	       H9P_PHY_IP_PORT(phy_lane, H9P_PHY_IP_PORT_CLEAR2));
+ }
+ 
+-static int apple_h9p_setup_port(struct apple_h9p_pcie *pcie, unsigned int port,
+-				enum apple_h9p_port_result *result)
++static int apple_t8010_setup_port(struct apple_h9p_pcie *pcie, unsigned int port,
++				  enum apple_h9p_port_result *result)
+ {
+ 	struct device *dev = pcie->dev;
+ 	void __iomem *config = pcie->base_config + port * H9P_CFG_PORT_STRIDE;
+@@ -1549,7 +1565,7 @@ static int apple_h9p_setup_port(struct apple_h9p_pcie *pcie, unsigned int port,
+ 	       pcie->base_port[port] + H9P_PORT_MSIVECBASE);
+ 
+ 	if (port == 3) {
+-		if (pcie->j172_bridge_quirk)
++		if (pcie->hw->j172_bridge_quirk)
+ 			apple_h9p_run_j172_bridge_quirk(pcie, cap);
+ 		h9p_rmww(config + cap + PCI_EXP_LNKCTL, 0,
+ 			 PCI_EXP_LNKCTL_LBMIE | PCI_EXP_LNKCTL_LABIE);
+@@ -1613,7 +1629,7 @@ disable_port:
+ 	return 0;
+ }
+ 
+-static int apple_h9p_setup_common(struct apple_h9p_pcie *pcie)
++static int apple_t8010_setup_common(struct apple_h9p_pcie *pcie)
+ {
+ 	int ret;
+ 
+@@ -1680,7 +1696,7 @@ static int apple_h9p_setup_ports(struct apple_h9p_pcie *pcie)
+ 		if (!(pcie->enabled_ports & BIT(port)))
+ 			continue;
+ 
+-		ret = apple_h9p_setup_port(pcie, port, &result);
++		ret = pcie->hw->setup_port(pcie, port, &result);
+ 		if (ret)
+ 			return ret;
+ 
+@@ -1713,7 +1729,7 @@ static int apple_h9p_setup_ports(struct apple_h9p_pcie *pcie)
+ 					     port);
+ 		pcie->pwrctrl_powered = true;
+ 
+-		ret = apple_h9p_setup_port(pcie, port, &result);
++		ret = pcie->hw->setup_port(pcie, port, &result);
+ 		if (ret)
+ 			return ret;
+ 		if (result == APPLE_H9P_PORT_DISABLED)
+@@ -1945,7 +1961,6 @@ static void apple_h9p_pcie_pwrctrl_cleanup(void *data)
+ static int apple_h9p_pcie_probe(struct platform_device *pdev)
+ {
+ 	struct device *dev = &pdev->dev;
+-	const bool *j172_bridge_quirk;
+ 	struct pci_host_bridge *bridge;
+ 	struct apple_h9p_pcie *pcie;
+ 	int ret;
+@@ -1959,10 +1974,10 @@ static int apple_h9p_pcie_probe(struct platform_device *pdev)
+ 	pcie->pdev = pdev;
+ 	pcie->bridge = bridge;
+ 	spin_lock_init(&pcie->used_msi_lock);
+-	j172_bridge_quirk = of_device_get_match_data(dev);
+-	pcie->j172_bridge_quirk =
+-		j172_bridge_quirk && *j172_bridge_quirk;
+-	if (pcie->j172_bridge_quirk) {
++	pcie->hw = of_device_get_match_data(dev);
++	if (!pcie->hw)
++		return -ENODEV;
++	if (pcie->hw->j172_bridge_quirk) {
+ 		pcie->j172_quirk_state =
+ 			devm_kzalloc(dev, sizeof(*pcie->j172_quirk_state),
+ 				     GFP_KERNEL);
+@@ -1997,11 +2012,15 @@ static int apple_h9p_pcie_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		return dev_err_probe(dev, ret, "failed to set DMA mask\n");
+ 
+-	pcie->clks[0].id = "aux";
+-	pcie->clks[1].id = "ref";
+-	ret = devm_clk_bulk_get(dev, ARRAY_SIZE(pcie->clks), pcie->clks);
+-	if (ret)
+-		return dev_err_probe(dev, ret, "failed to get clocks\n");
++	if (pcie->hw->has_clocks) {
++		pcie->clks[0].id = "aux";
++		pcie->clks[1].id = "ref";
++		ret = devm_clk_bulk_get(dev, ARRAY_SIZE(pcie->clks),
++					pcie->clks);
++		if (ret)
++			return dev_err_probe(dev, ret,
++					     "failed to get clocks\n");
++	}
+ 
+ 	ret = apple_h9p_pcie_attach_genpd(pcie);
+ 	if (ret)
+@@ -2010,7 +2029,8 @@ static int apple_h9p_pcie_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		return ret;
+ 
+-	while (pcie->clks_enabled < ARRAY_SIZE(pcie->clks)) {
++	while (pcie->hw->has_clocks &&
++	       pcie->clks_enabled < ARRAY_SIZE(pcie->clks)) {
+ 		struct clk *clock =
+ 			pcie->clks[pcie->clks_enabled].clk;
+ 		const char *clock_name =
+@@ -2045,7 +2065,7 @@ static int apple_h9p_pcie_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		return ret;
+ 
+-	ret = apple_h9p_setup_common(pcie);
++	ret = pcie->hw->setup_common(pcie);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -2077,14 +2097,22 @@ static int apple_h9p_pcie_probe(struct platform_device *pdev)
+ 	return pci_host_common_init(pdev, bridge, &apple_h9p_pcie_ecam_ops);
+ }
+ 
+-static const bool apple_h9p_j172_bridge_quirk = true;
++static const struct apple_h9p_hw apple_h9p_hw_t8010 = {
++	.setup_common = apple_t8010_setup_common,
++	.setup_port = apple_t8010_setup_port,
++	.has_clocks = true,
++};
++
++static const struct apple_h9p_hw apple_h9p_hw_j172 = {
++	.setup_common = apple_t8010_setup_common,
++	.setup_port = apple_t8010_setup_port,
++	.has_clocks = true,
++	.j172_bridge_quirk = true,
++};
+ 
+ static const struct of_device_id apple_h9p_pcie_of_match[] = {
+-	{
+-		.compatible = "apple,j172-pcie",
+-		.data = &apple_h9p_j172_bridge_quirk,
+-	},
+-	{ .compatible = "apple,t8010-pcie" },
++	{ .compatible = "apple,j172-pcie", .data = &apple_h9p_hw_j172 },
++	{ .compatible = "apple,t8010-pcie", .data = &apple_h9p_hw_t8010 },
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(of, apple_h9p_pcie_of_match);

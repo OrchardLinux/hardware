@@ -1,0 +1,74 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 21:26:29 +0800
+Subject: [PATCH] usb: gadget: f_ecm: Resend a notification that failed to
+ queue on resume
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+ecm_do_notify() advances notify_state before it queues the request. If
+usb_ep_queue() fails, for example with -EAGAIN while the UDC is
+suspended, the CONNECT or SPEED_CHANGE notification is dropped for
+good. The host then never learns the link state: macOS keeps the
+interface without carrier although the gadget's own netdev carrier is
+up, until the gadget is rebound.
+
+Restore notify_state when queueing fails, and try the pending
+notification again from ecm_resume(). Clear it when the function is
+disabled, so a notification is not sent for an old configuration.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux 7dcb77b9 and omarchy-ipad5
+ patches/periph/usb-resume/0002 (J71t ledger 7.2); resume resends only
+ the pending notification (ecm_do_notify()) instead of restarting the
+ CONNECT/SPEED sequence, and ecm_disable() clears the pending state]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/gadget/function/f_ecm.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/drivers/usb/gadget/function/f_ecm.c b/drivers/usb/gadget/function/f_ecm.c
+index e495bac4e..dfbc23cb1 100644
+--- a/drivers/usb/gadget/function/f_ecm.c
++++ b/drivers/usb/gadget/function/f_ecm.c
+@@ -371,6 +371,7 @@ static void ecm_do_notify(struct f_ecm *ecm)
+ 	struct usb_cdc_notification	*event;
+ 	struct usb_composite_dev	*cdev = ecm->port.func.config->cdev;
+ 	__le32				*data;
++	u8				state = ecm->notify_state;
+ 	int				status;
+ 
+ 	/* notification already in flight? */
+@@ -417,6 +418,11 @@ static void ecm_do_notify(struct f_ecm *ecm)
+ 	status = usb_ep_queue(ecm->notify, req, GFP_ATOMIC);
+ 	if (status < 0) {
+ 		atomic_dec(&ecm->notify_count);
++		/*
++		 * Keep the notification pending: a suspended UDC rejects the
++		 * request (e.g. with -EAGAIN), and ecm_resume() sends it then.
++		 */
++		ecm->notify_state = state;
+ 		DBG(cdev, "notify --> %d\n", status);
+ 	}
+ }
+@@ -625,6 +631,7 @@ static void ecm_disable(struct usb_function *f)
+ 
+ 	usb_ep_disable(ecm->notify);
+ 	ecm->notify->desc = NULL;
++	ecm->notify_state = ECM_NOTIFY_NONE;
+ }
+ 
+ /*-------------------------------------------------------------------------*/
+@@ -886,6 +893,9 @@ static void ecm_resume(struct usb_function *f)
+ 	DBG(cdev, "ECM Resume\n");
+ 
+ 	gether_resume(&ecm->port);
++
++	/* Send a notification that could not be queued while suspended */
++	ecm_do_notify(ecm);
+ }
+ 
+ static int ecm_get_status(struct usb_function *f)

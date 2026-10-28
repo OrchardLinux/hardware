@@ -1,0 +1,133 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 21:28:25 +0800
+Subject: [PATCH] iommu/io-pgtable-dart: Add a quirk for S5L8960X table and
+ leaf entries
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+On the A9 (S8003) PCIe DART the first NVMe submission queue fetch
+faulted with
+
+  translation fault: status:0x80000102 stream:0 code:0x2 (NO PMD FOR IOVA)
+
+i.e. "STE invalid" in iOS's naming, at exactly the level where Linux
+installs its table entries.
+
+iOS writes these entries differently. AppleS5L8960XDART in the iPad6,11
+iOS 16.7.10 kernelcache:
+- _createL3Table (0xfffffff005fb33b4) writes each table entry under a
+  TTBR as (pa & 0xffffff000) | 3. Linux wrote pa | 1.
+- The leaf writer (0xfffffff005fb42e4) writes (pfn << 12) | 2 | valid:
+  bit 1 is SP_DIS, as in the DART1 format. Its subpage variant
+  (0xfffffff005fb4208) keeps the subpage range at bits 61:50 / 47:36,
+  not at the DART1 63:52 / 51:40, and plain leaves leave them clear.
+
+The A10 does the same. The iPadOS 17 T8010 kernelcache's
+AppleS5L8960XDART writes table entries as (pa & 0xffffff000) | 3 at
+0xfffffff0060f8540 and leaves as pfn << 12 | 2 at 0xfffffff0060f91f0.
+So this is a property of every S5L8960X-style DART (A7 to A10), not of
+the A9 alone.
+
+Add IO_PGTABLE_QUIRK_APPLE_DART_S5L8960X: table entries get bits 1:0
+set, and leaf PTEs leave out the DART1 subpage fields (SP_DIS, bit 1,
+is already set on leaves). apple-dart sets it for every S5L8960X DART.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux 59e53eb8 (J71t ledger 1.3); applied to
+ every S5L8960X DART, T8010 included, with the T8010 kernelcache
+ evidence added; the fault-handler table walk is left out (bring-up
+ diagnostics, ledger 1.9)]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/iommu/apple-dart.c      |  2 ++
+ drivers/iommu/io-pgtable-dart.c | 20 +++++++++++++++++---
+ include/linux/io-pgtable.h      |  7 +++++++
+ 3 files changed, 26 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/iommu/apple-dart.c b/drivers/iommu/apple-dart.c
+index f7eee85ea..7e468a73a 100644
+--- a/drivers/iommu/apple-dart.c
++++ b/drivers/iommu/apple-dart.c
+@@ -834,6 +834,8 @@ static int apple_dart_finalize_domain(struct apple_dart_domain *dart_domain,
+ 		.coherent_walk = 1,
+ 		.iommu_dev = dart->dev,
+ 	};
++	if (dart->hw->type == DART_S5L8960X)
++		pgtbl_cfg.quirks |= IO_PGTABLE_QUIRK_APPLE_DART_S5L8960X;
+ 
+ 	dart_domain->pgtbl_ops = alloc_io_pgtable_ops(dart->hw->fmt, &pgtbl_cfg,
+ 						      &dart_domain->domain);
+diff --git a/drivers/iommu/io-pgtable-dart.c b/drivers/iommu/io-pgtable-dart.c
+index cbc5d6aa2..f5a375fa3 100644
+--- a/drivers/iommu/io-pgtable-dart.c
++++ b/drivers/iommu/io-pgtable-dart.c
+@@ -63,6 +63,12 @@
+ /* marks PTE as valid */
+ #define APPLE_DART_PTE_VALID		BIT(0)
+ 
++/*
++ * S5L8960X table entries: iOS AppleS5L8960XDART writes (pa & 0xffffff000) | 3.
++ * With bit 0 alone the DART reports an invalid STE ("NO PMD").
++ */
++#define APPLE_DART_S5L8960X_TABLE_VALID	GENMASK_ULL(1, 0)
++
+ /* IOPTE accessors */
+ #define iopte_deref(pte, d) __va(iopte_to_paddr(pte, d))
+ 
+@@ -125,9 +131,15 @@ static int dart_init_pte(struct dart_io_pgtable *data,
+ 			return -EEXIST;
+ 		}
+ 
+-	/* subpage protection: always allow access to the entire page */
+-	pte |= FIELD_PREP(APPLE_DART_PTE_SUBPAGE_START, 0);
+-	pte |= FIELD_PREP(APPLE_DART_PTE_SUBPAGE_END, 0xfff);
++	/*
++	 * subpage protection: always allow access to the entire page. S5L8960X
++	 * keeps its subpage range at bits 61:50/47:36 and ignores it with SP_DIS
++	 * (bit 1) set; iOS leaves those bits clear, so do the same.
++	 */
++	if (!(data->iop.cfg.quirks & IO_PGTABLE_QUIRK_APPLE_DART_S5L8960X)) {
++		pte |= FIELD_PREP(APPLE_DART_PTE_SUBPAGE_START, 0);
++		pte |= FIELD_PREP(APPLE_DART_PTE_SUBPAGE_END, 0xfff);
++	}
+ 
+ 	pte |= APPLE_DART_PTE_VALID;
+ 
+@@ -145,6 +157,8 @@ static dart_iopte dart_install_table(dart_iopte *table,
+ 	dart_iopte old, new;
+ 
+ 	new = paddr_to_iopte(__pa(table), data) | APPLE_DART_PTE_VALID;
++	if (data->iop.cfg.quirks & IO_PGTABLE_QUIRK_APPLE_DART_S5L8960X)
++		new |= APPLE_DART_S5L8960X_TABLE_VALID;
+ 
+ 	/*
+ 	 * Ensure the table itself is visible before its PTE can be.
+diff --git a/include/linux/io-pgtable.h b/include/linux/io-pgtable.h
+index e19872e37..93cd501b0 100644
+--- a/include/linux/io-pgtable.h
++++ b/include/linux/io-pgtable.h
+@@ -93,6 +93,12 @@ struct io_pgtable_cfg {
+ 	 *	kernel bug, which would justify the WARN_ON().  But for GPU
+ 	 *	drivers, this could be under control of userspace.  Which
+ 	 *	deserves an error return, but not to spam dmesg.
++	 *
++	 * IO_PGTABLE_QUIRK_APPLE_DART_S5L8960X: (Apple DART format) A7-A10
++	 *	S5L8960X-style DARTs. Table entries need bits 1:0 set (bit 0
++	 *	alone is an invalid table entry), and leaf PTEs carry no DART1
++	 *	subpage fields (these DARTs keep their subpage range elsewhere
++	 *	and ignore it with bit 1 set).
+ 	 */
+ 	#define IO_PGTABLE_QUIRK_ARM_NS			BIT(0)
+ 	#define IO_PGTABLE_QUIRK_NO_PERMS		BIT(1)
+@@ -103,6 +109,7 @@ struct io_pgtable_cfg {
+ 	#define IO_PGTABLE_QUIRK_ARM_HD			BIT(7)
+ 	#define IO_PGTABLE_QUIRK_ARM_S2FWB		BIT(8)
+ 	#define IO_PGTABLE_QUIRK_NO_WARN		BIT(9)
++	#define IO_PGTABLE_QUIRK_APPLE_DART_S5L8960X	BIT(10)
+ 	unsigned long			quirks;
+ 	unsigned long			pgsize_bitmap;
+ 	unsigned int			ias;

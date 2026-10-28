@@ -1,0 +1,51 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Thu, 29 Oct 2026 04:35:57 +0800
+Subject: [PATCH] PCI: apple-h9p: Clear the S8003 PME_Turn_Off request when
+ stopping a port
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Stopping an S8003 port before its restart left out two accesses of the
+validated sequence: the read-back of the LTSSM control register after
+clearing its enable bit, and clearing port+0x8c, the PME_Turn_Off
+request (iOS writes 0x31 there to send it). Whatever state the port
+block was left in by earlier software, no PME_Turn_Off or L2 request
+must stay pending while the link is retrained.
+
+Restore both, so the cold boot runs the validated register sequence.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: restores apple_s8003_port_stop() of brkosebay/linux 9c088fd8
+ (J71t ledger 2.2, 2.3), which the first port left out as kexec-only]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/pci/controller/pcie-apple-h9p.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/drivers/pci/controller/pcie-apple-h9p.c b/drivers/pci/controller/pcie-apple-h9p.c
+index dbf819298..a24de8360 100644
+--- a/drivers/pci/controller/pcie-apple-h9p.c
++++ b/drivers/pci/controller/pcie-apple-h9p.c
+@@ -177,6 +177,8 @@
+ 
+ #define S8003_PORT_LINKSTS		0x0088
+ #define S8003_PORT_LINKSTS_UP		BIT(0)
++/* PME_Turn_Off request (0x31 sends it, AppleS800xPCIePort::disableGated) */
++#define S8003_PORT_PMETO		0x008c
+ #define S8003_PORT_LINKPMGRSTS		0x0210
+ #define S8003_PORT_LINKCDMSTS		0x0804
+ #define S8003_PORT_LINKCDMSTS_LTSSM	GENMASK(14, 9)
+@@ -2061,6 +2063,9 @@ static int apple_s8003_port_stop(struct apple_h9p_pcie *pcie,
+ 
+ 	writel(H9P_PORT_IRQMASK_PRE_LINK, pb + H9P_PORT_IRQMASK);
+ 	h9p_rmw(pb + H9P_PORT_LTSSMCTL, H9P_PORT_LTSSM_ENABLE, 0);
++	readl(pb + H9P_PORT_LTSSMCTL);
++	/* No PME_Turn_Off/L2 request may stay pending across the restart */
++	h9p_writel_flush(0, pb + S8003_PORT_PMETO);
+ 	writel(H9P_PORT_IRQSTAT_PRE_LINK, pb + H9P_PORT_IRQSTAT);
+ 
+ 	return apple_h9p_wait(pb + H9P_PORT_LTSSMCTL, H9P_PORT_LTSSM_ENABLE,

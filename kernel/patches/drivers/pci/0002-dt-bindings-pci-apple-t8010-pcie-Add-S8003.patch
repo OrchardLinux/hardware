@@ -1,0 +1,224 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 21:32:31 +0800
+Subject: [PATCH] dt-bindings: pci: apple,t8010-pcie: Add S8003
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The A9 (TSMC, S8003) root complex has the T8010 register map, including
+the "phy-ip" PHY block, but iOS drives it with a different power-up and
+link training sequence. Add the apple,s8003-pcie compatible.
+
+The A9 PMGR has no separate PCIe clocks; it has per-link power domains
+instead (ADT apcie clock-gates 57-62: pcie, pcie_aux, pcie_link0..3,
+plus pcie_ref). So S8003 takes seven named power domains and no clocks,
+while T8010 keeps its one power domain and two clocks.
+
+Root ports may carry the standard num-lanes property. On S8003 the
+root complex's lane configuration follows from it (port 0 is x2, port 2
+optionally x2). The SoC's tunables, the NVMe mode of the storage port
+and the NVMMU invalidate workaround are SoC behaviour and stay in the
+driver's match data, not in the device tree. CLKREQ# stays optional:
+on S8003 it remains in its peripheral function.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux 1e1bbcd1, cf4b8100 (J71t ledger 2.13);
+ apple,lane-cfg replaced by num-lanes (2.5), apple,tunable-* (2.4),
+ apple,nvme-mode and apple,nvmmu-invalidate-fifo (2.6) moved to match
+ data, pwren-gpios and device-wake-gpios left out (2.7, late ports);
+ clocks forbidden and power-domain-names required for S8003; example
+ added]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../bindings/pci/apple,t8010-pcie.yaml        | 130 ++++++++++++++++--
+ 1 file changed, 121 insertions(+), 9 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/pci/apple,t8010-pcie.yaml b/Documentation/devicetree/bindings/pci/apple,t8010-pcie.yaml
+index 0e1cc7b0b..afbd81db3 100644
+--- a/Documentation/devicetree/bindings/pci/apple,t8010-pcie.yaml
++++ b/Documentation/devicetree/bindings/pci/apple,t8010-pcie.yaml
+@@ -4,16 +4,17 @@
+ $id: http://devicetree.org/schemas/pci/apple,t8010-pcie.yaml#
+ $schema: http://devicetree.org/meta-schemas/core.yaml#
+ 
+-title: Apple T8010 PCIe host controller
++title: Apple S8003 and T8010 PCIe host controller
+ 
+ maintainers:
+   - Paul Praschl <praschlpaul@g-p.at>
+ 
+ description: |
+-  Apple A10/T8010 devices use the H9P PCIe root complex for internal
+-  storage and Wi-Fi. It exposes one ECAM window shared by up to four root
+-  ports, controller-specific PHY and port register windows, and a local MSI
+-  block.
++  Apple A9/S8003 (TSMC) and A10/T8010 devices use the H8P/H9P PCIe root
++  complex for internal storage and Wi-Fi. It exposes one ECAM window shared
++  by up to four root ports, controller-specific PHY and port register
++  windows, and a local MSI block. Both SoCs share this register map but
++  need different power-up and link training sequences.
+ 
+   The storage port also contains an NVMMU which translates the proprietary
+   Apple ANS FlatDMA format. Unlike a general-purpose IOMMU, this block uses a
+@@ -32,7 +33,9 @@ allOf:
+ properties:
+   compatible:
+     oneOf:
+-      - const: apple,t8010-pcie
++      - enum:
++          - apple,s8003-pcie
++          - apple,t8010-pcie
+       - items:
+           - const: apple,j172-pcie
+           - const: apple,t8010-pcie
+@@ -76,7 +79,18 @@ properties:
+       - const: ref
+ 
+   power-domains:
+-    maxItems: 1
++    minItems: 1
++    maxItems: 7
++
++  power-domain-names:
++    items:
++      - const: core
++      - const: aux
++      - const: ref
++      - const: link0
++      - const: link1
++      - const: link2
++      - const: link3
+ 
+   msi-parent: true
+ 
+@@ -128,6 +142,14 @@ patternProperties:
+           Software-observable CLKREQ# input. This is optional when the pad is
+           pinmuxed directly to the PCIe controller instead.
+ 
++      num-lanes:
++        enum: [1, 2]
++        description:
++          Number of lanes of this root port. On S8003 the lane
++          configuration of the root complex follows from it. Port 0 is
++          always x2, port 2 is x2 only if it says so (port 3 is then
++          unusable), and the other ports are x1.
++
+       max-link-speed:
+         enum: [1, 2, 3]
+         description:
+@@ -195,8 +217,6 @@ required:
+   - reg-names
+   - interrupts
+   - interrupt-names
+-  - clocks
+-  - clock-names
+   - power-domains
+   - bus-range
+   - ranges
+@@ -207,6 +227,29 @@ required:
+   - apple,nvme-hmb
+   - '#interrupt-cells'
+ 
++if:
++  properties:
++    compatible:
++      contains:
++        const: apple,s8003-pcie
++then:
++  properties:
++    clocks: false
++    clock-names: false
++    power-domains:
++      minItems: 7
++    apple,preinit-phy-port-mask: false
++  required:
++    - power-domain-names
++else:
++  properties:
++    power-domains:
++      maxItems: 1
++    power-domain-names: false
++  required:
++    - clocks
++    - clock-names
++
+ unevaluatedProperties: false
+ 
+ examples:
+@@ -301,4 +344,73 @@ examples:
+         };
+     };
+ 
++  - |
++    #include <dt-bindings/gpio/gpio.h>
++    #include <dt-bindings/interrupt-controller/apple-aic.h>
++
++    soc {
++        #address-cells = <2>;
++        #size-cells = <2>;
++
++        pcie1: pcie@610000000 {
++            compatible = "apple,s8003-pcie";
++            device_type = "pci";
++
++            reg = <0x6 0x10000000 0x0 0x1000000>,
++                  <0x6 0x00000000 0x0 0x8000>,
++                  <0x6 0x00008000 0x0 0x4000>,
++                  <0x6 0x0a000000 0x0 0x40000>,
++                  <0x6 0x01000000 0x0 0x4000>,
++                  <0x6 0x02000000 0x0 0x4000>,
++                  <0x6 0x03000000 0x0 0x4000>,
++                  <0x6 0x04000000 0x0 0x4000>,
++                  <0x6 0x01004000 0x0 0x4000>;
++            reg-names = "config", "rc", "phy", "phy-ip",
++                        "port0", "port1", "port2", "port3",
++                        "nvmmu";
++
++            interrupt-parent = <&aic>;
++            interrupts = <AIC_IRQ 244 IRQ_TYPE_LEVEL_HIGH>,
++                         <AIC_IRQ 247 IRQ_TYPE_LEVEL_HIGH>,
++                         <AIC_IRQ 250 IRQ_TYPE_LEVEL_HIGH>,
++                         <AIC_IRQ 253 IRQ_TYPE_LEVEL_HIGH>,
++                         <AIC_IRQ 246 IRQ_TYPE_EDGE_RISING>;
++            interrupt-names = "port0", "port1", "port2", "port3",
++                              "nvmmu";
++
++            msi-controller;
++            msi-parent = <&pcie1>;
++            msi-ranges = <&aic AIC_IRQ 256 IRQ_TYPE_EDGE_RISING 32>;
++            apple,msi-doorbell = <0xbffff000>;
++            apple,nvmmu-iova = <0xbc000000>;
++            apple,nvme-hmb = <&nvme_hmb>;
++
++            #address-cells = <3>;
++            #size-cells = <2>;
++            #interrupt-cells = <1>;
++            interrupt-controller;
++            bus-range = <0x00 0x0f>;
++            ranges = <0x03000000 0x0 0xc0000000
++                      0x7 0xc0000000 0x0 0x40000000>;
++
++            power-domains = <&ps_pcie>, <&ps_pcie_aux>, <&ps_pcie_ref>,
++                            <&ps_pcie_link0>, <&ps_pcie_link1>,
++                            <&ps_pcie_link2>, <&ps_pcie_link3>;
++            power-domain-names = "core", "aux", "ref", "link0", "link1",
++                                 "link2", "link3";
++
++            pci@0,0 {
++                device_type = "pci";
++                reg = <0x0 0x0 0x0 0x0 0x0>;
++                reset-gpios = <&pinctrl_ap 160 GPIO_ACTIVE_LOW>;
++                num-lanes = <2>;
++                max-link-speed = <2>;
++
++                #address-cells = <3>;
++                #size-cells = <2>;
++                ranges;
++            };
++        };
++    };
++
+ ...

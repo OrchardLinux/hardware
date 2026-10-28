@@ -1,0 +1,201 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 21:39:29 +0800
+Subject: [PATCH] PCI: apple-h9p: Follow iOS's S8003 NVMMU init and invalidate
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Two NVMMU details differ on S8003 (omarchy-ipad5 docs/pcie/a9-vs-a10.md
+§5 and §9):
+
+- The TCB init is started by writing 0x10000 to NVMMU+0x4, and iOS on
+  S8003 polls until bit 16 clears. The T8010 code polls bit 4.
+- iBoot sets nvme-mmu0 invalidate-fifo-workaround = 1 in the j71t live
+  ADT. With it, iOS (AppleNVMeMMU, 0xfffffff005eebc9c in the iPad6,11
+  iOS 16.7.10 kernelcache) waits under a lock for bit 0 of port0+0x22c,
+  the invalidate FIFO's "empty" bit, for up to 20 ms before every
+  invalidate, never reads the invalidate register back, and never
+  invalidates a tag it hasn't mapped.
+
+The first S8003 bring-up hung right after the ANS glue retired all its
+FlatDMA slots: 36 back-to-back invalidates, each read back, and the next
+endpoint access never completed.
+
+Make both S8003 match data: the init busy bit, and the invalidate FIFO
+wait, with tags invalidated only if they were mapped since their last
+invalidate and without the read-back. A FIFO that doesn't drain is an
+error, which keeps the slot reserved, rather than iOS's panic. T8010
+behaves as before.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux 66148506 and 9c088fd8 (J71t ledger 2.6,
+ NVMMU part of 3.4); invalidate-fifo-workaround as S8003 match data
+ instead of apple,nvmmu-invalidate-fifo, mode 2 (fixed delay) and the
+ poisoned state left out]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/pci/controller/pcie-apple-h9p.c | 74 +++++++++++++++++++++++--
+ 1 file changed, 69 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/pci/controller/pcie-apple-h9p.c b/drivers/pci/controller/pcie-apple-h9p.c
+index c5aa9b3ac..d678b719b 100644
+--- a/drivers/pci/controller/pcie-apple-h9p.c
++++ b/drivers/pci/controller/pcie-apple-h9p.c
+@@ -191,7 +191,19 @@
+ #define S8003_L0_TIMEOUT_US		100000
+ #define S8003_READY_TIMEOUT_US		250000
+ 
++/*
++ * NVMMU invalidate FIFO status, in the port 0 block (iBoot sets the live ADT
++ * nvme-mmu0 invalidate-fifo-workaround = 1 on j71t). iOS (AppleNVMeMMU,
++ * 0xfffffff005eebc9c) waits up to 20 ms for it to drain before every
++ * invalidate and never reads the invalidate register back.
++ */
++#define S8003_PORT_NVMMU_INV_FIFO	0x022c
++#define S8003_PORT_NVMMU_INV_FIFO_EMPTY	BIT(0)
++#define S8003_NVMMU_INV_FIFO_TIMEOUT_US	20000
++
+ #define H9P_NVMMU_TCB_CTRL		0x0004
++#define H9P_NVMMU_TCB_CTRL_INIT		BIT(16)
++#define T8010_NVMMU_TCB_CTRL_INIT_BUSY	BIT(4)
+ #define H9P_NVMMU_TCB_BASE_LO		0x0008
+ #define H9P_NVMMU_TCB_BASE_HI		0x000c
+ #define H9P_NVMMU_TCB_TABLE_LO		0x0010
+@@ -364,6 +376,10 @@ struct apple_h9p_tunables {
+ struct apple_h9p_nvmmu {
+ 	struct apple_h9p_pcie *pcie;
+ 	void __iomem *base;
++	/* Serializes the invalidate FIFO wait and the invalidate write */
++	spinlock_t inv_lock;
++	/* With the invalidate FIFO: tags mapped since their last invalidate */
++	DECLARE_BITMAP(mapped, APPLE_ANS_NVMMU_MAX_REQS);
+ 	u64 pa_base;
+ 	u32 va_base;
+ 	u32 size;
+@@ -407,6 +423,8 @@ enum apple_h9p_port_result {
+  * @common_tunables: root complex tunables (S8003 only; see T8010's code)
+  * @config_tunables: root port configuration space tunables (S8003 only)
+  * @port_tunables: port block tunables (S8003 only)
++ * @nvmmu_init_busy: NVMMU TCB control bit that is set while its init runs
++ * @nvmmu_inv_fifo: wait for the NVMMU invalidate FIFO before invalidating
+  * @has_clocks: the controller takes "aux" and "ref" clocks
+  * @port_irq_after_link: enable a port's interrupt only once its link is up
+  * @port3_link_event_ack: acknowledge port 3 link events in the root complex
+@@ -423,6 +441,8 @@ struct apple_h9p_hw {
+ 	struct apple_h9p_tunables common_tunables;
+ 	struct apple_h9p_tunables config_tunables;
+ 	struct apple_h9p_tunables port_tunables;
++	u32 nvmmu_init_busy;
++	bool nvmmu_inv_fifo;
+ 	bool has_clocks;
+ 	bool port_irq_after_link;
+ 	bool port3_link_event_ack;
+@@ -1384,10 +1404,12 @@ static int apple_h9p_setup_nvmmu(struct apple_h9p_pcie *pcie)
+ 			 nvmmu->base + H9P_NVMMU_TCB_TABLE_LO);
+ 	h9p_writel_flush(upper_32_bits(nvmmu->tcb_table_dma),
+ 			 nvmmu->base + H9P_NVMMU_TCB_TABLE_HI);
+-	h9p_writel_flush(0x10000, nvmmu->base + H9P_NVMMU_TCB_CTRL);
++	spin_lock_init(&nvmmu->inv_lock);
++	h9p_writel_flush(H9P_NVMMU_TCB_CTRL_INIT,
++			 nvmmu->base + H9P_NVMMU_TCB_CTRL);
+ 
+-	ret = apple_h9p_wait(nvmmu->base + H9P_NVMMU_TCB_CTRL, 0x10, 0, 0,
+-			     250000);
++	ret = apple_h9p_wait(nvmmu->base + H9P_NVMMU_TCB_CTRL,
++			     pcie->hw->nvmmu_init_busy, 0, 0, 250000);
+ 	if (ret)
+ 		goto out_put_node;
+ 
+@@ -1419,6 +1441,43 @@ out_put_node:
+ 	return ret;
+ }
+ 
++static int apple_h9p_nvmmu_invalidate(struct apple_h9p_pcie *pcie,
++				      unsigned int tag)
++{
++	struct apple_h9p_nvmmu *nvmmu = &pcie->nvmmu;
++	unsigned long flags;
++	u32 val;
++	int ret;
++
++	if (!pcie->hw->nvmmu_inv_fifo) {
++		h9p_writel_flush(tag, nvmmu->base + H9P_NVMMU_TCB_CTRL);
++		return 0;
++	}
++
++	/* Tags not mapped since their last invalidate aren't cached */
++	if (!test_bit(tag, nvmmu->mapped))
++		return 0;
++
++	spin_lock_irqsave(&nvmmu->inv_lock, flags);
++	ret = readl_poll_timeout_atomic(pcie->base_port[0] +
++					S8003_PORT_NVMMU_INV_FIFO, val,
++					val & S8003_PORT_NVMMU_INV_FIFO_EMPTY,
++					1, S8003_NVMMU_INV_FIFO_TIMEOUT_US);
++	if (!ret)
++		writel(tag, nvmmu->base + H9P_NVMMU_TCB_CTRL);
++	spin_unlock_irqrestore(&nvmmu->inv_lock, flags);
++
++	if (ret) {
++		dev_err_ratelimited(pcie->dev,
++				    "NVMMU invalidate FIFO not empty (%#x), tag %u\n",
++				    val, tag);
++		return ret;
++	}
++
++	clear_bit(tag, nvmmu->mapped);
++	return 0;
++}
++
+ /*
+  * Program TCBs the way iOS (AppleNVMeMMU) does: exactly one direction per
+  * TCB, since iOS rejects in-out transfers, and the page count written last
+@@ -1474,10 +1533,9 @@ int apple_ans_nvmmu_map(struct device *dev, unsigned int tag,
+ 
+ 	if (!npages) {
+ 		dma_wmb();
+-		h9p_writel_flush(tag, nvmmu->base + H9P_NVMMU_TCB_CTRL);
+ 		if (iova)
+ 			*iova = 0;
+-		return 0;
++		return apple_h9p_nvmmu_invalidate(pcie, tag);
+ 	}
+ 
+ 	memset(sgl, 0, H9P_NVMMU_SGL_WORDS * sizeof(*sgl));
+@@ -1493,6 +1551,7 @@ int apple_ans_nvmmu_map(struct device *dev, unsigned int tag,
+ 	dma_wmb();
+ 	WRITE_ONCE(tcb[H9P_NVMMU_TCB_NPAGES], npages);
+ 	dma_wmb();
++	set_bit(tag, nvmmu->mapped);
+ 
+ 	if (iova)
+ 		*iova = H9P_NVMMU_FLATDMA_BASE + tag * H9P_NVMMU_FLATDMA_STRIDE;
+@@ -2688,6 +2747,7 @@ static int apple_h9p_pcie_probe(struct platform_device *pdev)
+ static const struct apple_h9p_hw apple_h9p_hw_t8010 = {
+ 	.setup_common = apple_t8010_setup_common,
+ 	.setup_port = apple_t8010_setup_port,
++	.nvmmu_init_busy = T8010_NVMMU_TCB_CTRL_INIT_BUSY,
+ 	.has_clocks = true,
+ 	.port3_link_event_ack = true,
+ };
+@@ -2695,6 +2755,7 @@ static const struct apple_h9p_hw apple_h9p_hw_t8010 = {
+ static const struct apple_h9p_hw apple_h9p_hw_j172 = {
+ 	.setup_common = apple_t8010_setup_common,
+ 	.setup_port = apple_t8010_setup_port,
++	.nvmmu_init_busy = T8010_NVMMU_TCB_CTRL_INIT_BUSY,
+ 	.has_clocks = true,
+ 	.port3_link_event_ack = true,
+ 	.j172_bridge_quirk = true,
+@@ -2710,6 +2771,9 @@ static const struct apple_h9p_hw apple_h9p_hw_s8003 = {
+ 	.common_tunables = H9P_TUNABLES(s8003_rc_common_tunables),
+ 	.config_tunables = H9P_TUNABLES(s8003_config_tunables),
+ 	.port_tunables = H9P_TUNABLES(s8003_port_tunables),
++	/* AppleNVMeMMU on S8003 polls the init bit itself */
++	.nvmmu_init_busy = H9P_NVMMU_TCB_CTRL_INIT,
++	.nvmmu_inv_fifo = true,
+ 	.port_irq_after_link = true,
+ };
+ 

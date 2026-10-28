@@ -1,0 +1,72 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 21:25:46 +0800
+Subject: [PATCH] usb: dwc2: gadget: Enter L0 before calling the resume
+ callback
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+When the controller leaves clock gating or LPM L1, dwc2 calls the
+gadget driver's resume callback first and only then sets lx_state to
+L0. call_gadget() drops the controller lock around the callback, and a
+function driver may queue a request from it right away (CDC ACM and
+ECM send their notifications on resume). dwc2_hsotg_ep_queue() refuses
+requests while lx_state is not L0, so these requests fail with -EAGAIN
+and the notification is lost. From L1, the queue path even tries to
+wake the controller from L1 a second time.
+
+Set lx_state to L0 and clear bus_suspended before calling the resume
+callback.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux 7dcb77b9 and omarchy-ipad5
+ patches/periph/usb-resume/0001 (J71t ledger 7.1); applied the same
+ reordering to the LPM L1 exit in dwc2_wakeup_from_lpm_l1(), which had
+ the same order]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/usb/dwc2/core_intr.c | 6 +++---
+ drivers/usb/dwc2/gadget.c    | 8 ++++++--
+ 2 files changed, 9 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/usb/dwc2/core_intr.c b/drivers/usb/dwc2/core_intr.c
+index 9565e6a52..0be67f27d 100644
+--- a/drivers/usb/dwc2/core_intr.c
++++ b/drivers/usb/dwc2/core_intr.c
+@@ -390,11 +390,11 @@ void dwc2_wakeup_from_lpm_l1(struct dwc2_hsotg *hsotg, bool remotewakeup)
+ 			return;
+ 		}
+ 
+-		/* Inform gadget to exit from L1 */
+-		call_gadget(hsotg, resume);
+-		/* Change to L0 state */
++		/* Change to L0 state before informing the gadget */
+ 		hsotg->lx_state = DWC2_L0;
+ 		hsotg->bus_suspended = false;
++		/* Inform gadget to exit from L1 */
++		call_gadget(hsotg, resume);
+ fail:		dwc2_gadget_init_lpm(hsotg);
+ 	} else {
+ 		/* TODO */
+diff --git a/drivers/usb/dwc2/gadget.c b/drivers/usb/dwc2/gadget.c
+index 102169b40..07220a0bc 100644
+--- a/drivers/usb/dwc2/gadget.c
++++ b/drivers/usb/dwc2/gadget.c
+@@ -5741,8 +5741,12 @@ void dwc2_gadget_exit_clock_gating(struct dwc2_hsotg *hsotg, int rem_wakeup)
+ 		dwc2_writel(hsotg, dctl, DCTL);
+ 	}
+ 
+-	/* Change to L0 state */
+-	call_gadget(hsotg, resume);
++	/*
++	 * Change to L0 state before the resume callback: it may queue
++	 * requests right away, and dwc2_hsotg_ep_queue() refuses them
++	 * outside L0.
++	 */
+ 	hsotg->lx_state = DWC2_L0;
+ 	hsotg->bus_suspended = false;
++	call_gadget(hsotg, resume);
+ }

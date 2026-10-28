@@ -1,0 +1,61 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 21:33:42 +0800
+Subject: [PATCH] dt-bindings: spi: apple: Add S8000 SPI
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The A9 (S8000/S8003) SPI controller has the register layout of the T8010
+controller: CTRL, CFG, STATUS with the FIFO levels, PIN, TXDATA, RXDATA,
+CLKDIV, the word counters and WORD_DELAY. Linux drives it with
+byte-wide PIO only, so it takes no DMA channel.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux 28c4b7e3, 1ada4ff1 (J71t ledger 8.5); his tree had
+ no binding for the separate apple,s8000-spi driver. Describe it as an
+ apple,spi variant instead, without DMA.]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ Documentation/devicetree/bindings/spi/apple,spi.yaml | 12 +++++++++++-
+ 1 file changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/spi/apple,spi.yaml b/Documentation/devicetree/bindings/spi/apple,spi.yaml
+index ac39df7b4..b0af6b7e2 100644
+--- a/Documentation/devicetree/bindings/spi/apple,spi.yaml
++++ b/Documentation/devicetree/bindings/spi/apple,spi.yaml
+@@ -8,6 +8,15 @@ title: Apple ARM SoC SPI controller
+ 
+ allOf:
+   - $ref: spi-controller.yaml#
++  - if:
++      properties:
++        compatible:
++          contains:
++            const: apple,s8000-spi
++    then:
++      properties:
++        dmas: false
++        dma-names: false
+ 
+ maintainers:
+   - Hector Martin <marcan@marcan.st>
+@@ -21,6 +30,7 @@ properties:
+           - const: apple,t8103-spi
+       - items:
+           - enum:
++              - apple,s8000-spi
+               - apple,t8010-spi
+               - apple,t8103-spi
+               - apple,t8112-spi
+@@ -48,7 +58,7 @@ properties:
+   apple,t8010-word-delay:
+     $ref: /schemas/types.yaml#/definitions/uint32
+     description:
+-      Legacy T8010 inter-word delay register value.
++      Legacy S8000/T8010 inter-word delay register value.
+ 
+ required:
+   - compatible

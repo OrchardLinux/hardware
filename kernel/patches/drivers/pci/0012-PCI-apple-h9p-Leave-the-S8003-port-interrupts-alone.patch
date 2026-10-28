@@ -1,0 +1,98 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Thu, 29 Oct 2026 04:35:46 +0800
+Subject: [PATCH] PCI: apple-h9p: Leave the S8003 port interrupts alone
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The S8003 support requested the per-port interrupts and enabled each
+once its link was up, so that T8010's handler would acknowledge port
+events. Neither iOS's S8003 code nor the validated A9 bring-up uses
+them: the port events stay masked at the interrupt controller.
+
+Don't request them on S8003, so the cold boot matches the validated
+sequence. T8010 is unchanged.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: restores the port interrupt handling of brkosebay/linux
+ 7e407f73 and 9c088fd8 (J71t ledger 2.1); a match-data flag instead of
+ enabling the T8010 handler after link-up]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/pci/controller/pcie-apple-h9p.c | 18 ++++++++----------
+ 1 file changed, 8 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/pci/controller/pcie-apple-h9p.c b/drivers/pci/controller/pcie-apple-h9p.c
+index d678b719b..dbf819298 100644
+--- a/drivers/pci/controller/pcie-apple-h9p.c
++++ b/drivers/pci/controller/pcie-apple-h9p.c
+@@ -426,7 +426,8 @@ enum apple_h9p_port_result {
+  * @nvmmu_init_busy: NVMMU TCB control bit that is set while its init runs
+  * @nvmmu_inv_fifo: wait for the NVMMU invalidate FIFO before invalidating
+  * @has_clocks: the controller takes "aux" and "ref" clocks
+- * @port_irq_after_link: enable a port's interrupt only once its link is up
++ * @no_port_irqs: leave the per-port interrupts alone (iOS's S8003 code
++ *                doesn't use them)
+  * @port3_link_event_ack: acknowledge port 3 link events in the root complex
+  * @j172_bridge_quirk: replay J172 firmware's bridge transactions on port 3
+  */
+@@ -444,7 +445,7 @@ struct apple_h9p_hw {
+ 	u32 nvmmu_init_busy;
+ 	bool nvmmu_inv_fifo;
+ 	bool has_clocks;
+-	bool port_irq_after_link;
++	bool no_port_irqs;
+ 	bool port3_link_event_ack;
+ 	bool j172_bridge_quirk;
+ };
+@@ -944,6 +945,9 @@ static int apple_h9p_pcie_request_port_irqs(struct apple_h9p_pcie *pcie)
+ 	struct device *dev = pcie->dev;
+ 	unsigned int port;
+ 
++	if (pcie->hw->no_port_irqs)
++		return 0;
++
+ 	for (port = 0; port < H9P_NUM_PORTS; port++) {
+ 		struct apple_h9p_port_irq *port_irq = &pcie->port_irq[port];
+ 		bool deferred;
+@@ -961,7 +965,7 @@ static int apple_h9p_pcie_request_port_irqs(struct apple_h9p_pcie *pcie)
+ 		port_irq->pcie = pcie;
+ 		port_irq->index = port;
+ 		port_irq->irq = irq;
+-		deferred = port == 3 || pcie->hw->port_irq_after_link;
++		deferred = port == 3;
+ 		ret = devm_request_irq(dev, irq, apple_h9p_port_irq,
+ 				       deferred ? IRQF_NO_AUTOEN : 0,
+ 				       dev_name(dev), port_irq);
+@@ -2267,7 +2271,6 @@ static int apple_s8003_setup_port(struct apple_h9p_pcie *pcie,
+ 				  unsigned int port,
+ 				  enum apple_h9p_port_result *result)
+ {
+-	struct apple_h9p_port_irq *port_irq = &pcie->port_irq[port];
+ 	struct device *dev = pcie->dev;
+ 	int ret;
+ 
+@@ -2296,11 +2299,6 @@ static int apple_s8003_setup_port(struct apple_h9p_pcie *pcie,
+ 		return 0;
+ 	}
+ 
+-	if (port_irq->irq > 0 && !port_irq->enabled) {
+-		enable_irq(port_irq->irq);
+-		port_irq->enabled = true;
+-	}
+-
+ 	*result = APPLE_H9P_PORT_READY;
+ 	return 0;
+ }
+@@ -2774,7 +2772,7 @@ static const struct apple_h9p_hw apple_h9p_hw_s8003 = {
+ 	/* AppleNVMeMMU on S8003 polls the init bit itself */
+ 	.nvmmu_init_busy = H9P_NVMMU_TCB_CTRL_INIT,
+ 	.nvmmu_inv_fifo = true,
+-	.port_irq_after_link = true,
++	.no_port_irqs = true,
+ };
+ 
+ static const struct of_device_id apple_h9p_pcie_of_match[] = {
