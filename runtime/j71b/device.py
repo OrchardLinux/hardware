@@ -140,7 +140,7 @@ def cleanup_policy():
     if settings.get('root', {}).get('sha256'):
         receipts.append({'release': settings['release'], 'sha256': settings['root']['sha256']})
     firmware = json.loads(FIRMWARE.read_text())
-    names = [row['destination'] for row in firmware['files'] + firmware['generated']]
+    names = [row['destination'] for row in firmware['outputs']]
     return receipts, names
 
 
@@ -274,8 +274,8 @@ def prepare(request):
     data = sys.stdin.buffer.read(length + 1)
     if len(data) != length or hashlib.sha256(data).hexdigest() != request['sha256']:
         raise ValueError('Private mixin transport integrity mismatch')
-    allowed = {p['destination'] for p in json.loads(FIRMWARE.read_text())['files']}
-    allowed |= {p['destination'] for p in json.loads(FIRMWARE.read_text())['generated']}
+    outputs = json.loads(FIRMWARE.read_text())['outputs']
+    allowed = {p['destination'] for p in outputs}
     with tarfile.open(fileobj=io.BytesIO(data), mode='r:gz') as bundle:
         members = bundle.getmembers()
         if len(members) != len(allowed) + 1 or sum(m.size for m in members) > 32 * 1024 * 1024:
@@ -289,7 +289,7 @@ def prepare(request):
         raise ValueError('Private mixin is not for this device model')
     if set(records) != allowed or set(metadata['files']) != allowed:
         raise ValueError('Private mixin must contain exactly firmware data')
-    fixed = {p['destination']: p['sha256'] for p in json.loads(FIRMWARE.read_text())['files']}
+    fixed = {p['destination']: p['sha256'] for p in outputs}
     for name, content in records.items():
         safe_name(name)
         if name in fixed and hashlib.sha256(content).hexdigest() != fixed[name]:

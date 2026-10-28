@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 
 HARDWARE = Path(__file__).resolve().parents[1]
 DEVICE = HARDWARE / 'devices/j71b/device.toml'
-RECIPE_SHA256 = '6ce6f51f9a7816bc62c5fa8313758d1e9fa320e1e21ace8f690762cb0893a25d'
+RECIPE_SHA256 = '05536f6e2a1cebf7d3007e7f4ec581e64dd5da2207c27e2faf41c8697455ae16'
 
 
 class J71bData(unittest.TestCase):
@@ -51,37 +51,33 @@ class J71bData(unittest.TestCase):
         self.assertEqual(self.device['match']['linux']['product'], 'J71b Recovery')
 
     def test_ipsw_is_pinned(self):
-        url = urlsplit(self.recipe['ipsw_url'])
+        ipsw = self.recipe['ipsw']
+        url = urlsplit(ipsw['url'])
         self.assertEqual(url.scheme, 'https')
         self.assertEqual(url.hostname, 'updates.cdn-apple.com')
-        self.assertEqual(self.recipe['version'], '17.7.11')
-        self.assertEqual(self.recipe['build'], '21H461')
-        self.assertEqual(self.recipe['ipsw_bytes'], 6849577393)
-        self.assertRegex(self.recipe['ipsw_sha256'], r'^[0-9a-f]{64}$')
+        self.assertEqual(ipsw['version'], '17.7.11')
+        self.assertEqual(ipsw['build'], '21H461')
+        self.assertEqual(ipsw['bytes'], 6849577393)
+        self.assertRegex(ipsw['sha256'], r'^[0-9a-f]{64}$')
 
-    def test_extraction_patterns_and_input_hashes_retained(self):
-        self.assertEqual(self.recipe['extract_patterns'], ['C-4355__s-C1/', 'J71b[.]mtprops$'])
-        self.assertEqual(self.recipe['extracted_inputs'][0]['name'], 'J71b.mtprops')
-        for entry in self.recipe['files'] + self.recipe['extracted_inputs']:
-            self.assertRegex(entry['sha256'], r'^[0-9a-f]{64}$')
-        for pattern in self.recipe['extract_patterns']:
-            re.compile(pattern)
+    def test_recipe_matches_schema(self):
+        try:
+            import jsonschema
+        except ImportError:
+            self.skipTest('jsonschema is not a hardware dependency; the CLI validates recipes')
+        schema = json.loads((HARDWARE / 'schemas/v1/firmware.schema.json').read_text())
+        jsonschema.validate(self.recipe, schema, cls=jsonschema.Draft202012Validator)
 
-    def test_data_only_destinations_unique_and_contained(self):
-        entries = self.recipe['files'] + self.recipe['generated']
-        self.assertEqual(len(entries), 10)
-        self.assertEqual(len({entry['name'] for entry in entries}), len(entries))
-        self.assertEqual(len({entry['destination'] for entry in entries}), len(entries))
-        for entry in entries:
-            path = PurePosixPath(entry['destination'])
-            self.assertFalse(path.is_absolute())
-            self.assertNotIn('..', path.parts)
-            self.assertEqual(path.parts[:2], ('lib', 'firmware'))
-        self.assertEqual(self.recipe['generated'], [{
-            'name': 'j71b-fwstart.z2fw',
-            'destination': 'lib/firmware/apple/j71b-fwstart.z2fw',
-            'generator': 'j71b-touch',
-        }])
+    def test_every_output_is_pinned_and_uses_known_inputs(self):
+        outputs = self.recipe['outputs']
+        self.assertEqual(len(outputs), 10)
+        self.assertEqual(len({o['destination'] for o in outputs}), len(outputs))
+        for output in outputs:
+            self.assertRegex(output['sha256'], r'^[0-9a-f]{64}$')
+            for step in output['steps']:
+                self.assertIn(step['input'], self.recipe['inputs'])
+        touch = [o for o in outputs if o['destination'] == 'lib/firmware/apple/j71b-fwstart.z2fw']
+        self.assertEqual(touch[0]['steps'][0]['step'], 'z2fw-from-mtprops@1')
 
     def test_no_orchard_or_distro_dependency_in_device_definition(self):
         self.assertNotIn('requires', self.device)

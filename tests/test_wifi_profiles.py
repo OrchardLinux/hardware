@@ -39,7 +39,8 @@ def block(text, start):
 class WifiProfiles(unittest.TestCase):
     def setUp(self):
         self.recipe = json.loads((ROOT / 'devices/j71b/firmware.json').read_text())
-        self.nvram = [row for row in self.recipe['files'] if row['name'].endswith('.txt')]
+        self.nvram = [{'name': row['steps'][0]['input'], 'sha256': row['sha256'], 'destination': row['destination']}
+                      for row in self.recipe['outputs'] if row['destination'].endswith('.txt')]
 
     def test_all_ipsw_profiles_have_separate_pinned_destinations(self):
         profiles = {'u-4.3': '9b05b7a2ff1b0baea5b8cb8240d1aedbfcdabafa2604742a72b5fe4a15f1b3ca',
