@@ -51,6 +51,13 @@ for block in /sys/class/block/nvme*n*p*; do
  [ "$(cat "$block/ro")" = 1 ]
 done
 [ "$found" = 1 ]
+# Other namespaces hold Apple system data and are never written: fence the
+# whole namespace, not only its partitions.
+for block in /sys/class/block/nvme*n*; do
+ [ -d "$block" ] && [ ! -e "$block/partition" ] && [ "${block##*/}" != nvme0n1 ] || continue
+ blockdev --setro "/dev/${block##*/}"
+ [ "$(cat "$block/ro")" = 1 ]
+done
 step touch
 optional touch touch_up
 step bluetooth
