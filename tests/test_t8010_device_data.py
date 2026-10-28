@@ -23,7 +23,11 @@ BOARDS = {
     'd111': ('iPhone9,4', 0x0e, '19H422'),
 }
 # Recipe steps implemented by the Orchard CLI (docs/firmware-recipes.md).
-STEPS = {'copy@1', 'bluetool-hcd@1', 'smartio-from-kernelcache@1', 'im4p-payload@1', 'z2fw-from-mtprops@1'}
+STEPS = {'copy@1', 'bluetool-hcd@1', 'smartio-from-kernelcache@1', 'im4p-payload@1', 'z2fw-from-mtprops@1',
+         'z2fw-from-mtprops@2', 'z2fw-from-mtfw@1'}
+# Touch firmware the device tree requests (firmware-name); J171 shares the iPad 7 DT with J172.
+TOUCH = {'d11': 'dfrmtfw-d11-c1f5e-2.bin', 'd111': 'dfrmtfw-d111-c1f5e-2.bin',
+         'j171': 'dfrmtfw-j172-k1f19-6.bin', 'j172': 'dfrmtfw-j172-k1f19-6.bin'}
 
 
 class T8010DeviceData(unittest.TestCase):
@@ -64,9 +68,9 @@ class T8010DeviceData(unittest.TestCase):
                 for output in recipe['outputs']:
                     self.assertRegex(output['sha256'], SHA256)
                     self.assertEqual(PurePosixPath(output['destination']).parts[:2], ('lib', 'firmware'))
+                    self.assertIn(output['steps'][0]['input'], recipe['inputs'])
                     for step in output['steps']:
                         self.assertIn(step['step'], STEPS)
-                        self.assertIn(step['input'], recipe['inputs'])
 
     def test_bluetooth_vendor_images_are_installed_side_by_side(self):
         # Which image a unit needs depends on its module vendor; neither is guessed.
@@ -82,7 +86,17 @@ class T8010DeviceData(unittest.TestCase):
                 names = [PurePosixPath(o['destination']).name for o in self.load(profile)[1]['outputs']]
                 for name in names:
                     self.assertTrue(name.startswith(('brcmfmac4355', 'BCM.apple,', 't8010-smartio.bin',
-                                                     profile + '-fwstart')), name)
+                                                     profile + '-fwstart')) or name == TOUCH.get(profile), name)
+
+    def test_touch_is_untested_exactly_where_firmware_is_built(self):
+        for profile in BOARDS:
+            with self.subTest(profile=profile):
+                device, recipe = self.load(profile)
+                names = {PurePosixPath(o['destination']).name for o in recipe['outputs']}
+                if profile in TOUCH:
+                    self.assertIn(TOUCH[profile], names)
+                touch = bool(names & {TOUCH.get(profile), profile + '-fwstart.z2fw'})
+                self.assertEqual(device['features']['touch'], 'untested' if touch else 'missing')
 
 
 if __name__ == '__main__':

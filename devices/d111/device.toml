@@ -43,7 +43,7 @@ usb_network = false
 # States: working, partial, untested, missing, none (features.toml).
 [features]
 display = "untested"
-touch = "missing"
+touch = "untested"
 wifi = "untested"
 bluetooth = "missing"
 storage = "untested"

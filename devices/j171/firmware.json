@@ -57,6 +57,12 @@
         "rootfs": "usr/sbin/BlueTool"
       },
       "device": "/usr/sbin/BlueTool"
+    },
+    "J171_Multitouch.im4p": {
+      "ipsw": {
+        "zip": "Firmware/J171_Multitouch.im4p"
+      },
+      "sha256": "159f75dbbbf694a47af0fa16d00f2cbf3cf9a3dd34bfdb8da5db1d167a3e9889"
     }
   },
   "outputs": [
@@ -137,6 +143,21 @@
         {
           "step": "bluetool-hcd@1",
           "input": "BlueTool"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/apple/dfrmtfw-j172-k1f19-6.bin",
+      "sha256": "898b9848c68c1b086c824456ad20ab3a5a1f23e375190819544af9c2bac6bd90",
+      "steps": [
+        {
+          "step": "im4p-payload@1",
+          "input": "J171_Multitouch.im4p"
+        },
+        {
+          "step": "z2fw-from-mtfw@1",
+          "profile": "K1F19,6",
+          "otp_preflight": true
         }
       ]
     }

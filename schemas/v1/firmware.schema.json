@@ -36,6 +36,14 @@
   "$defs": {
     "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "relative": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._,/+-]*$"},
+    "step": {
+      "type": "object",
+      "required": ["step"],
+      "properties": {
+        "step": {"type": "string", "pattern": "^[a-z0-9-]+@[1-9][0-9]*$"},
+        "input": {"type": "string"}
+      }
+    },
     "input": {
       "type": "object",
       "required": ["ipsw"],
@@ -69,16 +77,11 @@
         "destination": {"type": "string", "pattern": "^lib/firmware/[A-Za-z0-9][A-Za-z0-9._,/+-]*$"},
         "sha256": {"$ref": "#/$defs/sha256"},
         "steps": {
+          "description": "The first step reads a recipe input; each later step, the previous result.",
           "type": "array",
           "minItems": 1,
-          "items": {
-            "type": "object",
-            "required": ["step", "input"],
-            "properties": {
-              "step": {"type": "string", "pattern": "^[a-z0-9-]+@[1-9][0-9]*$"},
-              "input": {"type": "string"}
-            }
-          }
+          "prefixItems": [{"$ref": "#/$defs/step", "required": ["input"]}],
+          "items": {"$ref": "#/$defs/step", "not": {"required": ["input"]}}
         }
       }
     }

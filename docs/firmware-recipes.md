@@ -17,7 +17,8 @@ implements.
     `{"kernelcache": "active"}`.
   An optional `sha256` pins the input.
 - `outputs`: installed files. Each has a `destination` under
-  `lib/firmware/`, a pinned `sha256`, and `steps`.
+  `lib/firmware/`, a pinned `sha256`, and `steps`. The first step names an
+  `input`; each later step takes the previous step's result instead.
 
 The host reads `ipsw` sources. The in-app installer reads `device` sources
 when a recipe lists them, and falls back to the IPSW when an input is
@@ -35,6 +36,8 @@ at boot.
 | `smartio-from-kernelcache@1` | `input` (kernelcache) | SmartIO coprocessor firmware |
 | `im4p-payload@1` | `input` | the payload of an IM4P container |
 | `z2fw-from-mtprops@1` | `input`, `profile`, `packet`, `load_address`, `hbpp_version` | Z2 touch firmware with calibration records |
+| `z2fw-from-mtprops@2` | `input`, `profile`, `packet` | Z2 touch firmware from an mtprops packet array (iPhone 7 Plus) |
+| `z2fw-from-mtfw@1` | `profile`, `otp_preflight` | Z2 touch firmware from an MTFW HBPP item list (iPad 7); each calibration loads Apple's default, then its record |
 
 Before it extracts anything, the CLI checks that it implements every step a
 recipe uses. If not, it asks for an Orchard update. New devices that reuse

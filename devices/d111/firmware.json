@@ -71,6 +71,13 @@
         "rootfs": "usr/sbin/BlueTool"
       },
       "device": "/usr/sbin/BlueTool"
+    },
+    "D11.mtprops": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/multitouch/D11.mtprops"
+      },
+      "device": "/usr/share/firmware/multitouch/D11.mtprops",
+      "sha256": "7f9b16b749dd0f3e12633ce5140220ea89317006dc0278b24cf2d815578e3ff6"
     }
   },
   "outputs": [
@@ -171,6 +178,18 @@
         {
           "step": "bluetool-hcd@1",
           "input": "BlueTool"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/apple/dfrmtfw-d111-c1f5e-2.bin",
+      "sha256": "57f094f2afbc21c3eca511f5b5d0a90e276789a0a5e8f770528e682fdfa660d6",
+      "steps": [
+        {
+          "step": "z2fw-from-mtprops@2",
+          "input": "D11.mtprops",
+          "profile": "C1F5E,2",
+          "packet": "Z2"
         }
       ]
     }
