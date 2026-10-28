@@ -64,13 +64,15 @@
       ]
     },
     {
-      "destination": "lib/firmware/apple/dfrmtfw-j71s-c1f15-1.bin",
-      "sha256": "98f73566489fed958a04bb73b87f63d8abd6948b7ceacd89d1bc638e64b8998d",
+      "destination": "lib/firmware/apple/j71s-fwstart.z2fw",
+      "sha256": "d1ba8bc78e4bf67db163db426f11d22323057705aa66954b8785e9a57495da27",
       "steps": [
         {
-          "step": "z2-packet-from-mtprops@1",
+          "step": "z2fw-from-z2-packet@1",
           "input": "J71s.mtprops",
-          "profile": "C1F15,1"
+          "profile": "C1F15,1",
+          "calibration_address": 268472320,
+          "calibration_size": 1024
         }
       ]
     }
