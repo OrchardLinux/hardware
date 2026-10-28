@@ -126,7 +126,7 @@ difference while porting J71b to the J172 model".
 
 Committed on the stack (verified to apply; not yet compiled):
 1. iommu: apple-dart: no master-config dereference in the S5L8960X fault handler
-   (PR #6 for J71t independently found the same bug)
+   (found by our own code review; PR #6 happens to change the same line)
 2. nvme-pci: apple-ans: release the FlatDMA slot before unmapping its pages
 3. soc: apple: sio: take RX interrupts only while the coprocessor runs
 4. power: supply: bq27xxx_hdq: BQ27540 (iPad 5/6), live reads; cache-only stays BQ27545
@@ -138,3 +138,15 @@ Revised after the no-scaffolding decision:
 - H9P module support: dropped. Only J71b's fence boot order needed it.
 - brcmfmac crash-report guard: dropped. Mainline brcmf_fw_crashed() already
   returns early without drvr.
+
+## Unverified sources
+
+hardware#6 (J71t, brkosebay) and hardware#8 (charging, same author, same flow
+ported to J71b) are untrusted references. Nothing from them is adopted
+without our own verification. #8's charging policy had known flaws: computer
+→ 2.4 A from a USB session flag, and stale USB-C advertisement refresh.
+
+The J71b/J71t CBTL1610 charging source is built from our research and the
+device-tested `j71b_adaptive_charge` module as a `power_supply` source for
+Paul's D2365 charger. `apple_tristar_power.c` from #6 is reference only.
+J71t integration gets the same hunk-by-hunk review as our own delta.
