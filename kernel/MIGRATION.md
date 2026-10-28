@@ -37,13 +37,31 @@ The build applies the shared series, then the device's own, in order.
    `patches/hoolock/<branch>/`: 98 patches. One duplicate commit present in two
    branches is dropped.
    **Verified:** tree(`v7.3-rc1` + hoolock) == tree(`6831bc70`) == `445bf947`.
-2. **Pauli1Go series.** Fetch Paul's branch the same way, rebase his non-Hoolock
-   commits onto step 1, and export them.
-   **Check:** each commit applies; record which `0001` hunks it reproduces.
-3. **Split `0001`.** Our tree = step 2 + remaining hunks, grouped by subsystem
-   (NVMe/ANS, PCIe/pwrctrl, SIO DMA, touch, HDQ/serdev, J71b DT/readiness).
-   **Check:** tree(final stack) == tree(`6831bc70` + current j71b patches).
-   That makes the migration a proven no-op for the running kernel.
+2. **Pauli1Go series.** Paul Praschl's 127 commits (+15.9k/−1.3k, 115 files: J172,
+   iPhone 7/7 Plus) are replayed as-is onto step 1 with authorship kept. Conflicts
+   are reviewed individually. Fetched with `--shallow-since` into the same cache entry.
+3. **Semantic review of Orchard's delta.** Our current tree compared with Paul's
+   latest, over the files `0001` touches:
+   - 15 files identical to Paul's (no Orchard delta);
+   - ~480 lines of J71b-only additions (DTs, readiness touch driver, NVMe
+     read-only policy) → `patches/j71b/`;
+   - ~550 lines of real changes to Paul's drivers (DART, NVMe/ANS, H9P PCIe,
+     SIO core, pinctrl, bq27xxx HDQ, samsung UART, serdev, Kconfig/Makefile).
+
+   Our code ran on J71b but is not assumed correct: it may carry copies older
+   than Paul's or mainline's, or workarounds. Each hunk is compared with Paul's
+   latest and current mainline/Hoolock, and gets one verdict in `REVIEW.md`:
+   J71b-specific / real fix (own `orchard/` commit with rationale, offered
+   upstream to Paul) / older copy or regression (drop) / workaround (drop or flag).
+
+   Also evaluated: Paul's pieces we don't use yet (`i2c-pasemi` T8010 recovery,
+   in-tree `gpio-apple-d2365`, Bluetooth, NVMEM Wi-Fi calibration, D2365
+   charger, Bellatrix source), adopted where they replace ours.
+
+   **Check:** no longer tree equality, because changes are intended. Instead:
+   kernel builds, then a J71b RAM-boot checklist over Wi-Fi SSH (storage fence,
+   touch, Wi-Fi, Bluetooth, battery, charging, backlight) against today's kernel.
+   The current stack stays as the fallback until this passes.
 4. **Build switch.** `kernel/build` applies `hoolock/`, `pauli1go/`, `orchard/`,
    then `<device>/`. `upstream.lock` points at torvalds. Rebuild and compare
    `Image.gz`/modules with the cached build; boot once on J71b.
