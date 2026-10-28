@@ -138,8 +138,8 @@ Revised after the no-scaffolding decision:
 
 ## Unverified sources
 
-hardware#6 (J71t, brkosebay) and hardware#8 (charging, same author, same flow
-ported to J71b) are untrusted references. Nothing from them is adopted
+hardware#6 (J71t, brkosebay) and hardware#8 (charging, the same flow
+ported to J71b) are unverified references. Nothing from them is adopted
 without our own verification. #8's charging policy had known flaws: computer
 → 2.4 A from a USB session flag, and stale USB-C advertisement refresh.
 

@@ -37,4 +37,4 @@ contributors = ["Berkay Kösebay"]
 devices = ["j71t (iPad 5)"]
 license = "GPL-2.0"
 status = "found"
-notes = "Unverified; same author as hardware#8, whose charging policy had known flaws. Review hunk by hunk before adopting anything. Its CBTL1610 driver is reference only."
+notes = "Unverified. Review hunk by hunk before adopting anything. Its CBTL1610 driver is reference only."

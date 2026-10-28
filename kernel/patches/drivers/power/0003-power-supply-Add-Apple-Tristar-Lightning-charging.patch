@@ -29,8 +29,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  drivers/power/supply/Kconfig                 |   16 +
  drivers/power/supply/Makefile                |    1 +
- drivers/power/supply/apple_tristar_charger.c | 1069 ++++++++++++++++++
- 3 files changed, 1086 insertions(+)
+ drivers/power/supply/apple_tristar_charger.c | 1039 ++++++++++++++++++
+ 3 files changed, 1056 insertions(+)
  create mode 100644 drivers/power/supply/apple_tristar_charger.c
 
 diff --git a/drivers/power/supply/Kconfig b/drivers/power/supply/Kconfig
@@ -74,10 +74,10 @@ index 0da5546d1..fedeaf842 100644
  obj-$(CONFIG_CHARGER_DA9150)	+= da9150-charger.o
 diff --git a/drivers/power/supply/apple_tristar_charger.c b/drivers/power/supply/apple_tristar_charger.c
 new file mode 100644
-index 000000000..126f89a6e
+index 000000000..7e6d611e0
 --- /dev/null
 +++ b/drivers/power/supply/apple_tristar_charger.c
-@@ -0,0 +1,1069 @@
+@@ -0,0 +1,1039 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Lightning charging for Apple devices with a Tristar (CBTL1610) port
@@ -194,7 +194,6 @@ index 000000000..126f89a6e
 +	/* Event attribution: a new epoch invalidates measurements and grants. */
 +	unsigned int epoch;
 +	bool adc_waiting;
-+	u64 edge_ns;
 +	u64 storm_start_ns;
 +	unsigned int storm_count;
 +
@@ -210,7 +209,6 @@ index 000000000..126f89a6e
 +	u64 attach_ns;
 +	u64 step_ns;
 +	u64 guard_ns;
-+	u64 report_ns;
 +	unsigned int redetects;
 +	unsigned int retries;
 +	unsigned int epoch_seen;
@@ -243,13 +241,10 @@ index 000000000..126f89a6e
 +	return ret;
 +}
 +
-+static void tristar_withdraw(struct tristar_charger *chg, unsigned int code,
-+			     const char *why)
++static void tristar_withdraw(struct tristar_charger *chg, unsigned int code)
 +{
 +	if (READ_ONCE(chg->code) > code && tristar_set_code(chg, code))
 +		dev_crit(chg->dev, "Withdrawal write failed; input limit unverified\n");
-+	if (why)
-+		dev_info(chg->dev, "%s\n", why);
 +}
 +
 +/* ---- Battery ---- */
@@ -594,7 +589,6 @@ index 000000000..126f89a6e
 +		if (ret)
 +			return ret;
 +		bank_ma[bank] = tristar_brick_ma(dp, dm, &bank_id[bank]);
-+		dev_info(chg->dev, "USB-A bank %d: D+ %u mV, D- %u mV\n", bank, dp, dm);
 +	}
 +	if (bank_ma[0] && bank_ma[1] && bank_id[0] != bank_id[1]) {
 +		/* Disagreeing banks: trust the lower advertisement. */
@@ -661,7 +655,7 @@ index 000000000..126f89a6e
 +	chg->epoch_seen = READ_ONCE(chg->epoch);
 +	if (tristar_set_code(chg, TRISTAR_CHG_FALLBACK_CODE))
 +		dev_crit(chg->dev, "Fallback write failed; input limit unverified\n");
-+	dev_info(chg->dev, "Power connected. Identifying source...\n");
++	dev_dbg(chg->dev, "power connected, identifying source\n");
 +}
 +
 +static void tristar_run_identification(struct tristar_charger *chg, u64 now)
@@ -674,8 +668,8 @@ index 000000000..126f89a6e
 +	if (ret == -EUCLEAN) {
 +		chg->phase = TRISTAR_FAULT;
 +		strscpy(chg->source, "Tristar mux restore failed", sizeof(chg->source));
-+		tristar_withdraw(chg, TRISTAR_CHG_FALLBACK_CODE,
-+				 "Fault: Tristar mux restore unverified; holding the fallback until reboot.");
++		tristar_withdraw(chg, TRISTAR_CHG_FALLBACK_CODE);
++		dev_err(chg->dev, "Tristar mux restore unverified; holding the fallback until reboot\n");
 +		return;
 +	}
 +	if (ret || READ_ONCE(chg->epoch) != chg->epoch_seen) {
@@ -684,8 +678,7 @@ index 000000000..126f89a6e
 +		if (++chg->redetects > TRISTAR_MAX_REDETECT) {
 +			chg->phase = TRISTAR_CHARGING;
 +			strscpy(chg->source, "unstable source", sizeof(chg->source));
-+			dev_info(chg->dev, "Source keeps changing during identification (%d); charging at %u mA\n",
-+				 ret, fallback_ma);
++			dev_dbg(chg->dev, "source unstable during identification (%d)\n", ret);
 +		} else {
 +			chg->attach_ns = now;
 +		}
@@ -695,9 +688,8 @@ index 000000000..126f89a6e
 +		chg->retries++;
 +		/* The settle check fires SETTLE_MS after attach_ns. */
 +		chg->attach_ns = now + (TRISTAR_RETRY_MS - TRISTAR_SETTLE_MS) * NSEC_PER_MSEC;
-+		dev_info(chg->dev, "No charger signature yet (%s); retry %u/%u in %u s\n",
-+			 what, chg->retries, TRISTAR_UNIDENTIFIED_RETRIES,
-+			 TRISTAR_RETRY_MS / 1000);
++		dev_dbg(chg->dev, "no charger signature yet (%s), retry %u/%u\n",
++			what, chg->retries, TRISTAR_UNIDENTIFIED_RETRIES);
 +		return;
 +	}
 +	strscpy(chg->source, what, sizeof(chg->source));
@@ -706,12 +698,12 @@ index 000000000..126f89a6e
 +		tristar_ma_code(min(ma, chg->max_ma)) : TRISTAR_CHG_FALLBACK_CODE;
 +	if (chg->target_code <= TRISTAR_CHG_FALLBACK_CODE) {
 +		chg->phase = TRISTAR_CHARGING;
-+		dev_info(chg->dev, "Connected: %s -> charging at %u mA\n", what, fallback_ma);
++		dev_dbg(chg->dev, "%s: %u mA\n", what, fallback_ma);
 +	} else {
 +		chg->phase = TRISTAR_RAMPING;
 +		chg->step_ns = 0;
-+		dev_info(chg->dev, "Connected: %s -> charging at up to %u mA\n", what,
-+			 tristar_code_ma(chg->target_code));
++		dev_dbg(chg->dev, "%s: up to %u mA\n", what,
++			tristar_code_ma(chg->target_code));
 +	}
 +}
 +
@@ -724,24 +716,21 @@ index 000000000..126f89a6e
 +		return;
 +	if (tristar_read_pack(&pack) || !tristar_pack_allows_grant(&pack)) {
 +		chg->phase = TRISTAR_CHARGING;
-+		tristar_withdraw(chg, TRISTAR_CHG_FALLBACK_CODE,
-+				 "Battery outside the safe window; holding the fallback.");
++		tristar_withdraw(chg, TRISTAR_CHG_FALLBACK_CODE);
++		dev_warn(chg->dev, "battery outside the charging window; holding the fallback\n");
 +		return;
 +	}
 +	next = min(chg->target_code,
 +		   tristar_ma_code(tristar_code_ma(chg->code) + TRISTAR_RAMP_STEP_MA));
 +	if (tristar_set_code(chg, next)) {
 +		chg->phase = TRISTAR_FAULT;
-+		tristar_withdraw(chg, TRISTAR_CHG_FALLBACK_CODE, "Fault: input-limit write failed.");
++		tristar_withdraw(chg, TRISTAR_CHG_FALLBACK_CODE);
++		dev_err(chg->dev, "input-limit write failed; holding the fallback\n");
 +		return;
 +	}
 +	chg->step_ns = now;
-+	if (next == chg->target_code) {
++	if (next == chg->target_code)
 +		chg->phase = TRISTAR_CHARGING;
-+		dev_info(chg->dev, "Charging at %u mA (battery %d%%, %+d mA, %d.%d C)\n",
-+			 tristar_code_ma(next), pack.capacity, pack.current_ua / 1000,
-+			 pack.temp / 10, pack.temp % 10);
-+	}
 +}
 +
 +static void tristar_guard(struct tristar_charger *chg, u64 now)
@@ -753,14 +742,9 @@ index 000000000..126f89a6e
 +	chg->guard_ns = now;
 +	if (tristar_read_pack(&pack))
 +		return;
-+	if (chg->code > TRISTAR_CHG_FALLBACK_CODE && !tristar_pack_allows_grant(&pack))
-+		tristar_withdraw(chg, TRISTAR_CHG_FALLBACK_CODE,
-+				 "Battery outside the safe window; dropped to the fallback.");
-+	if (now - chg->report_ns >= 60 * NSEC_PER_SEC) {
-+		chg->report_ns = now;
-+		dev_info(chg->dev, "Status: %s, limit %u mA, battery %d%% %+d mA %d.%d C\n",
-+			 chg->source, tristar_code_ma(chg->code), pack.capacity,
-+			 pack.current_ua / 1000, pack.temp / 10, pack.temp % 10);
++	if (chg->code > TRISTAR_CHG_FALLBACK_CODE && !tristar_pack_allows_grant(&pack)) {
++		tristar_withdraw(chg, TRISTAR_CHG_FALLBACK_CODE);
++		dev_warn(chg->dev, "battery outside the charging window; holding the fallback\n");
 +	}
 +}
 +
@@ -778,8 +762,8 @@ index 000000000..126f89a6e
 +	old_code = chg->code;
 +	old_online = chg->online;
 +	if (regmap_read(chg->regmap, chg->status_base + TRISTAR_CHG_STATUS, &status)) {
-+		tristar_withdraw(chg, TRISTAR_CHG_FALLBACK_CODE,
-+				 "PMIC status unreadable; holding the fallback.");
++		tristar_withdraw(chg, TRISTAR_CHG_FALLBACK_CODE);
++		dev_err_ratelimited(chg->dev, "PMIC status unreadable; holding the fallback\n");
 +		goto again;
 +	}
 +	chg->online = status != 0;
@@ -792,15 +776,14 @@ index 000000000..126f89a6e
 +			chg->usb_type = POWER_SUPPLY_USB_TYPE_UNKNOWN;
 +			if (tristar_set_code(chg, TRISTAR_CHG_HANDOFF_CODE))
 +				dev_crit(chg->dev, "Handoff write failed; input limit unverified\n");
-+			dev_info(chg->dev, "Disconnected.\n");
++			dev_dbg(chg->dev, "disconnected\n");
 +		}
 +		goto again;
 +	}
 +	if (status != TRISTAR_CHG_STATUS_ONLINE) {
 +		/* Transitional input state (e.g. 0x40 while attaching): no grant. */
 +		if (chg->code > TRISTAR_CHG_FALLBACK_CODE)
-+			tristar_withdraw(chg, TRISTAR_CHG_FALLBACK_CODE,
-+					 "Input state changing; holding the fallback.");
++			tristar_withdraw(chg, TRISTAR_CHG_FALLBACK_CODE);
 +		goto again;
 +	}
 +	if (!chg->present) {
@@ -814,7 +797,7 @@ index 000000000..126f89a6e
 +		chg->epoch_seen = READ_ONCE(chg->epoch);
 +		chg->phase = TRISTAR_SETTLING;
 +		chg->attach_ns = now;
-+		dev_info(chg->dev, "Source event while connected. Re-identifying...\n");
++		dev_dbg(chg->dev, "source event, re-identifying\n");
 +		goto again;
 +	}
 +	switch (chg->phase) {
@@ -842,14 +825,6 @@ index 000000000..126f89a6e
 +
 +/* ---- PMU interrupt ---- */
 +
-+static irqreturn_t tristar_irq(int irq, void *data)
-+{
-+	struct tristar_charger *chg = data;
-+
-+	chg->edge_ns = ktime_get_ns();
-+	return IRQ_WAKE_THREAD;
-+}
-+
 +static irqreturn_t tristar_irq_thread(int irq, void *data)
 +{
 +	struct tristar_charger *chg = data;
@@ -869,9 +844,6 @@ index 000000000..126f89a6e
 +		    !regmap_read(chg->regmap, reg, &readback) &&
 +		    readback == TRISTAR_CHG_FALLBACK_CODE) {
 +			WRITE_ONCE(chg->code, TRISTAR_CHG_FALLBACK_CODE);
-+			dev_info(chg->dev, "PMU event: limit dropped to %u mA in %llu us\n",
-+				 tristar_code_ma(TRISTAR_CHG_FALLBACK_CODE),
-+				 (ktime_get_ns() - chg->edge_ns) / NSEC_PER_USEC);
 +		} else {
 +			dev_crit(chg->dev, "PMU event: withdrawal write failed\n");
 +		}
@@ -1068,7 +1040,7 @@ index 000000000..126f89a6e
 +
 +	/* Acknowledge anything pending from before we owned the line. */
 +	regmap_bulk_read(chg->regmap, chg->event_base, events, sizeof(events));
-+	ret = devm_request_threaded_irq(dev, chg->irq, tristar_irq, tristar_irq_thread,
++	ret = devm_request_threaded_irq(dev, chg->irq, NULL, tristar_irq_thread,
 +					IRQF_ONESHOT, dev_name(dev), chg);
 +	if (ret)
 +		return dev_err_probe(dev, ret, "failed to request the PMU interrupt\n");
@@ -1078,8 +1050,6 @@ index 000000000..126f89a6e
 +	if (ret)
 +		return ret;
 +
-+	dev_info(dev, "Lightning charging active (board maximum %u mA, unidentified sources %u mA)\n",
-+		 chg->max_ma, tristar_code_ma(TRISTAR_CHG_FALLBACK_CODE));
 +	mod_delayed_work(system_highpri_wq, &chg->poll_work, 0);
 +	return 0;
 +}
