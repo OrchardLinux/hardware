@@ -117,7 +117,7 @@ if [[ -d "$here/modules/$platform" ]]; then
   external=(--external "$stage/external")
 fi
 python3 "$here/stage-modules.py" --build "$build_output" \
-  "${external[@]}" --output "$stage/module-root"
+  ${external[@]+"${external[@]}"} --output "$stage/module-root"
 mkdir -p "$dest/dtbs"
 cp "$build_output/arch/arm64/boot/dts/apple/"*.dtb "$dest/dtbs/"
 if [[ "$device_dtb" != - ]]; then
