@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Thu, 16 Jul 2026 01:12:09 +0800
+Subject: [PATCH 18/20] dt-bindings: rtc: apple,pmic-rtc: Add Calpe PMIC
+
+Calpe PMIC RTCs are found on Apple T2 BMCs.
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ Documentation/devicetree/bindings/rtc/apple,pmic-rtc.yaml | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/rtc/apple,pmic-rtc.yaml b/Documentation/devicetree/bindings/rtc/apple,pmic-rtc.yaml
+index de0635797..79613b5d9 100644
+--- a/Documentation/devicetree/bindings/rtc/apple,pmic-rtc.yaml
++++ b/Documentation/devicetree/bindings/rtc/apple,pmic-rtc.yaml
+@@ -33,10 +33,10 @@ properties:
+               - apple,angel-pmic-rtc
+               - apple,august-pmic-rtc
+               - apple,agnes-pmic-rtc
+-              - apple,calpe-pmic-rtc # Counter also exposed via SMC
+           - const: apple,antigua-pmic-rtc
+       - const: apple,amber-pmic-rtc
+       - const: apple,antigua-pmic-rtc
++      - const: apple,calpe-pmic-rtc
+ 
+   reg:
+     maxItems: 1

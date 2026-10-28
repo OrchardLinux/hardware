@@ -1,0 +1,61 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Janne Grunau <j@jannau.net>
+Date: Wed, 2 Sep 2026 21:18:54 +0200
+Subject: [PATCH 1/5] dt-bindings: iommu: dart: Support specifying the DMA
+ aperture
+
+Apple DARTs are often connected directly to devices that expect only a
+portion of their address space to be used for DMA (for example, because
+other ranges are mapped directly to something else).
+
+Follow the "#iommu-cells = <4>" example from iommu.txt and allow
+specifying the DMA aperture via additional cells. Since DART is used on
+64-bit Apple silicon systems use two cells to specify the start and
+length of the aperture. A common aperture starts at 0x100_0000_0000
+and spans a 36-bit address space.
+
+This corresponds to the vm-base and vm-size properties on the Apple
+device tree side of things.
+
+As not all devices require this and to keep compatibility with existing
+device trees allow 1 and 5 as values for #iommu-cells.
+
+Signed-off-by: Janne Grunau <j@jannau.net>
+---
+ .../devicetree/bindings/iommu/apple,dart.yaml        | 12 +++++++-----
+ 1 file changed, 7 insertions(+), 5 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/iommu/apple,dart.yaml b/Documentation/devicetree/bindings/iommu/apple,dart.yaml
+index 47ec7fa52..6efbe732b 100644
+--- a/Documentation/devicetree/bindings/iommu/apple,dart.yaml
++++ b/Documentation/devicetree/bindings/iommu/apple,dart.yaml
+@@ -44,10 +44,12 @@ properties:
+       Optional since not all IOMMUs are attached to a clock gate.
+ 
+   '#iommu-cells':
+-    const: 1
++    enum: [ 1, 5 ]
+     description:
+-      Has to be one. The single cell describes the stream id emitted by
+-      a master to the IOMMU.
++      Has to be one or five. The first cell describes the stream id emitted by
++      a master to the IOMMU. The optional second and third cell describe the
++      aperture start of a master's DMA window and fourth and fifth cell describe
++      the size of DMA window.
+ 
+   power-domains:
+     maxItems: 1
+@@ -66,11 +68,11 @@ examples:
+       compatible = "apple,t8103-dart";
+       reg = <0x82f80000 0x4000>;
+       interrupts = <1 781 4>;
+-      #iommu-cells = <1>;
++      #iommu-cells = <5>;
+     };
+ 
+     master1 {
+-      iommus = <&dart1 0>;
++      iommus = <&dart1 0 0x100 0x0 0x10 0x0>;
+     };
+ 
+   - |+

@@ -1,0 +1,74 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Mon, 22 Dec 2025 21:25:12 +0800
+Subject: [PATCH 09/21] soc: apple: rtkit: Add protcol version 10 support
+
+Add support for protocol version 10 used from iOS 11-13. In
+protocol version 10, epmap is always completed within a single
+message, and app endpoints start at 0x6 instead of 0x20.
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ drivers/soc/apple/rtkit-internal.h |  1 +
+ drivers/soc/apple/rtkit.c          | 19 ++++++++++++-------
+ 2 files changed, 13 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/soc/apple/rtkit-internal.h b/drivers/soc/apple/rtkit-internal.h
+index 52ef7a202..5f91dea8b 100644
+--- a/drivers/soc/apple/rtkit-internal.h
++++ b/drivers/soc/apple/rtkit-internal.h
+@@ -19,6 +19,7 @@
+ #include <linux/workqueue.h>
+ #include "mailbox.h"
+ 
++#define APPLE_RTKIT_APP_ENDPOINT_START_V10 0x6
+ #define APPLE_RTKIT_APP_ENDPOINT_START_V11 0x20
+ #define APPLE_RTKIT_MAX_ENDPOINTS 0x100
+ 
+diff --git a/drivers/soc/apple/rtkit.c b/drivers/soc/apple/rtkit.c
+index 25f3bc342..a6bce181d 100644
+--- a/drivers/soc/apple/rtkit.c
++++ b/drivers/soc/apple/rtkit.c
+@@ -71,7 +71,7 @@ enum {
+ #define APPLE_RTKIT_OSLOG_SIZE GENMASK_ULL(55, 36)
+ #define APPLE_RTKIT_OSLOG_IOVA GENMASK_ULL(35, 0)
+ 
+-#define APPLE_RTKIT_MIN_SUPPORTED_VERSION 11
++#define APPLE_RTKIT_MIN_SUPPORTED_VERSION 10
+ #define APPLE_RTKIT_MAX_SUPPORTED_VERSION 12
+ 
+ struct apple_rtkit_rx_work {
+@@ -140,7 +140,10 @@ static void apple_rtkit_management_rx_hello(struct apple_rtkit *rtk, u64 msg)
+ 		 want_ver);
+ 	rtk->version = want_ver;
+ 
+-	rtk->app_ep_start = APPLE_RTKIT_APP_ENDPOINT_START_V11;
++	if (rtk->version < 11)
++		rtk->app_ep_start = APPLE_RTKIT_APP_ENDPOINT_START_V10;
++	else
++		rtk->app_ep_start = APPLE_RTKIT_APP_ENDPOINT_START_V11;
+ 
+ 	reply = FIELD_PREP(APPLE_RTKIT_MGMT_HELLO_MINVER, want_ver);
+ 	reply |= FIELD_PREP(APPLE_RTKIT_MGMT_HELLO_MAXVER, want_ver);
+@@ -171,14 +174,16 @@ static void apple_rtkit_management_rx_epmap(struct apple_rtkit *rtk, u64 msg)
+ 	}
+ 
+ 	reply = FIELD_PREP(APPLE_RTKIT_MGMT_EPMAP_BASE, base);
+-	if (msg & APPLE_RTKIT_MGMT_EPMAP_LAST)
+-		reply |= APPLE_RTKIT_MGMT_EPMAP_LAST;
+-	else
+-		reply |= APPLE_RTKIT_MGMT_EPMAP_REPLY_MORE;
++	if (rtk->version > 10) {
++		if (msg & APPLE_RTKIT_MGMT_EPMAP_LAST)
++			reply |= APPLE_RTKIT_MGMT_EPMAP_LAST;
++		else
++			reply |= APPLE_RTKIT_MGMT_EPMAP_REPLY_MORE;
++	}
+ 
+ 	apple_rtkit_management_send(rtk, APPLE_RTKIT_MGMT_EPMAP_REPLY, reply);
+ 
+-	if (!(msg & APPLE_RTKIT_MGMT_EPMAP_LAST))
++	if (rtk->version > 10 && !(msg & APPLE_RTKIT_MGMT_EPMAP_LAST))
+ 		return;
+ 
+ 	for_each_set_bit(ep, rtk->endpoints, rtk->app_ep_start) {

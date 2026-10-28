@@ -1,0 +1,105 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Fri, 8 Aug 2025 00:14:17 +0800
+Subject: [PATCH 05/21] arm64: dts: apple: Add A11 and T2 SMC and enable SMC
+ pinctrl
+
+Add SMC, SMC mailbox and SMC GPIO nodes for Apple A11 and T2 SoCs. Since
+SMC is now supported, the SMC pinctrl is enabled as well.
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ arch/arm64/boot/dts/apple/t8012.dtsi | 27 ++++++++++++++++++++++-----
+ arch/arm64/boot/dts/apple/t8015.dtsi | 27 ++++++++++++++++++++++-----
+ 2 files changed, 44 insertions(+), 10 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/apple/t8012.dtsi b/arch/arm64/boot/dts/apple/t8012.dtsi
+index 4d08eaf77..3e87b1a86 100644
+--- a/arch/arm64/boot/dts/apple/t8012.dtsi
++++ b/arch/arm64/boot/dts/apple/t8012.dtsi
+@@ -442,6 +442,15 @@
+ 			interrupts = <AIC_IRQ 168 IRQ_TYPE_LEVEL_HIGH>;
+ 		};
+ 
++		smc: smc@212000100 {
++			compatible = "apple,t8012-smc", "apple,t8103-smc";
++			reg = <0x2 0x12000100 0x0 0x100>,
++				<0x2 0x12e00000 0x0 0x80000>;
++			reg-names = "smc", "sram";
++			mboxes = <&smc_mbox>;
++			power-domains = <&ps_smc_cpu>;
++		};
++
+ 		pinctrl_smc: pinctrl@212024000 {
+ 			compatible = "apple,t8010-pinctrl", "apple,pinctrl";
+ 			reg = <0x2 0x12024000 0x0 0x1000>;
+@@ -462,11 +471,19 @@
+ 				     <AIC_IRQ 199 IRQ_TYPE_LEVEL_HIGH>,
+ 				     <AIC_IRQ 200 IRQ_TYPE_LEVEL_HIGH>,
+ 				     <AIC_IRQ 201 IRQ_TYPE_LEVEL_HIGH>;
+-			/*
+-			 * SMC is not yet supported and accessing this pinctrl while SMC is
+-			 * suspended results in a hang.
+-			 */
+-			status = "disabled";
++		};
++
++		smc_mbox: mbox@212808000 {
++			compatible = "apple,t8015-asc-mailbox";
++			reg = <0x2 0x12808000 0x0 0x4000>;
++			interrupt-parent = <&aic>;
++			interrupts = <AIC_IRQ 205 IRQ_TYPE_LEVEL_HIGH>,
++				<AIC_IRQ 206 IRQ_TYPE_LEVEL_HIGH>,
++				<AIC_IRQ 207 IRQ_TYPE_LEVEL_HIGH>,
++				<AIC_IRQ 208 IRQ_TYPE_LEVEL_HIGH>;
++			interrupt-names = "send-empty", "send-not-empty",
++				"recv-empty", "recv-not-empty";
++				#mbox-cells = <0>;
+ 		};
+ 	};
+ 
+diff --git a/arch/arm64/boot/dts/apple/t8015.dtsi b/arch/arm64/boot/dts/apple/t8015.dtsi
+index 27cee0a82..cd3b586a4 100644
+--- a/arch/arm64/boot/dts/apple/t8015.dtsi
++++ b/arch/arm64/boot/dts/apple/t8015.dtsi
+@@ -580,6 +580,15 @@
+ 			interrupts = <AIC_IRQ 172 IRQ_TYPE_LEVEL_HIGH>;
+ 		};
+ 
++		smc: smc@236000100 {
++			compatible = "apple,t8015-smc", "apple,t8103-smc";
++			reg = <0x2 0x36000100 0x0 0x100>,
++				<0x2 0x36e00000 0x0 0x40000>;
++			reg-names = "smc", "sram";
++			mboxes = <&smc_mbox>;
++			power-domains = <&ps_smc_cpu>;
++		};
++
+ 		pinctrl_smc: pinctrl@236024000 {
+ 			compatible = "apple,t8015-pinctrl", "apple,pinctrl";
+ 			reg = <0x2 0x36024000 0x0 0x4000>;
+@@ -599,11 +608,19 @@
+ 				     <AIC_IRQ 203 IRQ_TYPE_LEVEL_HIGH>,
+ 				     <AIC_IRQ 204 IRQ_TYPE_LEVEL_HIGH>,
+ 				     <AIC_IRQ 205 IRQ_TYPE_LEVEL_HIGH>;
+-			/*
+-			 * SMC is not yet supported and accessing this pinctrl while SMC is
+-			 * suspended results in a hang.
+-			 */
+-			status = "disabled";
++		};
++
++		smc_mbox: mbox@236808000 {
++			compatible = "apple,t8015-asc-mailbox";
++			reg = <0x2 0x36808000 0x0 0x4000>;
++			interrupt-parent = <&aic>;
++			interrupts = <AIC_IRQ 209 IRQ_TYPE_LEVEL_HIGH>,
++				<AIC_IRQ 210 IRQ_TYPE_LEVEL_HIGH>,
++				<AIC_IRQ 211 IRQ_TYPE_LEVEL_HIGH>,
++				<AIC_IRQ 212 IRQ_TYPE_LEVEL_HIGH>;
++			interrupt-names = "send-empty", "send-not-empty",
++				"recv-empty", "recv-not-empty";
++			#mbox-cells = <0>;
+ 		};
+ 
+ 		ans_mbox: mbox@257008000 {

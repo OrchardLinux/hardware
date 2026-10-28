@@ -1,0 +1,77 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Thu, 5 Feb 2026 14:39:05 +0800
+Subject: [PATCH 16/21] arm64: dts: apple: t8015: Add hwmon SMC subdevice
+
+The SMC in T8015-based devices provides access to various hardware
+sensors through SMC keys which can then be exposed via hwmon.
+
+Currently, all supported sensors are the same across T8015-based devices.
+Add the subdevice, compatible and the sensor keys to expose them.
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ arch/arm64/boot/dts/apple/t8015-common.dtsi | 37 +++++++++++++++++++++
+ arch/arm64/boot/dts/apple/t8015.dtsi        |  4 +++
+ 2 files changed, 41 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/t8015-common.dtsi b/arch/arm64/boot/dts/apple/t8015-common.dtsi
+index 7dce314a3..694e184f5 100644
+--- a/arch/arm64/boot/dts/apple/t8015-common.dtsi
++++ b/arch/arm64/boot/dts/apple/t8015-common.dtsi
+@@ -48,3 +48,40 @@
+ &serial0 {
+ 	status = "okay";
+ };
++
++&smc_hwmon {
++	temperature-TG0B {
++		apple,key-id = "TG0B";
++		label = "Battery Temp";
++	};
++
++	temperature-TG0V {
++		apple,key-id = "TG0V";
++		label = "Battery Flex Temp";
++	};
++
++	temperature-TP1d {
++		apple,key-id = "TP1d";
++		label = "Forehead Temp";
++	};
++
++	temperature-TP2d {
++		apple,key-id = "TP2d";
++		label = "Rear Camera Temp";
++	};
++
++	temperature-TP3d {
++		apple,key-id = "TP3d";
++		label = "Cellular Radio Temp";
++	};
++
++	temperature-TP4d {
++		apple,key-id = "TP4d";
++		label = "AP SoC Temp";
++	};
++
++	temperature-TP5d {
++		apple,key-id = "TP5d";
++		label = "Charger Temp";
++	};
++};
+diff --git a/arch/arm64/boot/dts/apple/t8015.dtsi b/arch/arm64/boot/dts/apple/t8015.dtsi
+index cd3b586a4..e8b025d90 100644
+--- a/arch/arm64/boot/dts/apple/t8015.dtsi
++++ b/arch/arm64/boot/dts/apple/t8015.dtsi
+@@ -587,6 +587,10 @@
+ 			reg-names = "smc", "sram";
+ 			mboxes = <&smc_mbox>;
+ 			power-domains = <&ps_smc_cpu>;
++
++			smc_hwmon: hwmon {
++				compatible = "apple,smc-hwmon";
++			};
+ 		};
+ 
+ 		pinctrl_smc: pinctrl@236024000 {

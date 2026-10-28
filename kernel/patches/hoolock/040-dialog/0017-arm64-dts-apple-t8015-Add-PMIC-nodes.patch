@@ -1,0 +1,74 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Wed, 30 Apr 2025 15:19:13 +0800
+Subject: [PATCH 17/20] arm64: dts: apple: t8015: Add PMIC nodes
+
+Add PMIC and subdevice nodes for Apple A11 SoC.
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ arch/arm64/boot/dts/apple/t8015.dtsi | 51 ++++++++++++++++++++++++++++
+ 1 file changed, 51 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/t8015.dtsi b/arch/arm64/boot/dts/apple/t8015.dtsi
+index 0c1ebab56..ca806ba5a 100644
+--- a/arch/arm64/boot/dts/apple/t8015.dtsi
++++ b/arch/arm64/boot/dts/apple/t8015.dtsi
+@@ -438,6 +438,57 @@
+ 			reg = <0x2 0x35180700 0x0 0x100>;
+ 			#address-cells = <2>;
+ 			#size-cells = <0>;
++
++			pmic@f {
++				compatible = "apple,agnes-pmic", "apple,spmi-pmic";
++				reg = <0xf SPMI_USID>;
++				#address-cells = <1>;
++				#size-cells = <1>;
++
++				rtc@1400 {
++					compatible = "apple,agnes-pmic-rtc", "apple,antigua-pmic-rtc";
++					reg = <0x1400 0x10>;
++					nvmem-cells = <&rtc_offset>;
++					nvmem-cell-names = "rtc_offset";
++				};
++
++				nvmem@6000 {
++					compatible = "apple,pmic-nvmem";
++					reg = <0x6000 0x300>;
++
++					nvmem-layout {
++						compatible = "fixed-layout";
++						#address-cells = <1>;
++						#size-cells = <1>;
++
++						boot_stage: boot-stage@1 {
++							reg = <0x1 0x1>;
++						};
++
++						boot_error_count: boot-error-count@2,0 {
++							reg = <0x2 0x1>;
++							bits = <0 4>;
++						};
++
++						panic_count: panic-count@2,4 {
++							reg = <0x2 0x1>;
++							bits = <4 4>;
++						};
++
++						boot_error_stage: boot-error-stage@3 {
++							reg = <0x3 0x1>;
++						};
++
++						rtc_offset: rtc-offset@4 {
++							reg = <0x4 0x4>;
++						};
++
++						shutdown_flag: shutdown-flag@f {
++							reg = <0xf 0x1>;
++						};
++					};
++				};
++			};
+ 		};
+ 
+ 		pinctrl_nub: pinctrl@2351f0000 {

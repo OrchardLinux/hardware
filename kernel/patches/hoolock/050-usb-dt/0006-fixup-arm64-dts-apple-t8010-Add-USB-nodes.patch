@@ -1,0 +1,22 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Tue, 30 Sep 2025 21:01:14 +0800
+Subject: [PATCH 6/9] fixup! arm64: dts: apple: t8010: Add USB nodes
+
+---
+ arch/arm64/boot/dts/apple/t8010.dtsi | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/apple/t8010.dtsi b/arch/arm64/boot/dts/apple/t8010.dtsi
+index de17a8934..72ec543d7 100644
+--- a/arch/arm64/boot/dts/apple/t8010.dtsi
++++ b/arch/arm64/boot/dts/apple/t8010.dtsi
+@@ -250,7 +250,7 @@
+ 				phy-names = "usb2-phy";
+ 				power-domains = <&ps_usbotg>;
+ 				resets = <&ps_usbotg>;
+-				//dr_mode = "peripheral";
++				dr_mode = "peripheral";
+ 			};
+ #if 0
+ 			ehci0: usb-ehci@20c200000 {

@@ -1,0 +1,31 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Mon, 16 Jun 2025 09:32:06 +0800
+Subject: [PATCH 17/21] arm64: dts: apple: s8001: Add CPU PMU nodes
+
+Add CPU PMU nodes for Apple A9X SoC.
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ arch/arm64/boot/dts/apple/s8001.dtsi | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/s8001.dtsi b/arch/arm64/boot/dts/apple/s8001.dtsi
+index 209c7dd19..cc4ba30f6 100644
+--- a/arch/arm64/boot/dts/apple/s8001.dtsi
++++ b/arch/arm64/boot/dts/apple/s8001.dtsi
+@@ -305,6 +305,14 @@
+ 		interrupts = <AIC_FIQ AIC_TMR_GUEST_PHYS IRQ_TYPE_LEVEL_HIGH>,
+ 			     <AIC_FIQ AIC_TMR_GUEST_VIRT IRQ_TYPE_LEVEL_HIGH>;
+ 	};
++
++	pmu {
++		compatible = "apple,twister-pmu";
++		interrupt-parent = <&aic>;
++		interrupts = <AIC_IRQ 83 IRQ_TYPE_LEVEL_HIGH>,
++			     <AIC_IRQ 86 IRQ_TYPE_LEVEL_HIGH>;
++		interrupt-affinity = <&cpu0 &cpu1>;
++	};
+ };
+ 
+ #include "s8001-pmgr.dtsi"

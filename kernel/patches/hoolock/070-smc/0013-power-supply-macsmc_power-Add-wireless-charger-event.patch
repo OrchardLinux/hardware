@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Mon, 12 Jan 2026 23:59:40 +0800
+Subject: [PATCH 13/21] power: supply: macsmc_power: Add wireless charger
+ events
+
+Add wireless charger events as seen on Apple A11.
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ drivers/power/supply/macsmc-power.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/drivers/power/supply/macsmc-power.c b/drivers/power/supply/macsmc-power.c
+index 393c4f38b..b4df62867 100644
+--- a/drivers/power/supply/macsmc-power.c
++++ b/drivers/power/supply/macsmc-power.c
+@@ -632,7 +632,9 @@ static int macsmc_power_event(struct notifier_block *nb, unsigned long event, vo
+ 	 * 0x71... indicates power/battery events.
+ 	 */
+ 	if ((event & 0xffffff00) == 0x71010100 || /* Charger status change */
++	    (event & 0xffffff00) == 0x71010200 || /* Wireless charger status change */
+ 	    (event & 0xffff0000) == 0x71060000 || /* Port charge state change */
++	    (event & 0xffff0000) == 0x71070000 || /* Charging coil state change */
+ 	    (event & 0xffff0000) == 0x71130000) { /* Connector insert/remove event */
+ 		if (power->batt)
+ 			power_supply_changed(power->batt);

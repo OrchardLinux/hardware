@@ -1,0 +1,58 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Mon, 17 Feb 2025 03:13:23 +0800
+Subject: [PATCH 11/20] arm64: dts: apple: t7001: Add PMIC nodes
+
+Add PMIC nodes and nodes for subdevices for Apple A8X SoC.
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ arch/arm64/boot/dts/apple/t7001-air2.dtsi | 38 +++++++++++++++++++++++
+ 1 file changed, 38 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/t7001-air2.dtsi b/arch/arm64/boot/dts/apple/t7001-air2.dtsi
+index e4ec8c197..fb000852d 100644
+--- a/arch/arm64/boot/dts/apple/t7001-air2.dtsi
++++ b/arch/arm64/boot/dts/apple/t7001-air2.dtsi
+@@ -73,3 +73,41 @@
+ &serial0 {
+ 	status = "okay";
+ };
++
++&i2c0 {
++	status = "okay";
++
++	pmic@3c {
++		compatible = "apple,arabela-pmic", "apple,i2c-pmic";
++		reg = <0x3c>;
++		#address-cells = <1>;
++		#size-cells = <1>;
++
++		rtc@5c0 {
++			compatible = "apple,arabela-pmic-rtc", "apple,amber-pmic-rtc";
++			reg = <0x5c0 0x10>;
++			nvmem-cells = <&rtc_offset>;
++			nvmem-cell-names = "rtc_offset";
++		};
++
++		backlight@600 {
++			compatible = "apple,arabela-pmic-bl", "apple,anya-pmic-bl";
++			reg = <0x600 0x2>;
++		};
++
++		nvmem@4000 {
++			compatible = "apple,pmic-nvmem";
++			reg = <0x4000 0x28>;
++
++			nvmem-layout {
++				compatible = "fixed-layout";
++				#address-cells = <1>;
++				#size-cells = <1>;
++
++				rtc_offset: rtc-offset@4 {
++					reg = <0x4 0x4>;
++				};
++			};
++		};
++	};
++};

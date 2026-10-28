@@ -1,0 +1,51 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Mon, 16 Jun 2025 09:31:54 +0800
+Subject: [PATCH 05/21] drivers/perf: apple_m1: Support configuring counters
+ for 32-bit EL0
+
+Add support for configuring counters for 32-bit EL0 to allow adding support
+for implementations with 32-bit EL0.
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ arch/arm64/include/asm/apple_m1_pmu.h | 2 ++
+ drivers/perf/apple_m1_cpu_pmu.c       | 6 ++++++
+ 2 files changed, 8 insertions(+)
+
+diff --git a/arch/arm64/include/asm/apple_m1_pmu.h b/arch/arm64/include/asm/apple_m1_pmu.h
+index 02e05d058..8a667e7f0 100644
+--- a/arch/arm64/include/asm/apple_m1_pmu.h
++++ b/arch/arm64/include/asm/apple_m1_pmu.h
+@@ -38,8 +38,10 @@
+ 
+ #define SYS_IMP_APL_PMCR1_EL1	sys_reg(3, 1, 15, 1, 0)
+ #define SYS_IMP_APL_PMCR1_EL12	sys_reg(3, 1, 15, 7, 2)
++#define PMCR1_COUNT_A32_EL0_0_7	GENMASK(7, 0)
+ #define PMCR1_COUNT_A64_EL0_0_7	GENMASK(15, 8)
+ #define PMCR1_COUNT_A64_EL1_0_7	GENMASK(23, 16)
++#define PMCR1_COUNT_A32_EL0_8_9	GENMASK(33, 32)
+ #define PMCR1_COUNT_A64_EL0_8_9	GENMASK(41, 40)
+ #define PMCR1_COUNT_A64_EL1_8_9	GENMASK(49, 48)
+ 
+diff --git a/drivers/perf/apple_m1_cpu_pmu.c b/drivers/perf/apple_m1_cpu_pmu.c
+index 0b0ee2b9a..6340ff7d3 100644
+--- a/drivers/perf/apple_m1_cpu_pmu.c
++++ b/drivers/perf/apple_m1_cpu_pmu.c
+@@ -348,10 +348,16 @@ static void __m1_pmu_configure_event_filter(unsigned int index, bool user,
+ 	case 0 ... 7:
+ 		user_bit = BIT(get_bit_offset(index, PMCR1_COUNT_A64_EL0_0_7));
+ 		kernel_bit = BIT(get_bit_offset(index, PMCR1_COUNT_A64_EL1_0_7));
++
++		if (system_supports_32bit_el0())
++			user_bit |= BIT(get_bit_offset(index, PMCR1_COUNT_A32_EL0_0_7));
+ 		break;
+ 	case 8 ... 9:
+ 		user_bit = BIT(get_bit_offset(index - 8, PMCR1_COUNT_A64_EL0_8_9));
+ 		kernel_bit = BIT(get_bit_offset(index - 8, PMCR1_COUNT_A64_EL1_8_9));
++
++		if (system_supports_32bit_el0())
++			user_bit |= BIT(get_bit_offset(index - 8, PMCR1_COUNT_A32_EL0_8_9));
+ 		break;
+ 	default:
+ 		BUG();
