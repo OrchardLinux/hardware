@@ -1,0 +1,65 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Mon, 27 Jul 2026 10:22:52 +0200
+Subject: [PATCH 054/117] Bluetooth: btbcm: expose the controller reset helper
+
+Some Broadcom UART integrations must reset the controller immediately
+before moving to the baud rate used for Patchram download.
+
+Expose the existing reset helper through btbcm so transport drivers can
+perform that ordering without duplicating the vendor command. Provide
+the usual disabled-configuration stub for callers built without BT_BCM.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: 675cab6359052156dcae1c534d451d2c7a9e4a88
+---
+ drivers/bluetooth/btbcm.c | 3 ++-
+ drivers/bluetooth/btbcm.h | 6 ++++++
+ 2 files changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/bluetooth/btbcm.c b/drivers/bluetooth/btbcm.c
+index ac1c0bc9a..31a81da91 100644
+--- a/drivers/bluetooth/btbcm.c
++++ b/drivers/bluetooth/btbcm.c
+@@ -274,7 +274,7 @@ int btbcm_patchram(struct hci_dev *hdev, const struct firmware *fw)
+ }
+ EXPORT_SYMBOL(btbcm_patchram);
+ 
+-static int btbcm_reset(struct hci_dev *hdev)
++int btbcm_reset(struct hci_dev *hdev)
+ {
+ 	struct sk_buff *skb;
+ 
+@@ -292,6 +292,7 @@ static int btbcm_reset(struct hci_dev *hdev)
+ 
+ 	return 0;
+ }
++EXPORT_SYMBOL_GPL(btbcm_reset);
+ 
+ static struct sk_buff *btbcm_read_local_name(struct hci_dev *hdev)
+ {
+diff --git a/drivers/bluetooth/btbcm.h b/drivers/bluetooth/btbcm.h
+index b4cb24231..c46b8096c 100644
+--- a/drivers/bluetooth/btbcm.h
++++ b/drivers/bluetooth/btbcm.h
+@@ -52,6 +52,7 @@ struct bcm_set_pcm_format_params {
+ #if IS_ENABLED(CONFIG_BT_BCM)
+ 
+ int btbcm_check_bdaddr(struct hci_dev *hdev);
++int btbcm_reset(struct hci_dev *hdev);
+ int btbcm_set_bdaddr(struct hci_dev *hdev, const bdaddr_t *bdaddr);
+ int btbcm_patchram(struct hci_dev *hdev, const struct firmware *fw);
+ int btbcm_read_pcm_int_params(struct hci_dev *hdev,
+@@ -72,6 +73,11 @@ static inline int btbcm_check_bdaddr(struct hci_dev *hdev)
+ 	return -EOPNOTSUPP;
+ }
+ 
++static inline int btbcm_reset(struct hci_dev *hdev)
++{
++	return -EOPNOTSUPP;
++}
++
+ static inline int btbcm_set_bdaddr(struct hci_dev *hdev, const bdaddr_t *bdaddr)
+ {
+ 	return -EOPNOTSUPP;

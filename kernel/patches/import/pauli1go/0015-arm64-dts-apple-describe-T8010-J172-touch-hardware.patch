@@ -1,0 +1,183 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Tue, 14 Jul 2026 16:02:13 +0200
+Subject: [PATCH 015/117] arm64: dts: apple: describe T8010/J172 touch hardware
+
+T8010 provides the SmartIO coprocessor, a legacy SPI3 controller and a PMGR
+touch clock used by the iPad 7 touchscreen.  J172 connects SPI3 to SmartIO
+transmit endpoint 0x1a and supplies dedicated reset, power, chip-select and
+display-sync GPIOs.
+
+Describe the SoC-level SIO interrupts and register windows, SPI3 controller
+pins, power domains and touch clock.  Add the J172 peripheral with mode-3
+SPI timing, firmware, panel size and platform GPIO wiring.  Model the
+measured 55.384615 MHz SPI3 input clock so speed_hz selects the hardware
+divider instead of embedding a board-specific divider in the SPI driver.
+
+Keep the board description declarative and leave firmware protocol handling
+to apple_z2.  Add the iPad 7 board description to the J172 touchscreen
+MAINTAINERS section.
+
+The DTB passed schema validation and was built with LLVM 18.  A fresh boot
+populated NVMe HMB and mounted the internal root read-write.  It bound
+apple-z2 automatically and passed the DT620 touch test.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: 4431dcae3a999a8bdc16c5f621ad89592637c323
+---
+ MAINTAINERS                                |  1 +
+ arch/arm64/boot/dts/apple/t8010-ipad7.dtsi | 54 ++++++++++++++++++++++
+ arch/arm64/boot/dts/apple/t8010-pmgr.dtsi  |  9 ++++
+ arch/arm64/boot/dts/apple/t8010.dtsi       | 37 +++++++++++++++
+ 4 files changed, 101 insertions(+)
+
+diff --git a/MAINTAINERS b/MAINTAINERS
+index c37cf5d81..d1b553476 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -2722,6 +2722,7 @@ L:	asahi@lists.linux.dev
+ L:	linux-input@vger.kernel.org
+ S:	Maintained
+ F:	Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml
++F:	arch/arm64/boot/dts/apple/t8010-ipad7.dtsi
+ F:	drivers/input/touchscreen/apple_z2.c
+ 
+ APPLE T8010 SPI SUPPORT
+diff --git a/arch/arm64/boot/dts/apple/t8010-ipad7.dtsi b/arch/arm64/boot/dts/apple/t8010-ipad7.dtsi
+index bd0e9c0b5..5e0184a23 100644
+--- a/arch/arm64/boot/dts/apple/t8010-ipad7.dtsi
++++ b/arch/arm64/boot/dts/apple/t8010-ipad7.dtsi
+@@ -12,3 +12,57 @@
+  * now.
+  */
+ #include "t8010-ipad6.dtsi"
++
++/ {
++	spi3_nclk: clock-spi3-nclk {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++		clock-frequency = <55384615>;
++		clock-output-names = "spi3-nclk";
++	};
++};
++
++&pinctrl_ap {
++	touch_display_sync_active: touch-display-sync-active-pins {
++		pinmux = <APPLE_PINMUX(176, 1)>,
++			 <APPLE_PINMUX(177, 1)>;
++	};
++};
++
++&spi3 {
++	cs-gpios = <&pinctrl_ap 85 GPIO_ACTIVE_LOW>;
++	clocks = <&spi3_nclk>;
++	dmas = <&sio 0x1a>;
++	dma-names = "tx";
++	status = "okay";
++
++	touchscreen@0 {
++		compatible = "apple,j172-touchscreen";
++		reg = <0>;
++		spi-max-frequency = <24000000>;
++		spi-cpol;
++		spi-cpha;
++		spi-cs-setup-delay-ns = <10000>;
++		spi-cs-hold-delay-ns = <10000>;
++		spi-cs-inactive-delay-ns = <10000>;
++		apple,z2-bpw16-min-len = <17>;
++		apple,z2-no-init-ack;
++		pinctrl-names = "display-sync-active";
++		pinctrl-0 = <&touch_display_sync_active>;
++		/* D10/D11 supplies are not present on J172. */
++		interrupts-extended = <&pinctrl_ap 21 IRQ_TYPE_EDGE_FALLING>;
++		power-ldo-gpios = <&pinctrl_ap 29 GPIO_ACTIVE_HIGH>;
++		reset-gpios = <&pinctrl_ap 31 GPIO_ACTIVE_LOW>;
++		power-ana-gpios = <&pinctrl_ap 145 GPIO_ACTIVE_HIGH>;
++		display-sync-gpios = <&pinctrl_ap 176 GPIO_ACTIVE_HIGH>;
++		display-sync1-gpios = <&pinctrl_ap 177 GPIO_ACTIVE_HIGH>;
++		clocks = <&touchclk>;
++		firmware-name = "apple/dfrmtfw-j172-k1f19-6.bin";
++		touchscreen-size-x = <1620>;
++		touchscreen-size-y = <2160>;
++	};
++};
++
++&sio {
++	status = "okay";
++};
+diff --git a/arch/arm64/boot/dts/apple/t8010-pmgr.dtsi b/arch/arm64/boot/dts/apple/t8010-pmgr.dtsi
+index 6d4510886..01d6eedcd 100644
+--- a/arch/arm64/boot/dts/apple/t8010-pmgr.dtsi
++++ b/arch/arm64/boot/dts/apple/t8010-pmgr.dtsi
+@@ -6,6 +6,15 @@
+  */
+ 
+ &pmgr {
++	touchclk: clock-controller@78000 {
++		compatible = "apple,t8010-touch-clock";
++		reg = <0x78000 0x8>;
++		#clock-cells = <0>;
++		clocks = <&clkref>;
++		clock-output-names = "touchclk";
++		clock-frequency = <24000000>;
++	};
++
+ 	ps_cpu0: power-controller@80000 {
+ 		compatible = "apple,t8010-pmgr-pwrstate", "apple,pmgr-pwrstate";
+ 		reg = <0x80000 4>;
+diff --git a/arch/arm64/boot/dts/apple/t8010.dtsi b/arch/arm64/boot/dts/apple/t8010.dtsi
+index e77f5d28a..cdf451f14 100644
+--- a/arch/arm64/boot/dts/apple/t8010.dtsi
++++ b/arch/arm64/boot/dts/apple/t8010.dtsi
+@@ -221,6 +221,37 @@
+ 			status = "disabled";
+ 		};
+ 
++		sio: dma-controller@20ae00000 {
++			compatible = "apple,t8010-sio";
++			reg = <0x2 0x0ae00000 0x0 0x10000>,
++			      <0x2 0x0a000000 0x0 0x2000>;
++			reg-names = "a7iop", "shim";
++			interrupt-parent = <&aic>;
++			interrupts = <AIC_IRQ 211 IRQ_TYPE_LEVEL_HIGH>,
++				     <AIC_IRQ 210 IRQ_TYPE_LEVEL_HIGH>,
++				     <AIC_IRQ 213 IRQ_TYPE_LEVEL_HIGH>,
++				     <AIC_IRQ 212 IRQ_TYPE_LEVEL_HIGH>;
++			power-domains = <&ps_sio>;
++			firmware-name = "apple/t8010-smartio.bin";
++			dma-channels = <64>;
++			#dma-cells = <1>;
++			status = "disabled";
++		};
++
++		spi3: spi@20a08c000 {
++			compatible = "apple,t8010-spi", "apple,spi";
++			reg = <0x2 0x0a08c000 0x0 0x4000>;
++			interrupt-parent = <&aic>;
++			interrupts = <AIC_IRQ 217 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&clkref>;
++			pinctrl-0 = <&spi3_pins>;
++			pinctrl-names = "default";
++			power-domains = <&ps_spi3>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			status = "disabled";
++		};
++
+ 		bus@20c000000 {
+ 			compatible = "apple,t8010-usb-complex", "apple,s5l8960x-usb-complex", "simple-pm-bus";
+ 			#address-cells = <2>;
+@@ -411,6 +442,12 @@
+ 				pinmux = <APPLE_PINMUX(41, 1)>,
+ 					 <APPLE_PINMUX(42, 1)>;
+ 			};
++
++			spi3_pins: spi3-pins {
++				pinmux = <APPLE_PINMUX(82, 1)>,
++					 <APPLE_PINMUX(83, 1)>,
++					 <APPLE_PINMUX(84, 1)>;
++			};
+ 		};
+ 
+ 		pinctrl_aop: pinctrl@2100f0000 {

@@ -1,0 +1,67 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Wed, 19 Aug 2026 14:44:15 +0200
+Subject: [PATCH 114/117] dt-bindings: iio: light: Add Apple CT819
+
+The CT819 is the ambient-light sensor Apple uses on the iPad 7. Like the
+CT821 it exposes a TSL2581 compatible register interface and carries its
+factory calibration in the SysCfg LSCI record, so it shares the compatible
+fallback and the paired calibration NVMEM properties.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: 7182cde4fa68fb2cddfe563fdd6700786dcd0342
+---
+ .../devicetree/bindings/iio/light/tsl2583.yaml | 18 +++++++++++-------
+ 1 file changed, 11 insertions(+), 7 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/iio/light/tsl2583.yaml b/Documentation/devicetree/bindings/iio/light/tsl2583.yaml
+index c7b337ca4..988c634b5 100644
+--- a/Documentation/devicetree/bindings/iio/light/tsl2583.yaml
++++ b/Documentation/devicetree/bindings/iio/light/tsl2583.yaml
+@@ -10,8 +10,8 @@ maintainers:
+   - Brian Masney <masneyb@onstation.org>
+ 
+ description: |
+-  Ambient light sensing with an i2c interface. Apple CT821 factory
+-  calibration is stored in SysCfg. On systems where the SysCfg NVMEM
++  Ambient light sensing with an i2c interface. The Apple CT819 and CT821
++  factory calibration is stored in SysCfg. On systems where the SysCfg NVMEM
+   provider is created by boot firmware, the static board tree omits the
+   NVMEM link and firmware adds both NVMEM properties before kernel handoff.
+ 
+@@ -23,7 +23,9 @@ properties:
+           - amstaos,tsl2581
+           - amstaos,tsl2583
+       - items:
+-          - const: apple,ct821
++          - enum:
++              - apple,ct819
++              - apple,ct821
+           - const: amstaos,tsl2581
+ 
+   reg:
+@@ -37,9 +39,9 @@ properties:
+ 
+   nvmem-cells:
+     description:
+-      Apple CT821 factory LSCI ambient-light calibration data. Boot firmware
+-      must populate this together with nvmem-cell-names when the provider is
+-      not statically representable.
++      Apple factory LSCI ambient-light calibration data. Boot firmware must
++      populate this together with nvmem-cell-names when the provider is not
++      statically representable.
+     maxItems: 1
+ 
+   nvmem-cell-names:
+@@ -55,7 +57,9 @@ allOf:
+       properties:
+         compatible:
+           contains:
+-            const: apple,ct821
++            enum:
++              - apple,ct819
++              - apple,ct821
+     then:
+       dependentRequired:
+         nvmem-cells:

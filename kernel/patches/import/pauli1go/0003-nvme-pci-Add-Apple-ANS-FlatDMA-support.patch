@@ -1,0 +1,1024 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Tue, 14 Jul 2026 13:05:53 +0200
+Subject: [PATCH 003/117] nvme-pci: Add Apple ANS FlatDMA support
+
+Apple ANS exposes NVMe queues over PCI but requires a proprietary
+command flag, a loader-provided host-memory buffer and FlatDMA request
+mappings.
+
+Add private nvme-pci DMA hooks and keep the controller-specific logic
+in separate glue. Reinitialize the HMB and invalidate every FlatDMA
+slot whenever nvme-pci enables the controller so reset_controller can
+rebuild the controller state.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+[Orchard: ported to v7.3-rc1. The structures moved to pci-internal.h keep
+ mainline's __guarded_by(&sq_lock) annotations on struct nvme_queue, and
+ the Makefile keeps CONTEXT_ANALYSIS. The FlatDMA code does not access the
+ guarded fields.]
+
+Orchard-replay-of: 599f994728d77940ba3c90a1d19d28c28c48844e
+---
+ drivers/nvme/host/Makefile        |   2 +-
+ drivers/nvme/host/pci-apple-ans.c | 473 ++++++++++++++++++++++++++++++
+ drivers/nvme/host/pci-internal.h  | 193 ++++++++++++
+ drivers/nvme/host/pci.c           | 197 +++----------
+ 4 files changed, 715 insertions(+), 150 deletions(-)
+ create mode 100644 drivers/nvme/host/pci-apple-ans.c
+ create mode 100644 drivers/nvme/host/pci-internal.h
+
+diff --git a/drivers/nvme/host/Makefile b/drivers/nvme/host/Makefile
+index 67563a69f..a06d98b50 100644
+--- a/drivers/nvme/host/Makefile
++++ b/drivers/nvme/host/Makefile
+@@ -20,7 +20,7 @@ nvme-core-$(CONFIG_FAULT_INJECTION_DEBUG_FS)	+= fault_inject.o
+ nvme-core-$(CONFIG_NVME_HWMON)		+= hwmon.o
+ nvme-core-$(CONFIG_NVME_HOST_AUTH)	+= auth.o
+ 
+-nvme-y					+= pci.o
++nvme-y					+= pci.o pci-apple-ans.o
+ 
+ nvme-fabrics-y				+= fabrics.o
+ 
+diff --git a/drivers/nvme/host/pci-apple-ans.c b/drivers/nvme/host/pci-apple-ans.c
+new file mode 100644
+index 000000000..f477e8923
+--- /dev/null
++++ b/drivers/nvme/host/pci-apple-ans.c
+@@ -0,0 +1,473 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Apple ANS PCI NVMe glue for H8 and H9 SoCs.
++ *
++ * Copyright (C) 2020 Corellium LLC
++ * Copyright (C) 2026 Paul Praschl <praschlpaul@g-p.at>
++ */
++
++#include <linux/apple-ans.h>
++#include <linux/bitmap.h>
++#include <linux/dma-mapping.h>
++#include <linux/gfp.h>
++#include <linux/iopoll.h>
++#include <linux/mempool.h>
++#include <linux/of.h>
++#include <linux/of_address.h>
++#include <linux/pci.h>
++
++#include "pci-internal.h"
++
++#define NVME_CMD_APPLE_ANS_FLATDMA	BIT(5)
++
++#define APPLE_ANS_REG_INIT		0x1800
++#define APPLE_ANS_REG_INIT_REGULAR	0
++#define APPLE_ANS_REG_HMB_SIZE_REQ	0x1808
++#define APPLE_ANS_REG_HMB_ALIGN_REQ	0x180c
++#define APPLE_ANS_REG_HMB_BASE_LO	0x1810
++#define APPLE_ANS_REG_HMB_BASE_HI	0x1814
++#define APPLE_ANS_REG_HMB_SIZE		0x1818
++#define APPLE_ANS_REG_CORE_MASK		0x1824
++#define APPLE_ANS_REG_LOG_SIZE		0x1828
++#define APPLE_ANS_PCI_CFG_17C		0x17c
++#define APPLE_ANS_PCI_CFG_17C_VALUE	0x10081008
++#define APPLE_ANS_PCI_CFG_188		0x188
++#define APPLE_ANS_PCI_CFG_188_VALUE	0x40550000
++#define APPLE_ANS_PCI_CFG_18C		0x18c
++#define APPLE_ANS_NVME_MAX_SECTORS \
++	(APPLE_ANS_NVMMU_MAX_PAGES * APPLE_ANS_NVMMU_PAGE_SIZE >> SECTOR_SHIFT)
++
++struct apple_ans_nvme_req {
++	u64 pages[APPLE_ANS_NVMMU_MAX_PAGES];
++};
++
++struct apple_ans_nvme {
++	dma_addr_t hmb_dma;
++	u32 hmb_size;
++	struct apple_ans_nvme_req req[APPLE_ANS_NVMMU_MAX_REQS];
++	DECLARE_BITMAP(used_req, APPLE_ANS_NVMMU_MAX_REQS);
++	unsigned int last_req;
++	/* Protects the FlatDMA request-slot bitmap. */
++	spinlock_t req_lock;
++};
++
++static struct apple_ans_nvme *nvme_pci_apple_ans(struct nvme_dev *dev)
++{
++	return dev->dma_data;
++}
++
++static int nvme_pci_apple_ans_init(struct nvme_dev *dev, int node)
++{
++	struct apple_ans_nvme *ans;
++
++	ans = kzalloc_node(sizeof(*ans), GFP_KERNEL, node);
++	if (!ans)
++		return -ENOMEM;
++
++	spin_lock_init(&ans->req_lock);
++	dev->dma_data = ans;
++	return 0;
++}
++
++static void nvme_pci_apple_ans_exit(struct nvme_dev *dev)
++{
++	kfree(dev->dma_data);
++	dev->dma_data = NULL;
++}
++
++static int nvme_pci_apple_ans_find_hmb(struct nvme_dev *dev, u32 size_req,
++				       u32 align_req)
++{
++	struct apple_ans_nvme *ans = nvme_pci_apple_ans(dev);
++	struct pci_dev *pdev = to_pci_dev(dev->dev);
++	struct pci_host_bridge *bridge;
++	struct device_node *pcie_np;
++	struct device_node *mem_np;
++	struct resource res;
++	resource_size_t size;
++	u32 iova;
++	int ret;
++
++	bridge = pci_find_host_bridge(pdev->bus);
++	if (!bridge)
++		return -ENODEV;
++
++	pcie_np = bridge->dev.parent ? bridge->dev.parent->of_node : NULL;
++	if (!pcie_np)
++		pcie_np = bridge->dev.of_node;
++	if (!pcie_np)
++		return -ENODEV;
++
++	mem_np = of_parse_phandle(pcie_np, "apple,nvme-hmb", 0);
++	if (!mem_np)
++		return -ENODEV;
++
++	ret = of_address_to_resource(mem_np, 0, &res);
++	if (ret)
++		goto out_put_mem;
++
++	ret = of_property_read_u32(pcie_np, "apple,nvmmu-iova", &iova);
++	if (ret)
++		goto out_put_mem;
++
++	if (!size_req || size_req == U32_MAX) {
++		ret = -EINVAL;
++		goto out_put_mem;
++	}
++	if (!align_req || align_req == U32_MAX)
++		align_req = 1;
++
++	size = resource_size(&res);
++	if (size < size_req || size > U32_MAX) {
++		ret = -ENOSPC;
++		goto out_put_mem;
++	}
++	if (!IS_ALIGNED(res.start, align_req) || !IS_ALIGNED(iova, align_req)) {
++		ret = -EINVAL;
++		goto out_put_mem;
++	}
++
++	ans->hmb_dma = iova;
++	ans->hmb_size = size;
++	dev_dbg(dev->dev, "Apple ANS HMB %#x@%pa as DMA %#llx\n",
++		ans->hmb_size, &res.start, (u64)ans->hmb_dma);
++
++out_put_mem:
++	of_node_put(mem_np);
++	return ret;
++}
++
++static int nvme_pci_apple_ans_reset_dma(struct nvme_dev *dev)
++{
++	struct apple_ans_nvme *ans = nvme_pci_apple_ans(dev);
++	unsigned long flags;
++	unsigned int tag;
++	int ret;
++
++	for (tag = 0; tag < APPLE_ANS_NVMMU_MAX_REQS; tag++) {
++		ret = apple_ans_nvmmu_map(dev->dev, tag, NULL, 0, NULL);
++		if (ret)
++			return ret;
++	}
++
++	spin_lock_irqsave(&ans->req_lock, flags);
++	bitmap_zero(ans->used_req, APPLE_ANS_NVMMU_MAX_REQS);
++	ans->last_req = 0;
++	spin_unlock_irqrestore(&ans->req_lock, flags);
++	return 0;
++}
++
++static int nvme_pci_apple_ans_preinit(struct nvme_dev *dev)
++{
++	struct apple_ans_nvme *ans = nvme_pci_apple_ans(dev);
++	struct pci_dev *pdev = to_pci_dev(dev->dev);
++	u32 csts, core_mask, log_size;
++	u32 hmb_size, hmb_align;
++	int ret;
++
++	if (!ans)
++		return 0;
++
++	if (pci_write_config_byte(pdev, PCI_LATENCY_TIMER, 0x40) !=
++	    PCIBIOS_SUCCESSFUL ||
++	    pci_write_config_dword(pdev, APPLE_ANS_PCI_CFG_17C,
++				   APPLE_ANS_PCI_CFG_17C_VALUE) !=
++	    PCIBIOS_SUCCESSFUL ||
++	    pci_write_config_dword(pdev, APPLE_ANS_PCI_CFG_18C, 0) !=
++	    PCIBIOS_SUCCESSFUL ||
++	    pci_write_config_dword(pdev, APPLE_ANS_PCI_CFG_188,
++				   APPLE_ANS_PCI_CFG_188_VALUE) !=
++	    PCIBIOS_SUCCESSFUL)
++		return -EIO;
++
++	core_mask = readl(dev->bar + APPLE_ANS_REG_CORE_MASK);
++	log_size = readl(dev->bar + APPLE_ANS_REG_LOG_SIZE);
++	hmb_size = readl(dev->bar + APPLE_ANS_REG_HMB_SIZE_REQ);
++	hmb_align = readl(dev->bar + APPLE_ANS_REG_HMB_ALIGN_REQ);
++
++	writel(0, dev->bar + NVME_REG_CC);
++	ret = readl_poll_timeout(dev->bar + NVME_REG_CSTS, csts,
++				 !(csts & (NVME_CSTS_RDY | NVME_CSTS_CFS)),
++				 1000, 2000000);
++	if (ret)
++		return ret;
++
++	if (!ans->hmb_size) {
++		ret = nvme_pci_apple_ans_find_hmb(dev, hmb_size, hmb_align);
++		if (ret)
++			return ret;
++	}
++
++	ret = nvme_pci_apple_ans_reset_dma(dev);
++	if (ret)
++		return dev_err_probe(dev->dev, ret,
++				     "failed to reset ANS DMA slots\n");
++
++	dev_dbg(dev->dev,
++		"Apple ANS core_mask=%#x log_size=%#x hmb_req=%#x align=%#x\n",
++		core_mask, log_size, hmb_size, hmb_align);
++	return 0;
++}
++
++static int nvme_pci_apple_ans_prepare_enable(struct nvme_dev *dev)
++{
++	struct apple_ans_nvme *ans = nvme_pci_apple_ans(dev);
++
++	if (!ans)
++		return 0;
++	if (!ans->hmb_size)
++		return -EINVAL;
++
++	writel(APPLE_ANS_REG_INIT_REGULAR, dev->bar + APPLE_ANS_REG_INIT);
++	writel(lower_32_bits(ans->hmb_dma),
++	       dev->bar + APPLE_ANS_REG_HMB_BASE_LO);
++	writel(upper_32_bits(ans->hmb_dma),
++	       dev->bar + APPLE_ANS_REG_HMB_BASE_HI);
++	writel(ans->hmb_size, dev->bar + APPLE_ANS_REG_HMB_SIZE);
++	readl(dev->bar + APPLE_ANS_REG_HMB_SIZE);
++
++	return 0;
++}
++
++static blk_status_t nvme_pci_apple_ans_alloc_req(struct nvme_dev *dev,
++						 struct apple_ans_nvme_req **req,
++						 unsigned int *tag)
++{
++	struct apple_ans_nvme *ans = nvme_pci_apple_ans(dev);
++	unsigned long flags;
++	unsigned int idx;
++
++	spin_lock_irqsave(&ans->req_lock, flags);
++	idx = find_next_zero_bit(ans->used_req, APPLE_ANS_NVMMU_MAX_REQS,
++				 (ans->last_req + 1) %
++				 APPLE_ANS_NVMMU_MAX_REQS);
++	if (idx >= APPLE_ANS_NVMMU_MAX_REQS)
++		idx = find_first_zero_bit(ans->used_req,
++					  APPLE_ANS_NVMMU_MAX_REQS);
++	if (idx >= APPLE_ANS_NVMMU_MAX_REQS) {
++		spin_unlock_irqrestore(&ans->req_lock, flags);
++		dev_dbg_ratelimited(dev->dev,
++				    "Apple ANS NVMe FlatDMA slots exhausted\n");
++		return BLK_STS_RESOURCE;
++	}
++
++	ans->last_req = idx;
++	__set_bit(idx, ans->used_req);
++	spin_unlock_irqrestore(&ans->req_lock, flags);
++
++	*req = &ans->req[idx];
++	*tag = idx;
++	memset((*req)->pages, 0, sizeof((*req)->pages));
++	return BLK_STS_OK;
++}
++
++static void nvme_pci_apple_ans_free_req(struct nvme_dev *dev,
++					struct apple_ans_nvme_req *req)
++{
++	struct apple_ans_nvme *ans = nvme_pci_apple_ans(dev);
++	unsigned long flags;
++	unsigned int tag;
++	int ret;
++
++	if (!ans || !req)
++		return;
++
++	tag = req - ans->req;
++	if (tag >= APPLE_ANS_NVMMU_MAX_REQS)
++		return;
++
++	ret = apple_ans_nvmmu_map(dev->dev, tag, NULL, 0, NULL);
++	if (ret)
++		dev_warn_ratelimited(dev->dev,
++				     "failed to release ANS DMA slot %u: %d\n",
++				     tag, ret);
++
++	spin_lock_irqsave(&ans->req_lock, flags);
++	__clear_bit(tag, ans->used_req);
++	spin_unlock_irqrestore(&ans->req_lock, flags);
++}
++
++static blk_status_t nvme_pci_apple_ans_map_bvec(struct nvme_dev *dev,
++						struct request *req,
++						struct nvme_iod *iod,
++						struct apple_ans_nvme_req *areq,
++						const struct bio_vec *bv,
++						unsigned int total,
++						unsigned int *npages,
++						unsigned int *consumed,
++						u64 *offs)
++{
++	dma_addr_t dma_addr;
++	u64 phys;
++	unsigned int len = bv->bv_len;
++
++	if (!len)
++		return BLK_STS_OK;
++
++	if (WARN_ON_ONCE(iod->nr_dma_vecs >= dev->ctrl.max_segments))
++		return BLK_STS_IOERR;
++
++	dma_addr = dma_map_bvec(dev->dev, bv, rq_dma_dir(req), 0);
++	if (dma_mapping_error(dev->dev, dma_addr))
++		return BLK_STS_RESOURCE;
++
++	iod->dma_vecs[iod->nr_dma_vecs].addr = dma_addr;
++	iod->dma_vecs[iod->nr_dma_vecs].len = len;
++	iod->nr_dma_vecs++;
++
++	phys = page_to_phys(bv->bv_page) + bv->bv_offset;
++	if (!*consumed) {
++		*offs = phys & (APPLE_ANS_NVMMU_PAGE_SIZE - 1);
++		phys -= *offs;
++		len += *offs;
++	} else if (phys & (APPLE_ANS_NVMMU_PAGE_SIZE - 1)) {
++		dev_err_ratelimited(dev->dev,
++				    "Apple ANS FlatDMA segment is not page-aligned: phys=%#llx\n",
++				    phys);
++		return BLK_STS_IOERR;
++	}
++
++	if (*consumed + bv->bv_len != total &&
++	    (len & (APPLE_ANS_NVMMU_PAGE_SIZE - 1))) {
++		dev_err_ratelimited(dev->dev,
++				    "Apple ANS FlatDMA segment length is not page-aligned: len=%#x\n",
++				    len);
++		return BLK_STS_IOERR;
++	}
++
++	while (len) {
++		if (*npages >= APPLE_ANS_NVMMU_MAX_PAGES)
++			return BLK_STS_IOERR;
++
++		areq->pages[(*npages)++] = phys;
++		phys += APPLE_ANS_NVMMU_PAGE_SIZE;
++		len = len > APPLE_ANS_NVMMU_PAGE_SIZE ?
++			len - APPLE_ANS_NVMMU_PAGE_SIZE : 0;
++	}
++
++	*consumed += bv->bv_len;
++	return BLK_STS_OK;
++}
++
++static bool nvme_pci_apple_ans_unmap_data(struct request *req)
++{
++	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
++	struct nvme_queue *nvmeq = req->mq_hctx->driver_data;
++	struct nvme_dev *dev = nvmeq->dev;
++	unsigned int i;
++
++	if (!iod->dma_private)
++		return false;
++
++	for (i = 0; i < iod->nr_dma_vecs; i++)
++		dma_unmap_page(dev->dev, iod->dma_vecs[i].addr,
++			       iod->dma_vecs[i].len, rq_dma_dir(req));
++	if (iod->dma_vecs) {
++		mempool_free(iod->dma_vecs, dev->dmavec_mempool);
++		iod->dma_vecs = NULL;
++	}
++	iod->nr_dma_vecs = 0;
++
++	nvme_pci_apple_ans_free_req(dev, iod->dma_private);
++	iod->dma_private = NULL;
++	iod->cmd.common.flags &= ~NVME_CMD_APPLE_ANS_FLATDMA;
++	return true;
++}
++
++static blk_status_t nvme_pci_apple_ans_map_data(struct request *req)
++{
++	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
++	struct nvme_queue *nvmeq = req->mq_hctx->driver_data;
++	struct nvme_dev *dev = nvmeq->dev;
++	struct apple_ans_nvme_req *areq;
++	struct req_iterator iter;
++	struct bio_vec bv;
++	dma_addr_t flatdma;
++	u64 offs = 0;
++	unsigned int tag, npages = 0, consumed = 0;
++	unsigned int total = blk_rq_payload_bytes(req);
++	blk_status_t status;
++	int ret;
++
++	if (!nvme_pci_apple_ans(dev))
++		return BLK_STS_NOTSUPP;
++	if (total > APPLE_ANS_NVMMU_MAX_PAGES * APPLE_ANS_NVMMU_PAGE_SIZE)
++		return BLK_STS_IOERR;
++
++	status = nvme_pci_apple_ans_alloc_req(dev, &areq, &tag);
++	if (status)
++		return status;
++
++	iod->dma_private = areq;
++	iod->dma_vecs = mempool_alloc(dev->dmavec_mempool, GFP_ATOMIC);
++	if (!iod->dma_vecs) {
++		status = BLK_STS_RESOURCE;
++		goto out_unmap;
++	}
++
++	if (req->rq_flags & RQF_SPECIAL_PAYLOAD) {
++		bv = req_bvec(req);
++		status = nvme_pci_apple_ans_map_bvec(dev, req, iod, areq, &bv,
++						     total, &npages, &consumed,
++						     &offs);
++		if (status)
++			goto out_unmap;
++	} else {
++		rq_for_each_bvec(bv, req, iter) {
++			status = nvme_pci_apple_ans_map_bvec(dev, req, iod,
++							     areq, &bv, total,
++							     &npages, &consumed,
++							     &offs);
++			if (status)
++				goto out_unmap;
++		}
++	}
++
++	if (consumed != total) {
++		dev_err_ratelimited(dev->dev,
++				    "Apple ANS FlatDMA payload length mismatch: consumed=%#x total=%#x\n",
++				    consumed, total);
++		status = BLK_STS_IOERR;
++		goto out_unmap;
++	}
++
++	ret = apple_ans_nvmmu_map(dev->dev, tag, areq->pages, npages, &flatdma);
++	if (ret) {
++		status = errno_to_blk_status(ret);
++		if (status == BLK_STS_NOTSUPP)
++			status = BLK_STS_IOERR;
++		goto out_unmap;
++	}
++
++	iod->total_len = total;
++	iod->cmd.common.flags |= NVME_CMD_APPLE_ANS_FLATDMA;
++	iod->cmd.common.dptr.prp1 = cpu_to_le64(flatdma + offs);
++	iod->cmd.common.dptr.prp2 = 0;
++	return BLK_STS_OK;
++
++out_unmap:
++	nvme_pci_apple_ans_unmap_data(req);
++	return status;
++}
++
++static u32 nvme_pci_apple_ans_queue_depth(struct nvme_dev *dev, u32 depth)
++{
++	return min_t(u32, depth, APPLE_ANS_NVMMU_MAX_REQS);
++}
++
++static u32 nvme_pci_apple_ans_max_hw_sectors(struct nvme_dev *dev,
++					     u32 max_hw_sectors)
++{
++	return min_t(u32, max_hw_sectors, APPLE_ANS_NVME_MAX_SECTORS);
++}
++
++const struct nvme_pci_dma_ops nvme_pci_apple_ans_ops = {
++	.init		= nvme_pci_apple_ans_init,
++	.exit		= nvme_pci_apple_ans_exit,
++	.preinit	= nvme_pci_apple_ans_preinit,
++	.prepare_enable = nvme_pci_apple_ans_prepare_enable,
++	.map_data	= nvme_pci_apple_ans_map_data,
++	.unmap_data	= nvme_pci_apple_ans_unmap_data,
++	.queue_depth	= nvme_pci_apple_ans_queue_depth,
++	.max_hw_sectors = nvme_pci_apple_ans_max_hw_sectors,
++};
+diff --git a/drivers/nvme/host/pci-internal.h b/drivers/nvme/host/pci-internal.h
+new file mode 100644
+index 000000000..d963d903d
+--- /dev/null
++++ b/drivers/nvme/host/pci-internal.h
+@@ -0,0 +1,193 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * Private nvme-pci structures shared with controller-specific glue.
++ *
++ * Copyright (c) 2011-2014, Intel Corporation.
++ * Copyright (C) 2026 Paul Praschl <praschlpaul@g-p.at>
++ */
++
++#ifndef _NVME_PCI_INTERNAL_H
++#define _NVME_PCI_INTERNAL_H
++
++#include <linux/blkdev.h>
++#include <linux/blk-mq.h>
++#include <linux/blk-mq-dma.h>
++#include <linux/completion.h>
++#include <linux/device.h>
++#include <linux/mempool.h>
++#include <linux/mutex.h>
++#include <linux/pci.h>
++#include <linux/spinlock.h>
++#include <linux/types.h>
++
++#include "nvme.h"
++
++#define NVME_MAX_NR_DESCRIPTORS	5
++
++struct nvme_dev;
++struct nvme_queue;
++
++struct nvme_descriptor_pools {
++	struct dma_pool *large;
++	struct dma_pool *small;
++};
++
++struct nvme_pci_dma_ops {
++	int (*init)(struct nvme_dev *dev, int node);
++	void (*exit)(struct nvme_dev *dev);
++	int (*preinit)(struct nvme_dev *dev);
++	int (*prepare_enable)(struct nvme_dev *dev);
++	blk_status_t (*map_data)(struct request *req);
++	bool (*unmap_data)(struct request *req);
++	u32 (*queue_depth)(struct nvme_dev *dev, u32 depth);
++	u32 (*max_hw_sectors)(struct nvme_dev *dev, u32 max_hw_sectors);
++};
++
++/*
++ * Represents an NVM Express device.  Each nvme_dev is a PCI function.
++ */
++struct nvme_dev {
++	struct nvme_queue *queues;
++	struct blk_mq_tag_set tagset;
++	struct blk_mq_tag_set admin_tagset;
++	u32 __iomem *dbs;
++	struct device *dev;
++	unsigned int online_queues;
++	unsigned int max_qid;
++	unsigned int io_queues[HCTX_MAX_TYPES];
++	unsigned int num_vecs;
++	u32 q_depth;
++	int io_sqes;
++	u32 db_stride;
++	void __iomem *bar;
++	unsigned long bar_mapped_size;
++	/* protects shutdown sequencing against reset and remove paths */
++	struct mutex shutdown_lock;
++	bool subsystem;
++	u64 cmb_size;
++	bool cmb_use_sqes;
++	u32 cmbsz;
++	u32 cmbloc;
++	struct nvme_ctrl ctrl;
++	u32 last_ps;
++	bool hmb;
++	struct sg_table *hmb_sgt;
++	mempool_t *dmavec_mempool;
++	const struct nvme_pci_dma_ops *dma_ops;
++	void *dma_data;
++
++	/* shadow doorbell buffer support: */
++	__le32 *dbbuf_dbs;
++	dma_addr_t dbbuf_dbs_dma_addr;
++	__le32 *dbbuf_eis;
++	dma_addr_t dbbuf_eis_dma_addr;
++
++	/* host memory buffer support: */
++	u64 host_mem_size;
++	u32 nr_host_mem_descs;
++	u32 host_mem_descs_size;
++	dma_addr_t host_mem_descs_dma;
++	struct nvme_host_mem_buf_desc *host_mem_descs;
++	void **host_mem_desc_bufs;
++	unsigned int nr_allocated_queues;
++	unsigned int nr_write_queues;
++	unsigned int nr_poll_queues;
++	struct nvme_descriptor_pools descriptor_pools[];
++};
++
++/*
++ * An NVM Express queue.  Each device has at least two (one for admin
++ * commands and one for I/O commands).
++ */
++struct nvme_queue {
++	struct nvme_dev *dev;
++	struct nvme_descriptor_pools descriptor_pools;
++	/* protects SQ tail updates */
++	spinlock_t sq_lock;
++	void *sq_cmds
++		__guarded_by(&sq_lock);
++	/* protects CQ polling state; only used for poll queues */
++	spinlock_t cq_poll_lock ____cacheline_aligned_in_smp;
++	struct nvme_completion *cqes;
++	dma_addr_t sq_dma_addr;
++	dma_addr_t cq_dma_addr;
++	u32 __iomem *q_db;
++	u32 q_depth;
++	u16 cq_vector;
++	u16 cq_head;
++	u16 sq_tail
++		__guarded_by(&sq_lock);
++	u16 last_sq_tail
++		__guarded_by(&sq_lock);
++	u16 qid;
++	u8 cq_phase;
++	u8 sqes;
++	unsigned long flags;
++#define NVMEQ_ENABLED		0
++#define NVMEQ_SQ_CMB		1
++#define NVMEQ_DELETE_ERROR	2
++#define NVMEQ_POLLED		3
++	__le32 *dbbuf_sq_db;
++	__le32 *dbbuf_cq_db;
++	__le32 *dbbuf_sq_ei;
++	__le32 *dbbuf_cq_ei;
++	struct completion delete_done;
++};
++
++/* bits for iod->flags */
++enum nvme_iod_flags {
++	/* this command has been aborted by the timeout handler */
++	IOD_ABORTED		= 1U << 0,
++
++	/* uses the small descriptor pool */
++	IOD_SMALL_DESCRIPTOR	= 1U << 1,
++
++	/* single segment dma mapping */
++	IOD_SINGLE_SEGMENT	= 1U << 2,
++
++	/* Data payload contains p2p memory */
++	IOD_DATA_P2P		= 1U << 3,
++
++	/* Metadata contains p2p memory */
++	IOD_META_P2P		= 1U << 4,
++
++	/* Data payload contains MMIO memory */
++	IOD_DATA_MMIO		= 1U << 5,
++
++	/* Metadata contains MMIO memory */
++	IOD_META_MMIO		= 1U << 6,
++
++	/* Metadata using non-coalesced MPTR */
++	IOD_SINGLE_META_SEGMENT	= 1U << 7,
++};
++
++struct nvme_dma_vec {
++	dma_addr_t addr;
++	unsigned int len;
++};
++
++/*
++ * The nvme_iod describes the data in an I/O.
++ */
++struct nvme_iod {
++	struct nvme_request req;
++	struct nvme_command cmd;
++	u8 flags;
++	u8 nr_descriptors;
++
++	size_t total_len;
++	struct dma_iova_state dma_state;
++	void *descriptors[NVME_MAX_NR_DESCRIPTORS];
++	struct nvme_dma_vec *dma_vecs;
++	unsigned int nr_dma_vecs;
++
++	dma_addr_t meta_dma;
++	size_t meta_total_len;
++	struct dma_iova_state meta_dma_state;
++	struct nvme_sgl_desc *meta_descriptor;
++	void *dma_private;
++};
++
++extern const struct nvme_pci_dma_ops nvme_pci_apple_ans_ops;
++
++#endif /* _NVME_PCI_INTERNAL_H */
+diff --git a/drivers/nvme/host/pci.c b/drivers/nvme/host/pci.c
+index da93b505d..db29c7064 100644
+--- a/drivers/nvme/host/pci.c
++++ b/drivers/nvme/host/pci.c
+@@ -30,6 +30,9 @@
+ 
+ #include "trace.h"
+ #include "nvme.h"
++#include "pci-internal.h"
++
++#define PCI_DEVICE_ID_APPLE_ANS_NVME	0x2002
+ 
+ #define SQ_SIZE(q)	((q)->q_depth << (q)->sqes)
+ #define CQ_SIZE(q)	((q)->q_depth * sizeof(struct nvme_completion))
+@@ -41,7 +44,6 @@
+  * Arbitrary upper bound.
+  */
+ #define NVME_MAX_BYTES		SZ_8M
+-#define NVME_MAX_NR_DESCRIPTORS	5
+ 
+ /*
+  * For data SGLs we support a single descriptors worth of SGL entries.
+@@ -277,67 +279,10 @@ static bool noacpi;
+ module_param(noacpi, bool, 0444);
+ MODULE_PARM_DESC(noacpi, "disable acpi bios quirks");
+ 
+-struct nvme_dev;
+-struct nvme_queue;
+-
+ static void nvme_dev_disable(struct nvme_dev *dev, bool shutdown);
+ static void nvme_delete_io_queues(struct nvme_dev *dev);
+ static void nvme_update_attrs(struct nvme_dev *dev);
+ 
+-struct nvme_descriptor_pools {
+-	struct dma_pool *large;
+-	struct dma_pool *small;
+-};
+-
+-/*
+- * Represents an NVM Express device.  Each nvme_dev is a PCI function.
+- */
+-struct nvme_dev {
+-	struct nvme_queue *queues;
+-	struct blk_mq_tag_set tagset;
+-	struct blk_mq_tag_set admin_tagset;
+-	u32 __iomem *dbs;
+-	struct device *dev;
+-	unsigned online_queues;
+-	unsigned max_qid;
+-	unsigned io_queues[HCTX_MAX_TYPES];
+-	unsigned int num_vecs;
+-	u32 q_depth;
+-	int io_sqes;
+-	u32 db_stride;
+-	void __iomem *bar;
+-	unsigned long bar_mapped_size;
+-	struct mutex shutdown_lock;
+-	bool subsystem;
+-	u64 cmb_size;
+-	bool cmb_use_sqes;
+-	u32 cmbsz;
+-	u32 cmbloc;
+-	struct nvme_ctrl ctrl;
+-	u32 last_ps;
+-	bool hmb;
+-	struct sg_table *hmb_sgt;
+-	mempool_t *dmavec_mempool;
+-
+-	/* shadow doorbell buffer support: */
+-	__le32 *dbbuf_dbs;
+-	dma_addr_t dbbuf_dbs_dma_addr;
+-	__le32 *dbbuf_eis;
+-	dma_addr_t dbbuf_eis_dma_addr;
+-
+-	/* host memory buffer support: */
+-	u64 host_mem_size;
+-	u32 nr_host_mem_descs;
+-	u32 host_mem_descs_size;
+-	dma_addr_t host_mem_descs_dma;
+-	struct nvme_host_mem_buf_desc *host_mem_descs;
+-	void **host_mem_desc_bufs;
+-	unsigned int nr_allocated_queues;
+-	unsigned int nr_write_queues;
+-	unsigned int nr_poll_queues;
+-	struct nvme_descriptor_pools descriptor_pools[];
+-};
+-
+ static int io_queue_depth_set(const char *val, const struct kernel_param *kp)
+ {
+ 	return param_set_uint_minmax(val, kp, NVME_PCI_MIN_QUEUE_SIZE,
+@@ -359,97 +304,6 @@ static inline struct nvme_dev *to_nvme_dev(struct nvme_ctrl *ctrl)
+ 	return container_of(ctrl, struct nvme_dev, ctrl);
+ }
+ 
+-/*
+- * An NVM Express queue.  Each device has at least two (one for admin
+- * commands and one for I/O commands).
+- */
+-struct nvme_queue {
+-	struct nvme_dev *dev;
+-	struct nvme_descriptor_pools descriptor_pools;
+-	spinlock_t sq_lock;
+-	void *sq_cmds
+-		__guarded_by(&sq_lock);
+-	 /* only used for poll queues: */
+-	spinlock_t cq_poll_lock ____cacheline_aligned_in_smp;
+-	struct nvme_completion *cqes;
+-	dma_addr_t sq_dma_addr;
+-	dma_addr_t cq_dma_addr;
+-	u32 __iomem *q_db;
+-	u32 q_depth;
+-	u16 cq_vector;
+-	u16 cq_head;
+-	u16 sq_tail
+-		__guarded_by(&sq_lock);
+-	u16 last_sq_tail
+-		__guarded_by(&sq_lock);
+-	u16 qid;
+-	u8 cq_phase;
+-	u8 sqes;
+-	unsigned long flags;
+-#define NVMEQ_ENABLED		0
+-#define NVMEQ_SQ_CMB		1
+-#define NVMEQ_DELETE_ERROR	2
+-#define NVMEQ_POLLED		3
+-	__le32 *dbbuf_sq_db;
+-	__le32 *dbbuf_cq_db;
+-	__le32 *dbbuf_sq_ei;
+-	__le32 *dbbuf_cq_ei;
+-	struct completion delete_done;
+-};
+-
+-/* bits for iod->flags */
+-enum nvme_iod_flags {
+-	/* this command has been aborted by the timeout handler */
+-	IOD_ABORTED		= 1U << 0,
+-
+-	/* uses the small descriptor pool */
+-	IOD_SMALL_DESCRIPTOR	= 1U << 1,
+-
+-	/* single segment dma mapping */
+-	IOD_SINGLE_SEGMENT	= 1U << 2,
+-
+-	/* Data payload contains p2p memory */
+-	IOD_DATA_P2P		= 1U << 3,
+-
+-	/* Metadata contains p2p memory */
+-	IOD_META_P2P		= 1U << 4,
+-
+-	/* Data payload contains MMIO memory */
+-	IOD_DATA_MMIO		= 1U << 5,
+-
+-	/* Metadata contains MMIO memory */
+-	IOD_META_MMIO		= 1U << 6,
+-
+-	/* Metadata using non-coalesced MPTR */
+-	IOD_SINGLE_META_SEGMENT	= 1U << 7,
+-};
+-
+-struct nvme_dma_vec {
+-	dma_addr_t addr;
+-	unsigned int len;
+-};
+-
+-/*
+- * The nvme_iod describes the data in an I/O.
+- */
+-struct nvme_iod {
+-	struct nvme_request req;
+-	struct nvme_command cmd;
+-	u8 flags;
+-	u8 nr_descriptors;
+-
+-	size_t total_len;
+-	struct dma_iova_state dma_state;
+-	void *descriptors[NVME_MAX_NR_DESCRIPTORS];
+-	struct nvme_dma_vec *dma_vecs;
+-	unsigned int nr_dma_vecs;
+-
+-	dma_addr_t meta_dma;
+-	size_t meta_total_len;
+-	struct dma_iova_state meta_dma_state;
+-	struct nvme_sgl_desc *meta_descriptor;
+-};
+-
+ static inline unsigned int nvme_dbbuf_size(struct nvme_dev *dev)
+ {
+ 	return dev->nr_allocated_queues * 8 * dev->db_stride;
+@@ -943,6 +797,10 @@ static void nvme_unmap_data(struct request *req)
+ 	struct device *dma_dev = nvmeq->dev->dev;
+ 	unsigned int attrs = 0;
+ 
++	if (nvmeq->dev->dma_ops && nvmeq->dev->dma_ops->unmap_data &&
++	    nvmeq->dev->dma_ops->unmap_data(req))
++		return;
++
+ 	if (iod->flags & IOD_SINGLE_SEGMENT) {
+ 		static_assert(offsetof(union nvme_data_ptr, prp1) ==
+ 				offsetof(union nvme_data_ptr, sgl.addr));
+@@ -1257,6 +1115,12 @@ static blk_status_t nvme_map_data(struct request *req)
+ 	struct blk_dma_iter iter;
+ 	blk_status_t ret;
+ 
++	if (dev->dma_ops && dev->dma_ops->map_data) {
++		ret = dev->dma_ops->map_data(req);
++		if (ret != BLK_STS_NOTSUPP)
++			return ret;
++	}
++
+ 	/*
+ 	 * Try to skip the DMA iterator for single segment requests, as that
+ 	 * significantly improves performances for small I/O sizes.
+@@ -1412,6 +1276,8 @@ static blk_status_t nvme_prep_rq(struct request *req)
+ 	iod->total_len = 0;
+ 	iod->meta_total_len = 0;
+ 	iod->nr_dma_vecs = 0;
++	iod->dma_vecs = NULL;
++	iod->dma_private = NULL;
+ 
+ 	ret = nvme_setup_cmd(req->q->queuedata, req);
+ 	if (ret)
+@@ -2406,6 +2272,12 @@ static int nvme_pci_configure_admin_queue(struct nvme_dev *dev)
+ 	lo_hi_writeq(nvmeq->sq_dma_addr, dev->bar + NVME_REG_ASQ);
+ 	lo_hi_writeq(nvmeq->cq_dma_addr, dev->bar + NVME_REG_ACQ);
+ 
++	if (dev->dma_ops && dev->dma_ops->prepare_enable) {
++		result = dev->dma_ops->prepare_enable(dev);
++		if (result)
++			return result;
++	}
++
+ 	result = nvme_enable_ctrl(&dev->ctrl);
+ 	if (result)
+ 		return result;
+@@ -3271,8 +3143,16 @@ static int nvme_pci_enable(struct nvme_dev *dev)
+ 		dev_warn(dev->ctrl.device, "IO queue depth clamped to %d\n",
+ 			 dev->q_depth);
+ 	}
++	if (dev->dma_ops && dev->dma_ops->queue_depth)
++		dev->q_depth = dev->dma_ops->queue_depth(dev, dev->q_depth);
+ 	dev->ctrl.sqsize = dev->q_depth - 1; /* 0's based queue depth */
+ 
++	if (dev->dma_ops && dev->dma_ops->preinit) {
++		result = dev->dma_ops->preinit(dev);
++		if (result)
++			goto free_irq;
++	}
++
+ 	nvme_map_cmb(dev);
+ 
+ 	pci_save_state(pdev);
+@@ -3393,6 +3273,8 @@ static void nvme_pci_free_ctrl(struct nvme_ctrl *ctrl)
+ 	struct nvme_dev *dev = to_nvme_dev(ctrl);
+ 
+ 	nvme_free_tagset(dev);
++	if (dev->dma_ops && dev->dma_ops->exit)
++		dev->dma_ops->exit(dev);
+ 	put_device(dev->dev);
+ 	kfree(dev->queues);
+ 	kfree(dev);
+@@ -3729,6 +3611,14 @@ static struct nvme_dev *nvme_pci_alloc_dev(struct pci_dev *pdev,
+ 		quirks |= qentry->enabled_quirks;
+ 		quirks &= ~qentry->disabled_quirks;
+ 	}
++	if (pdev->vendor == PCI_VENDOR_ID_APPLE &&
++	    pdev->device == PCI_DEVICE_ID_APPLE_ANS_NVME)
++		dev->dma_ops = &nvme_pci_apple_ans_ops;
++	if (dev->dma_ops) {
++		ret = dev->dma_ops->init(dev, node);
++		if (ret)
++			goto out_put_device;
++	}
+ 	ret = nvme_init_ctrl(&dev->ctrl, &pdev->dev, &nvme_pci_ctrl_ops,
+ 			     quirks);
+ 	if (ret)
+@@ -3748,11 +3638,17 @@ static struct nvme_dev *nvme_pci_alloc_dev(struct pci_dev *pdev,
+ 	dev->ctrl.max_hw_sectors = min_t(u32,
+ 			NVME_MAX_BYTES >> SECTOR_SHIFT,
+ 			dma_opt_mapping_size(&pdev->dev) >> 9);
++	if (dev->dma_ops && dev->dma_ops->max_hw_sectors)
++		dev->ctrl.max_hw_sectors =
++			dev->dma_ops->max_hw_sectors(dev,
++						     dev->ctrl.max_hw_sectors);
+ 	dev->ctrl.max_segments = NVME_MAX_SEGS;
+ 	dev->ctrl.max_integrity_segments = 1;
+ 	return dev;
+ 
+ out_put_device:
++	if (dev->dma_ops && dev->dma_ops->exit)
++		dev->dma_ops->exit(dev);
+ 	put_device(dev->dev);
+ 	kfree(dev->queues);
+ out_free_dev:
+@@ -4295,6 +4191,9 @@ static const struct pci_device_id nvme_id_table[] = {
+ 		 */
+ 		.driver_data = NVME_QUIRK_SINGLE_VECTOR |
+ 				NVME_QUIRK_QDEPTH_ONE },
++	{ PCI_DEVICE(PCI_VENDOR_ID_APPLE, PCI_DEVICE_ID_APPLE_ANS_NVME),
++		.driver_data = NVME_QUIRK_SINGLE_VECTOR |
++				NVME_QUIRK_SHARED_TAGS },
+ 	{ PCI_DEVICE(PCI_VENDOR_ID_APPLE, 0x2003) },
+ 	{ PCI_DEVICE(PCI_VENDOR_ID_APPLE, 0x2005),
+ 		.driver_data = NVME_QUIRK_SINGLE_VECTOR |

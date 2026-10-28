@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Sun, 2 Aug 2026 12:14:45 +0200
+Subject: [PATCH 072/117] dt-bindings: w1: add muxed HDQ support to w1-uart
+
+Document the optional mux state used to route an HDQ line to the UART
+for the duration of each transaction.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: f81edfc4370228fe28cec70e9190e61e0679d1a5
+---
+ Documentation/devicetree/bindings/w1/w1-uart.yaml | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/w1/w1-uart.yaml b/Documentation/devicetree/bindings/w1/w1-uart.yaml
+index bdc5691f3..607ad99d2 100644
+--- a/Documentation/devicetree/bindings/w1/w1-uart.yaml
++++ b/Documentation/devicetree/bindings/w1/w1-uart.yaml
+@@ -51,6 +51,16 @@ properties:
+     description:
+       The baud rate for the 1-Wire write-1 and read cycle.
+ 
++  mux-states:
++    maxItems: 1
++    description:
++      Optional mux state which routes the HDQ line to the UART. The state is
++      selected for each HDQ transaction and deselected afterwards.
++
++  mux-state-names:
++    items:
++      - const: hdq
++
+ required:
+   - compatible
+ 
+@@ -69,6 +79,8 @@ examples:
+     serial {
+         onewire {
+             compatible = "ti,hdq-uart";
++            mux-states = <&hdq_mux 1>;
++            mux-state-names = "hdq";
+ 
+             fuel-gauge {
+                 compatible = "ti,bq27545-hdq";

@@ -57,9 +57,19 @@ into the shared cache, replay them onto the stack, then run the semantic review
    `patches/hoolock/<branch>/`: 98 patches. One duplicate commit present in two
    branches is dropped.
    **Verified:** tree(`v7.3-rc1` + hoolock) == tree(`6831bc70`) == `445bf947`.
-2. **Pauli1Go series.** Paul Praschl's 127 commits (+15.9k/−1.3k, 115 files: J172,
-   iPhone 7/7 Plus) are replayed as-is onto step 1 with authorship kept. Conflicts
-   are reviewed individually. Fetched with `--shallow-since` into the same cache entry.
+2. **Pauli1Go series. ✅ Imported.** Paul Praschl's 117 kernel commits (README and
+   photo commits skipped) were replayed onto step 1 with `tools/replay-commits.py`
+   into `patches/import/pauli1go/`, keeping his authorship. 113 applied 3-way
+   unchanged. 4 conflicted with mainline changes since his base and were ported
+   by hand; each is marked `[Orchard: ...]`:
+   - `nvme-pci: Add Apple ANS FlatDMA support`: structs moved to `pci-internal.h`
+     keep mainline's `__guarded_by` annotations; `CONTEXT_ANALYSIS` stays on.
+   - three `tsl2583` commits: mainline removed `tsl2583_set_pm_runtime_busy()`;
+     Paul's paths use the direct `pm_runtime_*` calls instead.
+
+   **Verified:** for each of Paul's files, the replay equals a whole-file 3-way
+   merge, except the three hand-ported files and the skipped README.
+   torvalds + hoolock + pauli1go (215 patches) applies to exactly the replayed tree.
 3. **Semantic review of Orchard's delta.** Our current tree compared with Paul's
    latest, over the files `0001` touches:
    - 15 files identical to Paul's (no Orchard delta);

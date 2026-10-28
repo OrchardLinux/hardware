@@ -1,0 +1,71 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Mon, 27 Jul 2026 10:22:52 +0200
+Subject: [PATCH 058/117] arm64: dts: apple: t8010: add UART3
+
+Describe T8010 UART3 at MMIO address 0x20a0cc000 with AIC interrupt 221,
+the UART3 PMGR power domain and the current reference-clock attachment
+for both peripheral and baud clocks.
+
+Use the T8010-specific UART compatible, with apple,s5l-uart retained as
+fallback, on UART3 and the existing T8010 UART instances so the SoC
+oversampling implementation is selected consistently. Keep UART3
+disabled at SoC level for boards to opt in, and add the serial3 alias
+required for stable numbering and firmware lookup.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: 460a07c07b168f2bd5fe85060931738db156e104
+---
+ arch/arm64/boot/dts/apple/t8010-common.dtsi |  1 +
+ arch/arm64/boot/dts/apple/t8010.dtsi        | 17 +++++++++++++++--
+ 2 files changed, 16 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/apple/t8010-common.dtsi b/arch/arm64/boot/dts/apple/t8010-common.dtsi
+index 2044d7822..23938137d 100644
+--- a/arch/arm64/boot/dts/apple/t8010-common.dtsi
++++ b/arch/arm64/boot/dts/apple/t8010-common.dtsi
+@@ -14,6 +14,7 @@
+ 		ausbphy0 = &ausbphy0; /* Used by loader */
+ 		nvme-hmb = &nvme_hmb; /* Used by loader */
+ 		serial0 = &serial0;
++		serial3 = &serial3;
+ 		serial5 = &serial5;
+ 	};
+ 
+diff --git a/arch/arm64/boot/dts/apple/t8010.dtsi b/arch/arm64/boot/dts/apple/t8010.dtsi
+index 0d025f3a1..0b9a428f1 100644
+--- a/arch/arm64/boot/dts/apple/t8010.dtsi
++++ b/arch/arm64/boot/dts/apple/t8010.dtsi
+@@ -153,7 +153,7 @@
+ 		};
+ 
+ 		serial0: serial@20a0c0000 {
+-			compatible = "apple,s5l-uart";
++			compatible = "apple,t8010-uart", "apple,s5l-uart";
+ 			reg = <0x2 0x0a0c0000 0x0 0x4000>;
+ 			reg-io-width = <4>;
+ 			interrupt-parent = <&aic>;
+@@ -165,8 +165,21 @@
+ 			status = "disabled";
+ 		};
+ 
++		serial3: serial@20a0cc000 {
++			compatible = "apple,t8010-uart", "apple,s5l-uart";
++			reg = <0x2 0x0a0cc000 0x0 0x4000>;
++			reg-io-width = <4>;
++			interrupt-parent = <&aic>;
++			interrupts = <AIC_IRQ 221 IRQ_TYPE_LEVEL_HIGH>;
++			/* Use the bootloader-enabled clocks for now. */
++			clocks = <&clkref>, <&clkref>;
++			clock-names = "uart", "clk_uart_baud0";
++			power-domains = <&ps_uart3>;
++			status = "disabled";
++		};
++
+ 		serial5: serial@20a0d4000 {
+-			compatible = "apple,s5l-uart";
++			compatible = "apple,t8010-uart", "apple,s5l-uart";
+ 			reg = <0x2 0x0a0d4000 0x0 0x4000>;
+ 			reg-io-width = <4>;
+ 			interrupt-parent = <&aic>;

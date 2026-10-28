@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Sun, 26 Jul 2026 17:27:04 +0200
+Subject: [PATCH 032/117] arm64: defconfig: enable Apple J172 battery support
+
+Enable the UART W1 master and the existing BQ27xxx HDQ family as
+built-ins for the J172 fuel gauge.
+
+This makes the board-described UART-backed HDQ path available during
+normal boot without selecting a private battery transport. Existing
+BQ27xxx core support remains enabled as before.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: 832f273dafee7dd7714214b60a3729c5ebc7713a
+---
+ arch/arm64/configs/defconfig | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/arch/arm64/configs/defconfig b/arch/arm64/configs/defconfig
+index 6ec8d3a69..ac1439b91 100644
+--- a/arch/arm64/configs/defconfig
++++ b/arch/arm64/configs/defconfig
+@@ -739,6 +739,8 @@ CONFIG_GPIO_MACSMC=m
+ CONFIG_GPIO_MAX77620=y
+ CONFIG_GPIO_SL28CPLD=m
+ CONFIG_GPIO_AGGREGATOR=m
++CONFIG_W1=y
++CONFIG_W1_MASTER_UART=y
+ CONFIG_POWER_RESET_GPIO=y
+ CONFIG_POWER_RESET_GPIO_RESTART=y
+ CONFIG_POWER_RESET_MACSMC=m
+@@ -753,6 +755,7 @@ CONFIG_NVMEM_REBOOT_MODE=m
+ CONFIG_BATTERY_QCOM_BATTMGR=m
+ CONFIG_BATTERY_SBS=m
+ CONFIG_BATTERY_BQ27XXX=y
++CONFIG_BATTERY_BQ27XXX_HDQ=y
+ CONFIG_BATTERY_MAX17042=m
+ CONFIG_CHARGER_MT6360=m
+ CONFIG_CHARGER_BQ25890=m

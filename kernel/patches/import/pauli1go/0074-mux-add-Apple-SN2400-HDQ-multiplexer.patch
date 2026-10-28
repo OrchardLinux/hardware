@@ -1,0 +1,173 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Sun, 2 Aug 2026 12:15:06 +0200
+Subject: [PATCH 074/117] mux: add Apple SN2400 HDQ multiplexer
+
+Add a mux controller for selecting the SN2400 HDQ owner. Serialize
+register updates and restore the charger-owned route when consumers
+release the bus.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: 1808f077fa5ba10ded90d26dc5391234211edd16
+---
+ drivers/mux/Kconfig  |  11 ++++
+ drivers/mux/Makefile |   1 +
+ drivers/mux/sn2400.c | 117 +++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 129 insertions(+)
+ create mode 100644 drivers/mux/sn2400.c
+
+diff --git a/drivers/mux/Kconfig b/drivers/mux/Kconfig
+index 6d17dfa25..2249bbc67 100644
+--- a/drivers/mux/Kconfig
++++ b/drivers/mux/Kconfig
+@@ -70,6 +70,17 @@ config MUX_MMIO
+ 	  To compile the driver as a module, choose M here: the module will
+ 	  be called mux-mmio.
+ 
++config MUX_SN2400
++	tristate "Apple SN2400 HDQ multiplexer"
++	depends on MFD_SN2400
++	help
++	  Select the HDQ line owner in the Apple SN2400 battery charger used
++	  in devices such as the iPhone 7. This driver only controls HDQ
++	  routing and does not configure battery charging.
++
++	  To compile the driver as a module, choose M here: the module will
++	  be called mux-sn2400.
++
+ endmenu
+ 
+ endif # MULTIPLEXER
+diff --git a/drivers/mux/Makefile b/drivers/mux/Makefile
+index 6e9fa47da..8fc5c4b77 100644
+--- a/drivers/mux/Makefile
++++ b/drivers/mux/Makefile
+@@ -14,3 +14,4 @@ obj-$(CONFIG_MUX_ADG792A)	+= mux-adg792a.o
+ obj-$(CONFIG_MUX_ADGS1408)	+= mux-adgs1408.o
+ obj-$(CONFIG_MUX_GPIO)		+= mux-gpio.o
+ obj-$(CONFIG_MUX_MMIO)		+= mux-mmio.o
++obj-$(CONFIG_MUX_SN2400)	+= sn2400.o
+diff --git a/drivers/mux/sn2400.c b/drivers/mux/sn2400.c
+new file mode 100644
+index 000000000..dfda3bcc9
+--- /dev/null
++++ b/drivers/mux/sn2400.c
+@@ -0,0 +1,117 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Apple SN2400 HDQ multiplexer driver
++ *
++ * Copyright (c) 2026 Paul Praschl <praschlpaul@g-p.at>
++ */
++
++#include <linux/delay.h>
++#include <linux/mod_devicetable.h>
++#include <linux/module.h>
++#include <linux/mux/driver.h>
++#include <linux/platform_device.h>
++#include <linux/regmap.h>
++
++#define SN2400_REG_STATUS		0x07
++#define SN2400_STATUS_CHARGING		BIT(7)
++
++#define SN2400_REG_HDQ			0x1d
++#define SN2400_HDQ_REQUEST_AP		BIT(2)
++#define SN2400_HDQ_ACK_AP		BIT(5)
++#define SN2400_HDQ_FORCE_CHARGER		BIT(1)
++
++#define SN2400_HDQ_ROUTE_CHARGER		0
++#define SN2400_HDQ_ROUTE_AP		1
++
++struct sn2400_hdq {
++	struct regmap *regmap;
++};
++
++static int sn2400_hdq_request_ap(struct regmap *regmap)
++{
++	unsigned int value;
++	int ret;
++
++	ret = regmap_write(regmap, SN2400_REG_HDQ, SN2400_HDQ_REQUEST_AP);
++	if (ret)
++		return ret;
++
++	return regmap_read_poll_timeout(regmap, SN2400_REG_HDQ, value,
++					(value & SN2400_HDQ_ACK_AP),
++					10000, 1000000);
++}
++
++static int sn2400_hdq_set(struct mux_control *mux, int state)
++{
++	struct sn2400_hdq *hdq = mux_chip_priv(mux->chip);
++	struct regmap *regmap = hdq->regmap;
++	unsigned int status;
++	int ret;
++
++	if (state == SN2400_HDQ_ROUTE_AP)
++		return sn2400_hdq_request_ap(regmap);
++
++	if (state != SN2400_HDQ_ROUTE_CHARGER)
++		return -EINVAL;
++
++	ret = regmap_read(regmap, SN2400_REG_STATUS, &status);
++	if (ret)
++		return ret;
++
++	if (status & SN2400_STATUS_CHARGING)
++		return regmap_write(regmap, SN2400_REG_HDQ, 0);
++
++	ret = sn2400_hdq_request_ap(regmap);
++	if (ret)
++		return ret;
++
++	return regmap_write(regmap, SN2400_REG_HDQ,
++			    SN2400_HDQ_REQUEST_AP | SN2400_HDQ_FORCE_CHARGER);
++}
++
++static const struct mux_control_ops sn2400_hdq_ops = {
++	.set = sn2400_hdq_set,
++};
++
++static int sn2400_hdq_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct sn2400_hdq *hdq;
++	struct mux_chip *mux_chip;
++	struct regmap *regmap;
++
++	regmap = dev_get_regmap(dev->parent, NULL);
++	if (!regmap)
++		return dev_err_probe(dev, -ENODEV, "failed to get parent regmap\n");
++
++	mux_chip = devm_mux_chip_alloc(dev, 1, sizeof(*hdq));
++	if (IS_ERR(mux_chip))
++		return PTR_ERR(mux_chip);
++
++	hdq = mux_chip_priv(mux_chip);
++	hdq->regmap = regmap;
++	mux_chip->ops = &sn2400_hdq_ops;
++	mux_chip->mux[0].states = 2;
++	mux_chip->mux[0].idle_state = SN2400_HDQ_ROUTE_CHARGER;
++
++	return devm_mux_chip_register(dev, mux_chip);
++}
++
++static const struct of_device_id sn2400_hdq_of_match[] = {
++	{ .compatible = "apple,sn2400-hdq-mux" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, sn2400_hdq_of_match);
++
++static struct platform_driver sn2400_hdq_driver = {
++	.probe = sn2400_hdq_probe,
++	.driver = {
++		.name = "sn2400-hdq-mux",
++		.of_match_table = sn2400_hdq_of_match,
++	},
++};
++module_platform_driver(sn2400_hdq_driver);
++
++MODULE_AUTHOR("Paul Praschl <praschlpaul@g-p.at>");
++MODULE_DESCRIPTION("Apple SN2400 HDQ multiplexer driver");
++MODULE_LICENSE("GPL");

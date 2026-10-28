@@ -1,0 +1,82 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Sun, 2 Aug 2026 12:15:20 +0200
+Subject: [PATCH 078/117] arm64: dts: apple: add D111 battery charging
+
+Describe the D111 SN2400 parent, charger and HDQ mux children together
+with the UART-connected BQ27545 fuel gauge and board-specific battery
+limits.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: 58b4c18a744204238bb4e21f07e193c787f55478
+---
+ arch/arm64/boot/dts/apple/t8010-d111.dts | 48 ++++++++++++++++++++++++
+ 1 file changed, 48 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/t8010-d111.dts b/arch/arm64/boot/dts/apple/t8010-d111.dts
+index 227555b59..cb288f4b9 100644
+--- a/arch/arm64/boot/dts/apple/t8010-d111.dts
++++ b/arch/arm64/boot/dts/apple/t8010-d111.dts
+@@ -15,6 +15,11 @@
+ 	aliases {
+ 		touchscreen0 = &touchscreen;
+ 	};
++
++	d111_battery: battery {
++		compatible = "simple-battery";
++		constant-charge-current-max-microamp = <1950000>;
++	};
+ };
+ 
+ &i2c0 {
+@@ -33,6 +38,49 @@
+ 	};
+ };
+ 
++&i2c1 {
++	charger@75 {
++		compatible = "apple,sn2400";
++		reg = <0x75>;
++
++		sn2400_charger: charger {
++			compatible = "apple,sn2400-charger";
++			monitored-battery = <&d111_battery>;
++			input-current-limit-microamp = <2000000>;
++			mux-states = <&hdq_mux 0>;
++			mux-state-names = "hdq";
++		};
++
++		hdq_mux: hdq-mux {
++			compatible = "apple,sn2400-hdq-mux";
++			#mux-state-cells = <1>;
++		};
++	};
++};
++
++&pinctrl_ap {
++	battery_swi_pins: battery-swi-pins {
++		pinmux = <APPLE_PINMUX(173, 1)>;
++	};
++};
++
++&serial5 {
++	pinctrl-0 = <&battery_swi_pins>;
++	pinctrl-names = "default";
++	status = "okay";
++
++	onewire {
++		compatible = "ti,hdq-uart";
++		mux-states = <&hdq_mux 1>;
++		mux-state-names = "hdq";
++
++		fuel-gauge {
++			compatible = "apple,d111-bq27545", "ti,bq27545-hdq";
++			monitored-battery = <&d111_battery>;
++		};
++	};
++};
++
+ &spi2 {
+ 	cs-gpios = <&pinctrl_ap 81 GPIO_ACTIVE_LOW>;
+ 	dmas = <&sio 0x18>;

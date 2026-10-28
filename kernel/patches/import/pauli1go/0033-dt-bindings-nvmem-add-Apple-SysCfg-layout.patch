@@ -1,0 +1,127 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Sun, 26 Jul 2026 17:16:23 +0200
+Subject: [PATCH 033/117] dt-bindings: nvmem: add Apple SysCfg layout
+
+Apple devices keep board-specific MAC addresses and wireless calibration
+data in a private SysCfg key/value blob. The loader provides that blob
+at runtime through reserved memory; neither the blob nor any private
+values belong in the device tree or source tree.
+
+Document the reserved-memory provider and an NVMEM layout that maps
+selected four-character SysCfg keys to named cells. This lets consumers
+reference MAC and calibration cells without embedding their contents in
+committed data.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: e61a7e1ea3bf94d7fd131da16b76a258b6f4cd36
+---
+ .../bindings/nvmem/layouts/apple,syscfg.yaml  | 72 +++++++++++++++++++
+ .../bindings/nvmem/layouts/nvmem-layout.yaml  |  1 +
+ .../devicetree/bindings/nvmem/rmem.yaml       |  1 +
+ 3 files changed, 74 insertions(+)
+ create mode 100644 Documentation/devicetree/bindings/nvmem/layouts/apple,syscfg.yaml
+
+diff --git a/Documentation/devicetree/bindings/nvmem/layouts/apple,syscfg.yaml b/Documentation/devicetree/bindings/nvmem/layouts/apple,syscfg.yaml
+new file mode 100644
+index 000000000..60136dccd
+--- /dev/null
++++ b/Documentation/devicetree/bindings/nvmem/layouts/apple,syscfg.yaml
+@@ -0,0 +1,72 @@
++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/nvmem/layouts/apple,syscfg.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: Apple SysCfg NVMEM layout
++
++maintainers:
++  - Paul Praschl <praschlpaul@g-p.at>
++
++description:
++  Apple SysCfg stores board-specific key/value entries such as MAC addresses
++  and wireless calibration blobs. This layout exposes selected four-character
++  SysCfg keys as named NVMEM cells on top of an NVMEM provider containing a raw
++  SysCfg blob.
++
++properties:
++  compatible:
++    const: apple,syscfg
++
++patternProperties:
++  "^(?!compatible$)[a-zA-Z0-9][a-zA-Z0-9,._+-]*$":
++    type: object
++    additionalProperties: false
++
++    properties:
++      apple,syscfg-key:
++        description: Four-character SysCfg key to expose as this cell.
++        $ref: /schemas/types.yaml#/definitions/string
++        pattern: '^[A-Za-z0-9]{4}$'
++
++      apple,syscfg-size:
++        description:
++          Optional number of bytes to expose from the start of the SysCfg
++          value. If omitted, the full inline value or jumbo value is exposed.
++        $ref: /schemas/types.yaml#/definitions/uint32
++        minimum: 1
++
++    required:
++      - apple,syscfg-key
++
++required:
++  - compatible
++
++additionalProperties: false
++
++examples:
++  - |
++    reserved-memory {
++        #address-cells = <2>;
++        #size-cells = <2>;
++
++        syscfg@90000000 {
++            compatible = "apple,syscfg-rmem", "nvmem-rmem";
++            reg = <0x0 0x90000000 0x0 0x20000>;
++            no-map;
++
++            nvmem-layout {
++                compatible = "apple,syscfg";
++
++                calibration {
++                    apple,syscfg-key = "WCAL";
++                };
++
++                mac-address {
++                    apple,syscfg-key = "WMac";
++                    apple,syscfg-size = <6>;
++                };
++            };
++        };
++    };
+diff --git a/Documentation/devicetree/bindings/nvmem/layouts/nvmem-layout.yaml b/Documentation/devicetree/bindings/nvmem/layouts/nvmem-layout.yaml
+index 382507060..df517a461 100644
+--- a/Documentation/devicetree/bindings/nvmem/layouts/nvmem-layout.yaml
++++ b/Documentation/devicetree/bindings/nvmem/layouts/nvmem-layout.yaml
+@@ -19,6 +19,7 @@ description: |
+ 
+ oneOf:
+   - $ref: fixed-layout.yaml
++  - $ref: apple,syscfg.yaml
+   - $ref: kontron,sl28-vpd.yaml
+   - $ref: onie,tlv-layout.yaml
+   - $ref: u-boot,env.yaml
+diff --git a/Documentation/devicetree/bindings/nvmem/rmem.yaml b/Documentation/devicetree/bindings/nvmem/rmem.yaml
+index 85f9f5de3..36240616b 100644
+--- a/Documentation/devicetree/bindings/nvmem/rmem.yaml
++++ b/Documentation/devicetree/bindings/nvmem/rmem.yaml
+@@ -16,6 +16,7 @@ properties:
+   compatible:
+     items:
+       - enum:
++          - apple,syscfg-rmem
+           - mobileye,eyeq5-bootloader-config
+           - raspberrypi,bootloader-config
+           - raspberrypi,bootloader-public-key

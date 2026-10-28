@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Tue, 4 Aug 2026 23:31:09 +0200
+Subject: [PATCH 111/117] Input: apple_z2: Report runtime read failures
+
+Runtime SPI errors were ignored by the threaded IRQ handler, making
+transport failures indistinguishable from empty interrupts.
+
+Capture the packet-read result and report failures with rate limiting
+while preserving the existing transfer lock.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: 0560875aacd372aab447dfb0be9c286160c44494
+---
+ drivers/input/touchscreen/apple_z2.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/input/touchscreen/apple_z2.c b/drivers/input/touchscreen/apple_z2.c
+index 42e504e02..ab5b02a50 100644
+--- a/drivers/input/touchscreen/apple_z2.c
++++ b/drivers/input/touchscreen/apple_z2.c
+@@ -1142,13 +1142,18 @@ static int apple_z2_j172_init_writes_locked(struct apple_z2 *z2)
+ static irqreturn_t apple_z2_irq(int irq, void *data)
+ {
+ 	struct apple_z2 *z2 = data;
++	int error;
+ 
+ 	if (unlikely(!z2->booted)) {
+ 		complete(&z2->boot_irq);
+ 	} else {
+ 		mutex_lock(&z2->io_lock);
+-		apple_z2_read_packet(z2);
++		error = apple_z2_read_packet(z2);
+ 		mutex_unlock(&z2->io_lock);
++		if (error)
++			dev_warn_ratelimited(&z2->spidev->dev,
++					     "runtime packet read failed: %d\n",
++					     error);
+ 	}
+ 
+ 	return IRQ_HANDLED;

@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Sun, 2 Aug 2026 18:50:32 +0200
+Subject: [PATCH 083/117] arm64: dts: apple: Add T8010 DART2
+
+T8010 exposes separate DART instances per PCIe stream. Describe DART2
+at 0x603008000 with IRQ 277 and the existing PCIe power domain so boards
+can route the Wi-Fi RID to its hardware IOMMU.
+
+Leave the instance disabled until a board consumes it.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: ac07626b1f7c4de768604c5c82c260fdda01739c
+---
+ arch/arm64/boot/dts/apple/t8010.dtsi | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/t8010.dtsi b/arch/arm64/boot/dts/apple/t8010.dtsi
+index 7224339e8..4ead85563 100644
+--- a/arch/arm64/boot/dts/apple/t8010.dtsi
++++ b/arch/arm64/boot/dts/apple/t8010.dtsi
+@@ -355,6 +355,16 @@
+ 			status = "disabled";
+ 		};
+ 
++		pcie0_dart2: iommu@603008000 {
++			compatible = "apple,t8010-dart", "apple,s5l8960x-dart";
++			reg = <0x6 0x03008000 0x0 0x4000>;
++			#iommu-cells = <1>;
++			interrupts = <AIC_IRQ 277 IRQ_TYPE_LEVEL_HIGH>;
++			power-domains = <&ps_pcie>;
++			apple,dma-range = <0x0 0x80000000 0x0 0x3ffff000>;
++			status = "disabled";
++		};
++
+ 		pcie0_dart3: iommu@604008000 {
+ 			compatible = "apple,t8010-dart", "apple,s5l8960x-dart";
+ 			reg = <0x6 0x04008000 0x0 0x4000>;

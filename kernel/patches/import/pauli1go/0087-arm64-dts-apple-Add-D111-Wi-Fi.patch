@@ -1,0 +1,90 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Sun, 2 Aug 2026 18:51:31 +0200
+Subject: [PATCH 087/117] arm64: dts: apple: Add D111 Wi-Fi
+
+D111 wires BCM4355 to PCIe port 2, DART2 and the D2333-controlled
+WLAN supply. Describe RESET on AP14, CLKREQ on AP18, DEVICE_WAKE on AP88,
+the fixed VDD rail and the RID-to-DART mappings.
+
+Use the D111-specific compatible before the generic BCM4355 PCI fallback
+so normal OF matching selects board sequencing while PCI pwrctrl discovery
+still sees the PCI identity.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: aa84ed6c6bae45dbb9265c6c2f90e51de41583eb
+---
+ arch/arm64/boot/dts/apple/t8010-d111.dts | 46 ++++++++++++++++++++++++
+ 1 file changed, 46 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/t8010-d111.dts b/arch/arm64/boot/dts/apple/t8010-d111.dts
+index cb288f4b9..48a60acf2 100644
+--- a/arch/arm64/boot/dts/apple/t8010-d111.dts
++++ b/arch/arm64/boot/dts/apple/t8010-d111.dts
+@@ -14,12 +14,54 @@
+ 
+ 	aliases {
+ 		touchscreen0 = &touchscreen;
++		wifi0 = &wifi0;
+ 	};
+ 
+ 	d111_battery: battery {
+ 		compatible = "simple-battery";
+ 		constant-charge-current-max-microamp = <1950000>;
+ 	};
++
++	wlan_vdd: regulator-wlan-vdd {
++		compatible = "regulator-fixed";
++		regulator-name = "wlan-vdd";
++		gpio = <&pmu_gpio 10 GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++		off-on-delay-us = <2500>;
++	};
++};
++
++&pcie0 {
++	iommu-map = <0x100 &pcie0_dart0 0 1>,
++		    <0x200 &pcie0_dart2 0 1>;
++	pinctrl-0 = <&wifi_clkreq>;
++	pinctrl-names = "default";
++
++	pci@2,0 {
++		device_type = "pci";
++		reg = <0x1000 0x0 0x0 0x0 0x0>;
++		bus-range = <2 2>;
++		max-link-speed = <1>;
++		apple,manual-availability-iommu = <&pcie0_dart2 0>;
++		reset-gpios = <&pinctrl_ap 14 GPIO_ACTIVE_LOW>;
++
++		#address-cells = <3>;
++		#size-cells = <2>;
++		ranges;
++
++		wifi0: wifi@0,0 {
++			compatible = "apple,d111-bcm4355-wifi",
++				     "pci14e4,43dc";
++			reg = <0x20000 0x0 0x0 0x0 0x0>;
++			device-wake-gpios = <&pinctrl_ap 88 GPIO_ACTIVE_HIGH>;
++			vdd-supply = <&wlan_vdd>;
++			apple,antenna-sku = "XX";
++		};
++	};
++};
++
++&pcie0_dart2 {
++	status = "okay";
+ };
+ 
+ &i2c0 {
+@@ -62,6 +104,10 @@
+ 	battery_swi_pins: battery-swi-pins {
+ 		pinmux = <APPLE_PINMUX(173, 1)>;
+ 	};
++
++	wifi_clkreq: wifi-clkreq-pins {
++		pinmux = <APPLE_PINMUX(18, 1)>;
++	};
+ };
+ 
+ &serial5 {

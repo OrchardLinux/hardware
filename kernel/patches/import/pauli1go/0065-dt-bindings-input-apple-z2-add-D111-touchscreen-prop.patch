@@ -1,0 +1,100 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Sat, 1 Aug 2026 17:17:31 +0200
+Subject: [PATCH 065/117] dt-bindings: input: apple,z2: add D111 touchscreen
+ properties
+
+D111 uses the Apple Z2 touchscreen protocol but differs from the existing
+J172 and Touch Bar integrations. It consumes separate core and
+high-voltage supplies and its firmware requests four device-specific
+calibration payloads supplied by the bootloader.
+
+Add the D111 compatible, model the two rails as regulator supplies and
+describe the additional orb-gap, orb-force and shape-acceleration
+calibration byte arrays alongside the existing multitouch calibration.
+Require the D111 clock, supplies, SPI mode and no-initial-ack property.
+
+The calibration blobs are intentionally not required in the static board
+DTS because they are per-device data injected by the bootloader; the
+driver validates them before probe. Standard clock, regulator, SPI and
+firmware properties cover the hardware, so no input- or SPI-core special
+interface is introduced. The binding passed dt-doc-validate and the built
+D111 DTB passed apple,z2-multitouch schema validation with dtschema
+2026.6. This patch was checked with checkpatch.pl --strict.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: de8e0cd546991de38d73cb546d85aad11e1570a2
+---
+ .../touchscreen/apple,z2-multitouch.yaml      | 37 +++++++++++++++++++
+ 1 file changed, 37 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml b/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml
+index 5422771de..078fcaf80 100644
+--- a/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml
++++ b/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml
+@@ -18,6 +18,7 @@ properties:
+       - apple,j293-touchbar
+       - apple,j493-touchbar
+       - apple,j172-touchscreen
++      - apple,d111-touchscreen
+ 
+   interrupts:
+     maxItems: 1
+@@ -31,6 +32,12 @@ properties:
+   power-ldo-gpios:
+     maxItems: 1
+ 
++  hv-supply:
++    description: High-voltage analog supply for the touchscreen controller
++
++  core-supply:
++    description: Core supply for the touchscreen controller
++
+   display-sync-gpios:
+     maxItems: 1
+ 
+@@ -65,6 +72,24 @@ properties:
+     description:
+       Calibration blob supplied by the bootloader
+ 
++  apple,z2-orb-gap-cal-blob:
++    $ref: /schemas/types.yaml#/definitions/uint8-array
++    maxItems: 4096
++    description:
++      Orb gap calibration blob supplied by the bootloader
++
++  apple,z2-orb-force-cal-blob:
++    $ref: /schemas/types.yaml#/definitions/uint8-array
++    maxItems: 4096
++    description:
++      Orb force calibration blob supplied by the bootloader
++
++  apple,z2-shape-accel-cal-blob:
++    $ref: /schemas/types.yaml#/definitions/uint8-array
++    maxItems: 4096
++    description:
++      Dynamic shape acceleration calibration blob supplied by the bootloader
++
+ required:
+   - compatible
+   - interrupts
+@@ -96,6 +121,18 @@ allOf:
+         - spi-cpol
+         - apple,z2-bpw16-min-len
+         - apple,z2-no-init-ack
++  - if:
++      properties:
++        compatible:
++          const: apple,d111-touchscreen
++    then:
++      required:
++        - clocks
++        - hv-supply
++        - core-supply
++        - spi-cpha
++        - spi-cpol
++        - apple,z2-no-init-ack
+ 
+ unevaluatedProperties: false
+ 

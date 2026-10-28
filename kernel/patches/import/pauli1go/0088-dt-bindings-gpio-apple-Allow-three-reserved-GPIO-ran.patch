@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Sun, 2 Aug 2026 23:00:55 +0200
+Subject: [PATCH 088/117] dt-bindings: gpio: apple: Allow three reserved GPIO
+ ranges
+
+D111 exposes one PMIC GPIO to Bluetooth while the unavailable lines
+form three disjoint ranges. Allow bindings to describe all three ranges.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: e40ce4a996d191cc086110f06ca5a8d003e80774
+---
+ .../devicetree/bindings/gpio/apple,d2365-pmic-gpio.yaml         | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/gpio/apple,d2365-pmic-gpio.yaml b/Documentation/devicetree/bindings/gpio/apple,d2365-pmic-gpio.yaml
+index 890509e8b..6deb36dd7 100644
+--- a/Documentation/devicetree/bindings/gpio/apple,d2365-pmic-gpio.yaml
++++ b/Documentation/devicetree/bindings/gpio/apple,d2365-pmic-gpio.yaml
+@@ -26,7 +26,7 @@ properties:
+     const: 2
+ 
+   gpio-reserved-ranges:
+-    maxItems: 2
++    maxItems: 3
+ 
+ required:
+   - compatible
