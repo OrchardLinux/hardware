@@ -180,7 +180,8 @@
           "input": "J71b.mtprops",
           "profile": "K1F19,4",
           "packet": "K1HBPP14",
-          "load_address": 1048576
+          "load_address": 1048576,
+          "hbpp_version": 260
         }
       ]
     }

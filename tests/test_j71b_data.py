@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 
 HARDWARE = Path(__file__).resolve().parents[1]
 DEVICE = HARDWARE / 'devices/j71b/device.toml'
-RECIPE_SHA256 = '05536f6e2a1cebf7d3007e7f4ec581e64dd5da2207c27e2faf41c8697455ae16'
+RECIPE_SHA256 = 'a5c157f40e221c133e91a321429e69e7c4b12ac3ca2cc3d90ddafa8c2564711a'
 
 
 class J71bData(unittest.TestCase):

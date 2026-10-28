@@ -34,7 +34,7 @@ at boot.
 | `bluetool-hcd@1` | `input` (BlueTool) | the Bluetooth patchram whose hash is the output's |
 | `smartio-from-kernelcache@1` | `input` (kernelcache) | SmartIO coprocessor firmware |
 | `im4p-payload@1` | `input` | the payload of an IM4P container |
-| `z2fw-from-mtprops@1` | `input`, `profile`, `packet`, `load_address` | Z2 touch firmware with calibration records |
+| `z2fw-from-mtprops@1` | `input`, `profile`, `packet`, `load_address`, `hbpp_version` | Z2 touch firmware with calibration records |
 
 Before it extracts anything, the CLI checks that it implements every step a
 recipe uses. If not, it asks for an Orchard update. New devices that reuse
