@@ -86,8 +86,6 @@ def no_faults():
     text = command('dmesg').decode(errors='replace')
     if re.search(r'apple-dart.*translation fault', text):
         raise ValueError('DART fault; hardware cannot be reused in this recovery boot')
-    if Path('/sys/module/nvme/parameters/j71b_ro_failed').read_text().strip() != 'N':
-        raise ValueError('Storage fence failed')
 
 
 def failure_state():
@@ -306,16 +304,6 @@ def prepare(request):
         path.write_bytes(content)
         path.chmod(0o600)
     atomic(RUN / 'mixin.json', metadata)
-    for role in ('touch-start', 'touch-runtime'):
-        directory = Path('/usr/libexec/orchard-j71b') / role
-        for name in ('t8010-smartio.bin', 'j71b-fwstart.z2fw'):
-            (directory / 'firmware').mkdir(exist_ok=True)
-            shutil.copyfile('/lib/firmware/apple/' + name, directory / 'firmware' / name)
-        # Public hash list is baked; append only private firmware hashes.
-        text = (directory / 'PUBLIC.SHA256SUMS').read_text()
-        text += ''.join(sha(directory / 'firmware' / name) + '  firmware/' + name + '\n'
-                        for name in ('t8010-smartio.bin', 'j71b-fwstart.z2fw'))
-        (directory / 'SHA256SUMS').write_text(text)
     process = subprocess.Popen(['/usr/libexec/orchard-j71b/hardware'],
                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     for line in process.stdout:
