@@ -1,48 +1,69 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Orchard migration <noreply@orchardlinux>
-Date: Wed, 28 Oct 2026 10:23:01 +0800
-Subject: [PATCH] arm64: dts: apple: t8010: Share iPad 6/7 board nodes;
- describe iPad 6
+Date: Wed, 28 Oct 2026 11:31:01 +0800
+Subject: [PATCH] arm64: dts: apple: t8010: Describe the iPad 6 board; derive
+ the iPad 7
 
-The iPad 6 (J71b/J72b) and iPad 7 (J171/J172) share their Wi-Fi PCIe
-port, Wi-Fi regulator and platform control, PMIC GPIO controller,
-Bluetooth UART, HDQ gauge UART and touchscreen SPI wiring; pins, GPIOs
-and interrupts match between the iPad 6 device tree from iBoot and the
-validated iPad 7 description. Move those nodes into t8010-ipad6.dtsi,
-which the iPad 7 already includes, and keep only real differences in
-t8010-ipad7.dtsi. No property of any iPad 7 node changes; both gain a
-wifi0 alias so the loader can attach the MAC address and calibration.
+t8010-ipad6.dtsi only held the buttons and PMIC, and t8010-ipad7.dtsi
+carried the whole board description. The iPad 6 (J71b/J72b) and iPad 7
+(J171/J172) share their Wi-Fi PCIe port, Wi-Fi regulator and platform
+control, PMIC GPIO controller, Bluetooth UART, HDQ gauge UART and
+touchscreen SPI wiring. Pins, GPIOs and interrupts match between the
+iPad 6 device tree from iBoot and the validated iPad 7 description.
 
-Describe the iPad 6 in a new t8010-j7xb.dtsi: BQ27540 gauge, battery
-capacity, SPI3 clock, Bluetooth and the generation-1 touchscreen
-(4 MHz, no display-sync pins). The Wi-Fi board type and touch firmware
-name are per model.
+Describe the iPad 6 board completely in t8010-ipad6.dtsi: BQ27540 gauge,
+battery capacity, SPI3 clock, Bluetooth and the generation-1 touchscreen
+(4 MHz, no display-sync pins). t8010-ipad7.dtsi now only overrides what
+differs on the iPad 7. Its resulting device trees are unchanged apart
+from the wifi0 and bluetooth0 aliases, which let the loader attach MAC
+addresses and Wi-Fi calibration.
+
+Move the WLAN UART platform-control block into t8010.dtsi as a disabled
+SoC node, and enable it from the board. Put the PMIC GPIO controller
+inside the PMIC node.
+
+The Wi-Fi board type and touch firmware name stay per model.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- arch/arm64/boot/dts/apple/t8010-ipad6.dtsi | 135 +++++++++++++++++++++
- arch/arm64/boot/dts/apple/t8010-ipad7.dtsi | 133 ++------------------
- arch/arm64/boot/dts/apple/t8010-j71b.dts   |  10 +-
- arch/arm64/boot/dts/apple/t8010-j72b.dts   |  10 +-
- arch/arm64/boot/dts/apple/t8010-j7xb.dtsi  |  54 +++++++++
- 5 files changed, 217 insertions(+), 125 deletions(-)
- create mode 100644 arch/arm64/boot/dts/apple/t8010-j7xb.dtsi
+ arch/arm64/boot/dts/apple/t8010-ipad6.dtsi | 157 +++++++++++++++++
+ arch/arm64/boot/dts/apple/t8010-ipad7.dtsi | 187 +++------------------
+ arch/arm64/boot/dts/apple/t8010-j71b.dts   |   8 +
+ arch/arm64/boot/dts/apple/t8010-j72b.dts   |   8 +
+ arch/arm64/boot/dts/apple/t8010.dtsi       |   7 +
+ 5 files changed, 206 insertions(+), 161 deletions(-)
 
 diff --git a/arch/arm64/boot/dts/apple/t8010-ipad6.dtsi b/arch/arm64/boot/dts/apple/t8010-ipad6.dtsi
-index 98b3d82b3..6266a60bb 100644
+index 98b3d82b3..e9a61f617 100644
 --- a/arch/arm64/boot/dts/apple/t8010-ipad6.dtsi
 +++ b/arch/arm64/boot/dts/apple/t8010-ipad6.dtsi
-@@ -87,3 +87,138 @@
- 		};
- 	};
- };
-+
-+/* Board wiring shared by the iPad 6 (J71b/J72b) and iPad 7 (J171/J172). */
-+
-+/ {
+@@ -12,6 +12,11 @@
+ / {
+ 	chassis-type = "tablet";
+ 
 +	aliases {
 +		bluetooth0 = &bluetooth;
 +		wifi0 = &wifi;
++	};
++
+ 	gpio-keys {
+ 		compatible = "gpio-keys";
+ 
+@@ -41,6 +46,26 @@
+ 			linux,code = <KEY_VOLUMEUP>;
+ 		};
+ 	};
++
++	battery_info: battery {
++		compatible = "simple-battery";
++		charge-full-design-microamp-hours = <8827000>;
++	};
++
++	spi3_nclk: clock-spi3-nclk {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++		clock-frequency = <61538461>;
++		clock-output-names = "spi3-nclk";
 +	};
 +
 +	wlan_vdd: regulator-wlan-vdd {
@@ -52,28 +73,27 @@ index 98b3d82b3..6266a60bb 100644
 +		enable-active-high;
 +		off-on-delay-us = <100000>;
 +	};
-+};
+ };
+ 
+ &framebuffer0 {
+@@ -64,6 +89,13 @@
+ 		#address-cells = <1>;
+ 		#size-cells = <1>;
+ 
++		pmu_gpio: gpio {
++			compatible = "apple,d2365-pmic-gpio";
++			gpio-controller;
++			#gpio-cells = <2>;
++			gpio-reserved-ranges = <0 13>, <15 9>;
++		};
 +
-+&d2365_pmic {
-+	pmu_gpio: gpio {
-+		compatible = "apple,d2365-pmic-gpio";
-+		gpio-controller;
-+		#gpio-cells = <2>;
-+		gpio-reserved-ranges = <0 13>, <15 9>;
-+	};
-+};
-+
-+&{/soc} {
-+	wlan_uart2: wlan-platform-control@20a0c8000 {
-+		compatible = "apple,t8010-wlan-uart-provider";
-+		reg = <0x2 0x0a0c8000 0x0 0x4000>;
-+		pinctrl-0 = <&wlan_uart2_pins>;
-+		pinctrl-names = "default";
-+		power-domains = <&ps_uart2>;
-+		status = "okay";
-+	};
-+};
-+
+ 		rtc@500 {
+ 			compatible = "apple,angel-pmic-rtc", "apple,antigua-pmic-rtc";
+ 			reg = <0x500 0x10>;
+@@ -87,3 +119,128 @@
+ 		};
+ 	};
+ };
 +&pcie0 {
 +	iommu-map = <0x100 &pcie0_dart0 0 1>,
 +		    <0x200 &pcie0_dart3 0 1>;
@@ -141,6 +161,8 @@ index 98b3d82b3..6266a60bb 100644
 +	status = "okay";
 +
 +	bluetooth: bluetooth {
++		compatible = "apple,j71b-bcm4355c1-bt",
++			     "brcm,bcm4355c1-bt";
 +		current-speed = <115200>;
 +		max-speed = <3000000>;
 +		shutdown-gpios = <&pmu_gpio 13 GPIO_ACTIVE_HIGH>;
@@ -157,45 +179,75 @@ index 98b3d82b3..6266a60bb 100644
 +		compatible = "ti,hdq-uart";
 +
 +		battery: fuel-gauge {
++			compatible = "ti,bq27540-hdq";
++			monitored-battery = <&battery_info>;
 +		};
 +	};
 +};
 +
 +&spi3 {
++	clocks = <&spi3_nclk>;
 +	cs-gpios = <&pinctrl_ap 85 GPIO_ACTIVE_LOW>;
 +	dmas = <&sio 0x1a>;
 +	dma-names = "tx";
 +	status = "okay";
++
++	touchscreen: touchscreen@0 {
++		compatible = "apple,j71b-touchscreen";
++		reg = <0>;
++		spi-max-frequency = <4000000>;
++		spi-cpol;
++		spi-cpha;
++		apple,z2-bpw16-min-len = <17>;
++		apple,z2-no-init-ack;
++		interrupts-extended = <&pinctrl_ap 21 IRQ_TYPE_EDGE_FALLING>;
++		power-ldo-gpios = <&pinctrl_ap 29 GPIO_ACTIVE_HIGH>;
++		reset-gpios = <&pinctrl_ap 31 GPIO_ACTIVE_LOW>;
++		power-ana-gpios = <&pinctrl_ap 145 GPIO_ACTIVE_HIGH>;
++		clocks = <&touchclk>;
++		touchscreen-size-x = <1536>;
++		touchscreen-size-y = <2048>;
++	};
 +};
 +
 +&sio {
 +	status = "okay";
 +};
++
++&wlan_uart2 {
++	pinctrl-0 = <&wlan_uart2_pins>;
++	pinctrl-names = "default";
++	status = "okay";
++};
 diff --git a/arch/arm64/boot/dts/apple/t8010-ipad7.dtsi b/arch/arm64/boot/dts/apple/t8010-ipad7.dtsi
-index 062884b24..06f621387 100644
+index 062884b24..39d805c31 100644
 --- a/arch/arm64/boot/dts/apple/t8010-ipad7.dtsi
 +++ b/arch/arm64/boot/dts/apple/t8010-ipad7.dtsi
-@@ -9,15 +9,11 @@
+@@ -9,159 +9,47 @@
   * The iPad 7 seems to be only an iteration over the iPad 6 with some
   * small changes, like the a bigger screen and 1 GiB of RAM more, hence
   * there is little to no differentiation between these 2 generations for
 - * now.
-+ * now. Shared board wiring lives in t8010-ipad6.dtsi.
++ * now. This file only overrides what differs from t8010-ipad6.dtsi.
   */
  #include "t8010-ipad6.dtsi"
  
- / {
+-/ {
 -	aliases {
 -		bluetooth0 = &bluetooth;
 -	};
 -
- 	ipad7_battery: battery {
- 		compatible = "simple-battery";
- 		charge-full-design-microamp-hours = <8557000>;
-@@ -29,139 +25,38 @@
- 		clock-frequency = <55384615>;
- 		clock-output-names = "spi3-nclk";
- 	};
+-	ipad7_battery: battery {
+-		compatible = "simple-battery";
+-		charge-full-design-microamp-hours = <8557000>;
+-	};
+-
+-	spi3_nclk: clock-spi3-nclk {
+-		compatible = "fixed-clock";
+-		#clock-cells = <0>;
+-		clock-frequency = <55384615>;
+-		clock-output-names = "spi3-nclk";
+-	};
 -
 -	wlan_vdd: regulator-wlan-vdd {
 -		compatible = "regulator-fixed";
@@ -204,8 +256,10 @@ index 062884b24..06f621387 100644
 -		enable-active-high;
 -		off-on-delay-us = <100000>;
 -	};
--};
--
++&battery_info {
++	charge-full-design-microamp-hours = <8557000>;
+ };
+ 
 -&d2365_pmic {
 -	pmu_gpio: gpio {
 -		compatible = "apple,d2365-pmic-gpio";
@@ -224,6 +278,8 @@ index 062884b24..06f621387 100644
 -		power-domains = <&ps_uart2>;
 -		status = "okay";
 -	};
++&spi3_nclk {
++	clock-frequency = <55384615>;
  };
  
  &pcie0 {
@@ -337,42 +393,68 @@ index 062884b24..06f621387 100644
 -	};
 +&battery {
 +	compatible = "ti,bq27545-hdq";
-+	monitored-battery = <&ipad7_battery>;
  };
  
  &i2c1 {
-@@ -201,11 +96,7 @@
+@@ -200,40 +88,17 @@
+ 	};
  };
  
- &spi3 {
+-&spi3 {
 -	cs-gpios = <&pinctrl_ap 85 GPIO_ACTIVE_LOW>;
- 	clocks = <&spi3_nclk>;
+-	clocks = <&spi3_nclk>;
 -	dmas = <&sio 0x1a>;
 -	dma-names = "tx";
 -	status = "okay";
- 
- 	touchscreen@0 {
- 		compatible = "apple,j172-touchscreen";
-@@ -233,7 +124,3 @@
- 		touchscreen-size-y = <2160>;
- 	};
- };
+-
+-	touchscreen@0 {
+-		compatible = "apple,j172-touchscreen";
+-		reg = <0>;
+-		spi-max-frequency = <24000000>;
+-		spi-cpol;
+-		spi-cpha;
+-		spi-cs-setup-delay-ns = <10000>;
+-		spi-cs-hold-delay-ns = <10000>;
+-		spi-cs-inactive-delay-ns = <10000>;
+-		apple,z2-bpw16-min-len = <17>;
+-		apple,z2-no-init-ack;
+-		pinctrl-names = "display-sync-active";
+-		pinctrl-0 = <&touch_display_sync_active>;
+-		/* D10/D11 supplies are not present on J172. */
+-		interrupts-extended = <&pinctrl_ap 21 IRQ_TYPE_EDGE_FALLING>;
+-		power-ldo-gpios = <&pinctrl_ap 29 GPIO_ACTIVE_HIGH>;
+-		reset-gpios = <&pinctrl_ap 31 GPIO_ACTIVE_LOW>;
+-		power-ana-gpios = <&pinctrl_ap 145 GPIO_ACTIVE_HIGH>;
+-		display-sync-gpios = <&pinctrl_ap 176 GPIO_ACTIVE_HIGH>;
+-		display-sync1-gpios = <&pinctrl_ap 177 GPIO_ACTIVE_HIGH>;
+-		clocks = <&touchclk>;
+-		firmware-name = "apple/dfrmtfw-j172-k1f19-6.bin";
+-		touchscreen-size-x = <1620>;
+-		touchscreen-size-y = <2160>;
+-	};
+-};
 -
 -&sio {
 -	status = "okay";
--};
++&touchscreen {
++	compatible = "apple,j172-touchscreen";
++	spi-max-frequency = <24000000>;
++	spi-cs-setup-delay-ns = <10000>;
++	spi-cs-hold-delay-ns = <10000>;
++	spi-cs-inactive-delay-ns = <10000>;
++	pinctrl-names = "display-sync-active";
++	pinctrl-0 = <&touch_display_sync_active>;
++	display-sync-gpios = <&pinctrl_ap 176 GPIO_ACTIVE_HIGH>;
++	display-sync1-gpios = <&pinctrl_ap 177 GPIO_ACTIVE_HIGH>;
++	firmware-name = "apple/dfrmtfw-j172-k1f19-6.bin";
++	touchscreen-size-x = <1620>;
++	touchscreen-size-y = <2160>;
+ };
 diff --git a/arch/arm64/boot/dts/apple/t8010-j71b.dts b/arch/arm64/boot/dts/apple/t8010-j71b.dts
-index 534eb8413..f0f2d2832 100644
+index 534eb8413..2aada4855 100644
 --- a/arch/arm64/boot/dts/apple/t8010-j71b.dts
 +++ b/arch/arm64/boot/dts/apple/t8010-j71b.dts
-@@ -6,9 +6,17 @@
- 
- /dts-v1/;
- 
--#include "t8010-ipad6.dtsi"
-+#include "t8010-j7xb.dtsi"
- 
- / {
+@@ -12,3 +12,11 @@
  	compatible = "apple,j71b", "apple,t8010", "apple,arm-platform";
  	model = "Apple iPad 6 (Wi-Fi)";
  };
@@ -385,17 +467,10 @@ index 534eb8413..f0f2d2832 100644
 +	firmware-name = "apple/j71b-fwstart.z2fw";
 +};
 diff --git a/arch/arm64/boot/dts/apple/t8010-j72b.dts b/arch/arm64/boot/dts/apple/t8010-j72b.dts
-index 264924e41..f93ab6465 100644
+index 264924e41..20437b4b4 100644
 --- a/arch/arm64/boot/dts/apple/t8010-j72b.dts
 +++ b/arch/arm64/boot/dts/apple/t8010-j72b.dts
-@@ -6,9 +6,17 @@
- 
- /dts-v1/;
- 
--#include "t8010-ipad6.dtsi"
-+#include "t8010-j7xb.dtsi"
- 
- / {
+@@ -12,3 +12,11 @@
  	compatible = "apple,j72b", "apple,t8010", "apple,arm-platform";
  	model = "Apple iPad 6 (Cellular)";
  };
@@ -407,63 +482,21 @@ index 264924e41..f93ab6465 100644
 +&touchscreen {
 +	firmware-name = "apple/j72b-fwstart.z2fw";
 +};
-diff --git a/arch/arm64/boot/dts/apple/t8010-j7xb.dtsi b/arch/arm64/boot/dts/apple/t8010-j7xb.dtsi
-new file mode 100644
-index 000000000..60245820d
---- /dev/null
-+++ b/arch/arm64/boot/dts/apple/t8010-j7xb.dtsi
-@@ -0,0 +1,54 @@
-+// SPDX-License-Identifier: GPL-2.0+ OR MIT
-+/*
-+ * Apple iPad 6 (J71b/J72b) common device tree
-+ *
-+ * Board wiring shared with the iPad 7 lives in t8010-ipad6.dtsi; this file
-+ * holds what differs on the iPad 6.
-+ */
+diff --git a/arch/arm64/boot/dts/apple/t8010.dtsi b/arch/arm64/boot/dts/apple/t8010.dtsi
+index 8dc02eb60..59fd45203 100644
+--- a/arch/arm64/boot/dts/apple/t8010.dtsi
++++ b/arch/arm64/boot/dts/apple/t8010.dtsi
+@@ -178,6 +178,13 @@
+ 			status = "disabled";
+ 		};
+ 
++		wlan_uart2: wlan-platform-control@20a0c8000 {
++			compatible = "apple,t8010-wlan-uart-provider";
++			reg = <0x2 0x0a0c8000 0x0 0x4000>;
++			power-domains = <&ps_uart2>;
++			status = "disabled";
++		};
 +
-+#include "t8010-ipad6.dtsi"
-+
-+/ {
-+	ipad6_battery: battery {
-+		compatible = "simple-battery";
-+		charge-full-design-microamp-hours = <8827000>;
-+	};
-+
-+	spi3_nclk: clock-spi3-nclk {
-+		compatible = "fixed-clock";
-+		#clock-cells = <0>;
-+		clock-frequency = <61538461>;
-+		clock-output-names = "spi3-nclk";
-+	};
-+};
-+
-+&bluetooth {
-+	compatible = "apple,j71b-bcm4355c1-bt",
-+		     "brcm,bcm4355c1-bt";
-+};
-+
-+&battery {
-+	compatible = "ti,bq27540-hdq";
-+	monitored-battery = <&ipad6_battery>;
-+};
-+
-+&spi3 {
-+	clocks = <&spi3_nclk>;
-+
-+	touchscreen: touchscreen@0 {
-+		compatible = "apple,j71b-touchscreen";
-+		reg = <0>;
-+		spi-max-frequency = <4000000>;
-+		spi-cpol;
-+		spi-cpha;
-+		apple,z2-bpw16-min-len = <17>;
-+		apple,z2-no-init-ack;
-+		interrupts-extended = <&pinctrl_ap 21 IRQ_TYPE_EDGE_FALLING>;
-+		power-ldo-gpios = <&pinctrl_ap 29 GPIO_ACTIVE_HIGH>;
-+		reset-gpios = <&pinctrl_ap 31 GPIO_ACTIVE_LOW>;
-+		power-ana-gpios = <&pinctrl_ap 145 GPIO_ACTIVE_HIGH>;
-+		clocks = <&touchclk>;
-+		touchscreen-size-x = <1536>;
-+		touchscreen-size-y = <2048>;
-+	};
-+};
+ 		serial3: serial@20a0cc000 {
+ 			compatible = "apple,t8010-uart", "apple,s5l-uart";
+ 			reg = <0x2 0x0a0cc000 0x0 0x4000>;
