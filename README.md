@@ -2,14 +2,15 @@
 
 Hardware support and image-building resources for Linux on Apple devices. This repository owns device descriptions, kernel patches/configuration, firmware recipes, recovery tooling and the device runtime. It does not depend on a desktop distribution or the host CLI.
 
-## Hardware profiles
+## Supported hardware
 
-| Device | Profile | Boot status |
-| --- | --- | --- |
-| iPad 6 Wi-Fi (`iPad7,5`) | J71b | Experimental tethered Orchard launcher; software rendering |
-| iPad mini 1 Wi-Fi (`iPad2,5`, P105AP) | P105 | Experimental manual bring-up through an existing jailbreak, with a host-served NFS root |
+Currently: iPad 6 Wi-Fi (`iPad7,5`, J71b), experimental. Boot is tethered and GPU acceleration is not available.
 
-[P105 prerequisites and measured results](devices/p105/README.md) describe the tested A5/ARMv7 path. Its packaged runtime and pinned Cascadia preparation recipe support manual image assembly. Orchard CLI adapter integration and published launcher assets are separate work.
+The iPad mini 1 Wi-Fi (`iPad2,5`, P105AP) has an experimental P105 profile for
+jailbreak-assisted tethered boot and a host-served NFS root. See the
+[P105 prerequisites and measured results](devices/p105/README.md) for its
+A5/ARMv7 component recipe and companion Orchard CLI support. Public launcher
+assets await release integration.
 
 ## Use
 
