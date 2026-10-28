@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Orchard migration <noreply@orchardlinux>
-Date: Wed, 28 Oct 2026 10:21:12 +0800
+Date: Wed, 28 Oct 2026 11:04:05 +0800
 Subject: [PATCH] dt-bindings: input: apple,z2-multitouch: Add iPad 6 (J71b)
 
 The iPad 6 touchscreen uses the iPad 7 HBPP boot with generation-1

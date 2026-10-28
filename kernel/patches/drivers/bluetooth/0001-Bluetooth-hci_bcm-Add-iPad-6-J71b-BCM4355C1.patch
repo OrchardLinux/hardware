@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Orchard migration <noreply@orchardlinux>
-Date: Wed, 28 Oct 2026 10:21:12 +0800
+Date: Wed, 28 Oct 2026 11:04:04 +0800
 Subject: [PATCH] Bluetooth: hci_bcm: Add iPad 6 (J71b) BCM4355C1
 
 The iPad 6 uses the same BCM4355C1 UART wiring as the iPad 7. Its
