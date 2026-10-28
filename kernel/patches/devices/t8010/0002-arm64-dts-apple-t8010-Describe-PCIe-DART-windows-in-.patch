@@ -54,10 +54,10 @@ index 57bde8f15..d81f40c9a 100644
  	pinctrl-names = "default";
  
 diff --git a/arch/arm64/boot/dts/apple/t8010-ipad6.dtsi b/arch/arm64/boot/dts/apple/t8010-ipad6.dtsi
-index e9a61f617..d4e251696 100644
+index 974e05df2..0bffa509b 100644
 --- a/arch/arm64/boot/dts/apple/t8010-ipad6.dtsi
 +++ b/arch/arm64/boot/dts/apple/t8010-ipad6.dtsi
-@@ -120,8 +120,8 @@
+@@ -121,8 +121,8 @@
  	};
  };
  &pcie0 {
