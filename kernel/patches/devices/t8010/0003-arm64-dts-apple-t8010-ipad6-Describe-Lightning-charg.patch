@@ -1,0 +1,62 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Orchard migration <noreply@orchardlinux>
+Date: Wed, 28 Oct 2026 18:39:05 +0800
+Subject: [PATCH] arm64: dts: apple: t8010-ipad6: Describe Lightning charging
+
+Describe the Tristar port controller and the PMIC charger so the iPad 6
+charges above iBoot's 100 mA. The iPad 7 uses a Bellatrix port
+controller and its own charger node, so it drops both.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/arm64/boot/dts/apple/t8010-ipad6.dtsi | 14 ++++++++++++++
+ arch/arm64/boot/dts/apple/t8010-ipad7.dtsi |  4 ++++
+ 2 files changed, 18 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/t8010-ipad6.dtsi b/arch/arm64/boot/dts/apple/t8010-ipad6.dtsi
+index 0bffa509b..aaa903f54 100644
+--- a/arch/arm64/boot/dts/apple/t8010-ipad6.dtsi
++++ b/arch/arm64/boot/dts/apple/t8010-ipad6.dtsi
+@@ -84,6 +84,11 @@
+ &i2c0 {
+ 	status = "okay";
+ 
++	tristar: port-controller@1a {
++		compatible = "nxp,cbtl1610";
++		reg = <0x1a>;
++	};
++
+ 	d2365_pmic: pmic@3c {
+ 		compatible = "apple,angel-pmic", "apple,i2c-pmic";
+ 		reg = <0x3c>;
+@@ -104,6 +109,15 @@
+ 			nvmem-cell-names = "rtc_offset";
+ 		};
+ 
++		tristar_charger: charger@180 {
++			compatible = "apple,j71b-tristar-charger", "apple,tristar-charger";
++			reg = <0x180 0x10>, <0xa00 0x04>, <0x140 0x1e>, <0x4000 0x03>;
++			reg-names = "status", "control", "event", "adc";
++			interrupts-extended = <&pinctrl_ap 38 IRQ_TYPE_LEVEL_LOW>;
++			apple,tristar = <&tristar>;
++			input-current-limit-microamp = <2400000>;
++		};
++
+ 		nvmem@5000 {
+ 			compatible = "apple,pmic-nvmem";
+ 			reg = <0x5000 0x28>;
+diff --git a/arch/arm64/boot/dts/apple/t8010-ipad7.dtsi b/arch/arm64/boot/dts/apple/t8010-ipad7.dtsi
+index 39d805c31..5f2a2118b 100644
+--- a/arch/arm64/boot/dts/apple/t8010-ipad7.dtsi
++++ b/arch/arm64/boot/dts/apple/t8010-ipad7.dtsi
+@@ -13,6 +13,10 @@
+  */
+ #include "t8010-ipad6.dtsi"
+ 
++/* The iPad 7 port controller is Bellatrix, with its own charger policy. */
++/delete-node/ &tristar_charger;
++/delete-node/ &tristar;
++
+ &battery_info {
+ 	charge-full-design-microamp-hours = <8557000>;
+ };
