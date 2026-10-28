@@ -92,9 +92,14 @@ into the shared cache, replay them onto the stack, then run the semantic review
    kernel builds, then a J71b RAM-boot checklist over Wi-Fi SSH (storage fence,
    touch, Wi-Fi, Bluetooth, battery, charging, backlight) against today's kernel.
    The current stack stays as the fallback until this passes.
-4. **Build switch.** `kernel/build` applies `hoolock/`, `pauli1go/`, `orchard/`,
-   then `<device>/`. `upstream.lock` points at torvalds. Rebuild and compare
-   `Image.gz`/modules with the cached build; boot once on J71b.
+4. **J71b on Paul's model.** Write J71b's DT on the shared `t8010.dtsi` nodes,
+   modelled on J172 (`t8010-ipad7.dtsi`), using in-tree drivers only. Apply the
+   `shared/` fixes from `REVIEW.md`. Drop the bring-up DT chain, the out-of-tree
+   touch/SIO/GPIO module copies and the charging lease. Switch `kernel/build` to
+   torvalds + `hoolock/` + `shared/` + `<device>/`.
+   **Check**, on the device, staged: RAM boot over USB serial → Wi-Fi SSH →
+   touch, battery, Bluetooth, backlight → NVMe read-only mount → read-write on
+   the Linux partition only → Omarchy install boot.
 5. **Integrate further devices** onto the same stack: J71t (hardware#6), J172 and
    iPhone 7 profiles (Pauli1Go), then charging as shared drivers (D2365 charger,
    CBTL1610 source, PMIC event IRQ chip). P105/iPad mini 1 (A5, arm32) needs arm32

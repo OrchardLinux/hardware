@@ -16,19 +16,29 @@ Our patches touch 53 files:
 | Orchard only | 16 | J71b DTs, readiness driver, NVMe policy header, Wi-Fi |
 | Conflict | 15 | Both changed the same code; reviewed hunk by hunk below |
 
-## Two tracks
+## Decision: no bring-up scaffolding in the final stack
 
 The production J71b DTB is a chain of bring-up layers (`devbase` → `storage-ro` →
 `pcie-dev` → `sio-dev` → `readiness`), several marked diagnostics-only. Touch runs on
 out-of-tree driver copies in `kernel/modules/j71b/touch/` (`apple-sio-core`,
-`apple-sio-dma`, a 77 KB `apple_z2` copy). Paul's J172 is near-identical A10
-hardware with an in-tree DT and drivers.
+`apple-sio-dma`, a 77 KB `apple_z2` copy). Charging relies on a userspace lease
+service. Paul's J172 is near-identical A10 hardware with an in-tree DT and drivers.
 
-- **A — migration, no behavior change:** J71b's gates and DTs move into
-  `patches/j71b/` so the step 4 boot matches today's kernel.
-- **B — re-platform J71b on Paul's DT/driver model** (like J172), subsystem by
-  subsystem with on-device validation; storage writes last. Most `j71b/` items
-  below are expected to shrink or disappear there.
+Decided (2026-10-28): J71b is re-platformed on Paul's model instead of carrying
+this forward. The final stack has:
+- no diagnostics-only DT layers, `J71B_*` gate markers or machine-gated fences in
+  shared drivers;
+- no out-of-tree driver copies;
+- no userspace charging lease: charging is kernel `power_supply` drivers.
+
+What survives from our delta: the `shared/` fixes below, plus J71b board data
+(DT, compatibles, quirks) where the hardware really differs from J172.
+
+Storage safety moves from kernel fences to test order: RAM boot → read-only
+mount → read-write on the Linux partition → installer.
+
+In the tables, **j71b/** now means "scaffolding: drop; re-derive any real board
+difference while porting J71b to the J172 model".
 
 ## Verdicts
 
