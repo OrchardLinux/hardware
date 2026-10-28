@@ -194,7 +194,7 @@ jobs:
       - name: Build static recovery tools
         if: inputs.reuse_run_id == ''
         run: |
-          OMA_RECOVERY_TOOLS_WORK="$PWD/out/recovery-tools" bash boot/initramfs/j71b/recovery/build-tools
+          OMA_RECOVERY_TOOLS_WORK="$PWD/out/recovery-tools" bash boot/initramfs/recovery/build-tools
           mkdir -p out/components/boot
           cp out/recovery-tools/bin/* out/components/boot/
       - name: Build quiet loader

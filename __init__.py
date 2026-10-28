@@ -16,6 +16,13 @@ def device_path(profile):
     return path
 
 
+def profiles():
+    """Every device this hardware data describes."""
+    root = Path(__file__).parent / 'devices'
+    return sorted(path.parent.name for path in root.glob('*/device.toml')
+                  if not path.is_symlink() and not path.parent.is_symlink())
+
+
 def device(profile):
     return tomllib.loads(device_path(profile).read_text())
 

@@ -40,7 +40,7 @@ class CIEfficiency(unittest.TestCase):
     def test_shared_toolchain_package_lists_can_be_queried_without_installing(self):
         recipes = [('kernel/install-toolchain', 'kmod'),
                    ('boot/m1n1/install-toolchain', 'clang-19'),
-                   ('boot/initramfs/j71b/recovery/install-toolchain', 'musl-tools')]
+                   ('boot/initramfs/recovery/install-toolchain', 'musl-tools')]
         for relative, required in recipes:
             packages = subprocess.check_output(['bash', str(ROOT / relative), '--packages'], text=True).splitlines()
             self.assertIn(required, packages)

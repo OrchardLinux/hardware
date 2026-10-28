@@ -94,7 +94,7 @@ class Identity(unittest.TestCase):
             identity.cached()
 
     def test_gadget_publishes_identity_before_binding_usb(self):
-        source=(ROOT/'boot/initramfs/j71b/recovery/usb-gadget').read_text()
+        source=(ROOT/'boot/initramfs/recovery/usb-gadget').read_text()
         self.assertLess(source.index('identity.py'),source.index('/serialnumber'))
         self.assertLess(source.index('/serialnumber'),source.index('"$g/UDC"'))
 

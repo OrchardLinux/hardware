@@ -27,6 +27,7 @@ dtb = "t8010-j71b"     # arch/arm64/boot/dts/apple/<dtb>.dtb
 recipe = "firmware.json" # Relative to this device.toml; public recipe, not firmware bytes.
 
 [support]
+install = true # Qualified install path (recovery runtime, firmware mixin).
 wifi = true # Static support; provisioning requires runtime-confirmed availability.
 usb_serial = true
 usb_network = true

@@ -1,5 +1,5 @@
 #!/bin/busybox sh
-# RAM-only J71b recovery. No internal storage is mounted or written.
+# RAM-only Orchard recovery. No internal storage is mounted or written.
 set -eu
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 cd /
@@ -12,15 +12,16 @@ mkdir -p /dev/pts /run/recovery /run/orchard
 mount -t devpts -o mode=0620,ptmxmode=0666 devpts /dev/pts
 exec </dev/console >/dev/console 2>&1
 
-[ "$(tr '\000' '\n' < /proc/device-tree/compatible | head -1)" = apple,j71b ] || {
-    echo 'Wrong device for J71b recovery image'
-    exec sh
-}
+board=$(tr '\000' '\n' < /proc/device-tree/compatible | head -1)
+case "$board" in
+apple,*) ;;
+*) echo "Not an Apple device for Orchard recovery: $board"; exec sh ;;
+esac
 /sbin/recovery-usb
 ip address add 172.16.42.1/30 dev usb0
 ip link set usb0 up
 udhcpd -f /etc/udhcpd.conf &
-echo 'J71b recovery: USB serial ready; provision an SSH key before SSH starts.'
+echo "${board#apple,} recovery: USB serial ready; provision an SSH key before SSH starts."
 (
     while getty -n -l /bin/sh ttyGS0 115200 vt100; do sleep 1; done
 ) &

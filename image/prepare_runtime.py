@@ -16,7 +16,7 @@ from .integrity import sha
 from .elf import needed
 
 PROJECT = Path(__file__).resolve().parents[1]
-HERE = PROJECT / 'boot/initramfs/j71b/recovery'
+HERE = PROJECT / 'boot/initramfs/recovery'
 
 
 def copy(source, target, mode):
