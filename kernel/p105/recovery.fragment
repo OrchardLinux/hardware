@@ -1,0 +1,7 @@
+# A serial number containing the live boot ID requires a userspace USB gadget.
+# CONFIG_USB_CDC_COMPOSITE is not set
+CONFIG_CONFIGFS_FS=y
+CONFIG_USB_LIBCOMPOSITE=y
+CONFIG_USB_CONFIGFS=y
+CONFIG_USB_CONFIGFS_ACM=y
+CONFIG_USB_CONFIGFS_ECM=y

@@ -38,13 +38,17 @@ if grep -Eq '^CONFIG_MTD_APPLE_H2FMI=[ym]$' "$config"; then
   exit 1
 fi
 grep -qx 'CONFIG_EXTRA_FIRMWARE=""' "$config"
+if [[ "$mode" == private && -f build/initramfs-root/etc/orchard/p105.json ]]; then
+  grep -qx 'CONFIG_USB_CONFIGFS=y' "$config"
+  grep -qx '# CONFIG_USB_CDC_COMPOSITE is not set' "$config"
+fi
 dtc -I dts -O dtb dts/p105ap.dts -o output/p105ap.dtb 2>logs/dtc.log
 test "$(fdtget output/p105ap.dtb /soc@30000000/flash-controller@1200000 status)" = disabled
 if [[ "$mode" == public ]]; then
   grep -qx 'CONFIG_INITRAMFS_SOURCE=""' "$config"
 else
   cmp build/keep/lib/firmware/mtcal.bin build/initramfs-root/lib/firmware/mtcal.bin
-  for marker in 'P105: stage1 start' p105-systemd-v1 ttyGS0 10.55.0.2; do
+  for marker in ttyGS0 10.55.0.2; do
     LC_ALL=C grep -aFq "$marker" build/linux/usr/initramfs_data.cpio
   done
   python3 scripts/cpio-owners.py build/linux/usr/initramfs_data.cpio > output/cpio-owners.txt

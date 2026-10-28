@@ -1,12 +1,15 @@
 # P105 component validation
 
+This record covers phase 2. The later native CLI boot and recovery checks are
+recorded in [p105-orchard-validation.md](p105-orchard-validation.md).
+
 The P105 contribution builds ARMv7 kernel components from pinned Cascadia and
 Linux source. An explicit private initramfs selects a boot bundle containing
 the owner's firmware. The public producer embeds an empty initramfs.
 
 ## Host checks
 
-The complete hardware suite passes 98 tests on Python 3.9.6 and Python 3.14.6.
+The phase 2 hardware suite passed 98 tests on Python 3.9.6 and Python 3.14.6.
 These include source export, matching owner calibration and ARM ABI checks.
 The component tests reject a public output containing a private payload and
 verify the exact layout of a private bundle.
@@ -18,7 +21,7 @@ coverage for empty mount points and linked destinations.
 The optional NFS location is accepted only for private roots. Tests reject
 relative locations and embedded line breaks before any build work starts.
 
-The wheel and source archive contain all 38 P105 resources with bytes matching
+The phase 2 wheel and source archive contained all 38 P105 resources with bytes matching
 the checkout. A fresh environment installs the wheel without a sibling source
 dependency. The installed runtime stages its payload into a disposable ARMv7
 guest root using real ARM executables and the new build's static tools.
@@ -65,7 +68,8 @@ hashes and the device checks on the owner's host.
 
 The earlier Wi-Fi, application and display measurements in the device profile
 remain attributed to the original manual build. This test qualifies the new
-hardware components with the preserved desktop root. The Orchard CLI adapter
-and a desktop built entirely from the new checkouts await later phases.
+hardware components with the preserved desktop root. The companion CLI phase
+has since passed the native qualification linked above. A desktop built
+entirely from the new checkouts awaits its builder phase.
 Bluetooth pairing, audio playback and accelerated graphics need device tests.
 The current boot still needs the host transport and its NFS export.

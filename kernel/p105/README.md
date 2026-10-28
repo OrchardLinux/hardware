@@ -5,7 +5,8 @@ the original iPad mini Wi-Fi (`iPad2,5` / A1432 / `p105ap`). The installed-syste
 handoff and Home-button patches live in [runtime/p105](../../runtime/p105/).
 P105 uses Cascadia's `zImage` and staging loader. `kernel/build p105` produces
 public kernel components or an explicitly private boot bundle. The Orchard
-CLI adapter and published launch manifest remain separate work.
+CLI adapter consumes an owner-private boot manifest. Public launch assets
+remain part of release integration.
 
 ## Source pins and scope
 
@@ -100,6 +101,23 @@ before updating the device qualification claim.
 
 ## Private inputs and outputs
 
+An explicit owner root containing `etc/orchard/p105.json` selects Orchard RAM
+recovery. Minimal Linux's P105 composer produces that root from signed ARMv7
+Alpine packages and the owner's hardware inputs. The config records its P105
+ECID and release. The component receipt adds `mode: orchard-recovery` and
+`device_ecid`; keep this receipt with the private bundle.
+
+This mode combines the ordinary kernel fragment with `recovery.fragment`,
+preserving the NAND fence and the installed system's prerequisites. It disables
+`CONFIG_USB_CDC_COMPOSITE` and uses configfs for the ECM/ACM gadget. Userspace
+publishes the selected ECID and live kernel boot ID before SSH bootstrap.
+The initramfs waits for an authenticated NFS request through `orchard-device`.
+
+The required USB symbol check in the pinned kernel script selects
+`CONFIG_USB_LIBCOMPOSITE` for this mode. The component wrapper then verifies
+configfs is enabled and the original composite gadget is disabled. The
+ordinary private desktop recipe keeps its existing boot path.
+
 Cascadia's pinned source tracks a reference panel calibration at
 `initramfs/lib/firmware/mtcal.bin`. Preparation excludes that pathname before
 exporting file data. The reference is never read, hashed or copied by this
@@ -111,8 +129,10 @@ Capture the calibration from the owner's iPad, or supply a previous capture
 from that same panel. A filename and matching bytes establish consistency;
 the operator remains responsible for choosing the owner's capture.
 
-The final kernel embeds its initramfs. That includes Apple firmware, panel
-calibration and SSH access material, including the Linux SSH host key. Keep
+The final kernel embeds its initramfs, including Apple firmware and panel
+calibration. An ordinary owner root can also contain SSH access material.
+The Orchard recovery composer clears inherited SSH keys and generates its
+diagnostic host key in RAM after serial bootstrap. Keep
 the prepared/build tree, container volumes, kernel, initramfs and staging
 bundles outside this hardware checkout. Treat those build outputs as private.
 They belong outside public releases, CI artifacts and source packages.

@@ -119,6 +119,16 @@ class P105Components(unittest.TestCase):
                 producer.build(args)
         self.assertFalse(args.work.exists())
 
+    def test_private_input_cannot_contain_build_work_or_output(self):
+        source = self.base / 'owner-root'
+        source.mkdir()
+        for changes in ({'work': source / 'work'}, {'output': source / 'components'}):
+            args = self.args(private_initramfs=source, calibration=self.base/'calibration', **changes)
+            with patch.object(producer, 'run', side_effect=AssertionError('external operation')):
+                with self.assertRaisesRegex(ValueError, 'outside the private input'):
+                    producer.build(args)
+            self.assertFalse(args.work.exists())
+
     def test_work_and_output_cannot_alias_the_hardware_package(self):
         alias = self.base / 'package'
         alias.symlink_to(ROOT, target_is_directory=True)
@@ -177,6 +187,21 @@ class P105Components(unittest.TestCase):
         self.assertIn('CONFIG_MTD=y', config.splitlines())
         self.assertIn('# CONFIG_MTD_APPLE_H2FMI is not set', config.splitlines())
         self.assertIn('+\t\t\tstatus = "disabled";', (ROOT / 'kernel/p105/nand-disabled.patch').read_text())
+
+    def test_recovery_keeps_the_flash_fence_and_systemd_prerequisites(self):
+        prepared = self.base / 'prepared'
+        (prepared / 'config').mkdir(parents=True)
+        (prepared / 'scripts').mkdir()
+        config = prepared / 'config/p105ap.config'
+        config.write_text('CONFIG_MTD_APPLE_H2FMI=y\nCONFIG_USB_CDC_COMPOSITE=y\n')
+        (prepared / 'scripts/build-kernel.sh').write_text('CONFIG_USB_CDC_COMPOSITE CONFIG_UNIX98_PTYS\n')
+        producer.recovery_config(prepared)
+        lines = config.read_text().splitlines()
+        for line in ('CONFIG_NAMESPACES=y', 'CONFIG_USER_NS=y', 'CONFIG_MEMCG=y',
+                     'CONFIG_ZRAM_BACKEND_LZ4=y', 'CONFIG_FUSE_FS=y', 'CONFIG_USB_CONFIGFS=y',
+                     '# CONFIG_MTD_APPLE_H2FMI is not set', '# CONFIG_USB_CDC_COMPOSITE is not set'):
+            self.assertIn(line, lines)
+        self.assertNotIn('CONFIG_MTD_APPLE_H2FMI=y', lines)
 
 
 if __name__ == '__main__':

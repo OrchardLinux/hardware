@@ -2,8 +2,10 @@
 
 Experimental hardware prerequisites and component builds for the original
 iPad mini Wi-Fi. The public resources describe the board and its firmware
-inputs; the local boot path uses Cascadia and Legacy iOS Kit. An Orchard CLI
-adapter and published P105 launch manifest remain pending.
+inputs; the boot components use Cascadia and vetted Legacy iOS Kit tools.
+The companion Orchard CLI contribution supplies a native P105 adapter for
+private tethered recovery and USB/NFS handoff. Public launch assets await
+release integration.
 
 | Identity | Value |
 | --- | --- |
@@ -15,10 +17,11 @@ adapter and published P105 launch manifest remain pending.
 | Physical RAM | 512 MiB |
 | Panel | 768 x 1024 |
 
-The Linux CDC gadget product string is generic. The descriptor records DFU
-identity and device-tree compatibility and leaves Linux product matching
-unset. The Wi-Fi, USB serial and USB network capability flags describe
-observed hardware behavior. Provisioning still needs runtime confirmation.
+The native recovery gadget uses `Orchard-P105`, with a boot-bound USB serial
+number. macOS reports its product as `Orchard_P105`. The device descriptor
+retains the generic CDC gadget metadata used by the earlier manual boot;
+native discovery validates the recovery identity through the CLI adapter.
+The capability flags describe observed hardware behavior.
 
 ## Manual boot prerequisites
 
@@ -65,8 +68,9 @@ describes the host setup and jailbreak-assisted USB boot sequence.
 firmware.json retains the shared device, IPSW, extracted-input and destination
 fields used by the existing J71b recipe. Its preparation mode is explicitly
 manual and source-only. The encrypted root filesystem needs Cascadia's pinned
-extractor, and generated entries name Cascadia source steps. An Orchard
-firmware-preparation adapter has yet to implement those steps.
+extractor, and generated entries name Cascadia source steps. The CLI verifies
+the owner's prepared firmware against this recipe. Extraction remains an
+explicit owner preparation step.
 
 P105.mtprops is generic Apple touchscreen firmware extracted from the IPSW.
 The separate mtcal.bin comes from the owner's panel calibration in syscfg
@@ -100,6 +104,10 @@ experience with the earlier desktop. This remains an open issue. See the
 [component validation record](../../docs/p105-validation.md) for the tested
 scope and the package checks.
 
+The companion CLI subsequently passed repeated native recovery boots and NFS
+handoff, preserving its pinned diagnostics and the RAM rescue console. See
+[the Orchard validation record](../../docs/p105-orchard-validation.md).
+
 ## Earlier physical qualification
 
 The results below describe the original manual build and its desktop root.
@@ -127,4 +135,5 @@ still need qualification. Linux reboot currently powers the device off;
 starting Linux again requires the host boot flow. Tethered boot and the
 external root remain part of this qualified setup. P105 registration and
 manual component preparation cover this contribution; release integration
-and the Orchard CLI adapter remain separate work.
+remains part of later release work. The companion CLI adapter handles the
+private tethered recovery and NFS workflow.

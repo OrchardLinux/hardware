@@ -142,6 +142,20 @@ def nfs_location(value):
     return value
 
 
+def recovery_config(prepared):
+    preparation = module('p105_recovery_config', HERE / 'prepare-source')
+    config = prepared / 'config/p105ap.config'
+    # merge_config replaces its managed block, so pass the complete policy.
+    fragment = (HERE / 'config.fragment').read_text() + '\n' + (HERE / 'recovery.fragment').read_text()
+    config.write_text(preparation.merge_config(config.read_text(), fragment))
+    script = prepared / 'scripts/build-kernel.sh'
+    text = script.read_text()
+    expected = 'CONFIG_USB_CDC_COMPOSITE CONFIG_UNIX98_PTYS'
+    if text.count(expected) != 1:
+        raise ValueError('Pinned kernel USB check differs from the recovery recipe')
+    script.write_text(text.replace(expected, 'CONFIG_USB_LIBCOMPOSITE CONFIG_UNIX98_PTYS'))
+
+
 def stage_private(source, calibration, prepared, work, nfs_root=None):
     check_private(source, calibration)
     stage = work / 'private-root'
@@ -149,6 +163,18 @@ def stage_private(source, calibration, prepared, work, nfs_root=None):
     boot_mounts(stage)
     overlay(prepared / 'rootfs/alpine', stage)
     overlay(prepared / 'initramfs', stage)
+    recovery = local_target(stage, 'etc/orchard/p105.json')
+    if recovery.exists():
+        record = json.loads(recovery.read_text())
+        if record.get('profile') != 'p105' or type(record.get('ecid')) is not int or not 0 < record['ecid'] < 2**64:
+            raise ValueError('Invalid private P105 recovery identity')
+        if nfs_root is not None:
+            raise ValueError('Orchard RAM recovery accepts NFS through its authenticated handoff')
+        shutil.copyfile(HARDWARE / 'runtime/p105/recovery/init', stage / 'init')
+        (stage / 'init').chmod(0o755)
+        local_target(stage, 'etc/profile').write_text("export PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root PS1='/ # '\n")
+        local_target(stage, 'etc/nfsroot').unlink(missing_ok=True)
+        recovery_config(prepared)
     for path in stage.rglob('*'):
         if path.name in ('nandctl', 'iosnand', 'ios') and (path.is_file() or path.is_symlink()):
             path.unlink()
@@ -222,6 +248,8 @@ def validate_outputs(output, private):
 
 
 def build(args):
+    producer_digest = sha(HERE / 'build')
+    recipe_digest = sha(HERE / 'build-in-container.sh')
     work, output = fresh(args.work), fresh(args.output)
     if work in output.parents or output in work.parents or work == output:
         raise ValueError('Work and output directories must be separate')
@@ -234,6 +262,9 @@ def build(args):
     if nfs_root is not None and not private:
         raise ValueError('--nfs-root requires an explicitly private boot root')
     if private:
+        source_root = args.private_initramfs.resolve()
+        if work.is_relative_to(source_root) or output.is_relative_to(source_root):
+            raise ValueError('Keep work and output outside the private input root')
         check_private(args.private_initramfs, args.calibration)
     # Validate private inputs before network, output creation or VM operations.
     os.umask(0o077)
@@ -244,13 +275,13 @@ def build(args):
     prepared = work / 'cascadia'
     prepare.prepare(argparse.Namespace(source=args.cascadia_source, output=prepared))
     lock = prepare.pins()
-    source = archive_tree(prepared, inputs / 'source.tar')
     linux_archive(work, lock, args.linux_bundle)
     private_receipt = None
     if private:
         stage = stage_private(args.private_initramfs, args.calibration, prepared, work, nfs_root)
         private_receipt = archive_tree(stage, inputs / 'initramfs.tar')
         shutil.copyfile(args.calibration, inputs / 'calibration')
+    source = archive_tree(prepared, inputs / 'source.tar')
     shutil.copyfile(HERE / 'build-in-container.sh', inputs / 'build-in-container.sh')
     inspect = subprocess.run(['podman', 'image', 'inspect', args.toolchain_image,
                               '--format', '{{.Id}}'], capture_output=True, text=True)
@@ -285,12 +316,16 @@ def build(args):
                    'architecture': 'armv7h', 'private': private, 'publishable': not private,
                    'flash_controller': 'disabled', 'upstream': lock,
                    'prepared_source': source, 'toolchain_image': image,
-                   'recipe_sha256': sha(HERE / 'build-in-container.sh'),
-                   'producer_sha256': sha(HERE / 'build'),
+                   'recipe_sha256': recipe_digest,
+                   'producer_sha256': producer_digest,
                    'components': inventory(temporary),
                    'qualification': 'build-only; physical-device validation required'}
         if private:
             receipt['private_inputs'] = private_receipt
+            identity = work / 'private-root/etc/orchard/p105.json'
+            if identity.exists():
+                receipt['device_ecid'] = json.loads(identity.read_text())['ecid']
+                receipt['mode'] = 'orchard-recovery'
         (temporary / 'components.json').write_text(json.dumps(receipt, indent=2, sort_keys=True) + '\n')
         if output.exists() or output.is_symlink():
             raise ValueError('Output appeared during the build; refusing to replace it')

@@ -14,7 +14,7 @@ board = 0x0a
 
 [boot]
 methods = ["jailbreak-kdfu"]
-# The Orchard CLI adapter and published launch manifest remain pending.
+# The CLI consumes an owner-private boot manifest. Public launch assets await release integration.
 
 [firmware]
 recipe = "firmware.json"

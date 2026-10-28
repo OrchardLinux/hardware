@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "orchard-hardware"
-version = "0.1.10"
+version = "0.1.11"
 description = "Hardware support, public recipes, runtime and image construction"
 readme = "README.md"
 license = "GPL-2.0-only AND GPL-2.0-or-later AND MIT AND ISC"
@@ -29,6 +29,7 @@ orchard_hardware = [
   "kernel/p105/*.md", "kernel/p105/*.lock", "kernel/p105/*.fragment", "kernel/p105/*.patch",
   "kernel/p105/prepare-source", "kernel/p105/build", "kernel/p105/*.sh", "kernel/p105/Containerfile",
   "runtime/p105/*.py", "runtime/p105/*.md", "runtime/p105/patches/*.patch",
+  "runtime/p105/recovery/*.py", "runtime/p105/recovery/init",
   "runtime/p105/overlay/*", "runtime/p105/overlay/*/*", "runtime/p105/overlay/*/*/*",
   "runtime/p105/overlay/*/*/*/*", "runtime/p105/overlay/*/*/*/*/*",
   "launcher/*.py", "runtime/j71b/*.py", "runtime/j71b/phase2-hardware", "runtime/j71b/j71b-*",

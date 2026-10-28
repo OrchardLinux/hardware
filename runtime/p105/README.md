@@ -1,9 +1,11 @@
 # P105 installed-system hardware runtime
 
-This manual adapter targets the original iPad mini Wi-Fi, `iPad2,5` / `p105ap`,
+This runtime targets the original iPad mini Wi-Fi, `iPad2,5` / `p105ap`,
 with its A5 ARMv7 processor. It enters an ARMv7 systemd NFS root through a
 separately built Cascadia RAM image. Device validation used Arch Linux ARM
-`armv7h`. Orchard device RPC and desktop assembly are separate integration work.
+`armv7h`. The [recovery sources](recovery/) add a limited Orchard device RPC
+for status, diagnostics, serial SSH bootstrap and an authenticated NFS handoff.
+Desktop assembly belongs to the image builder.
 
 The runtime preserves Cascadia's touchscreen calibration sequence, PMU button
 handling and wireless power-cycle timing. Kernel drivers own SGX startup,
@@ -66,6 +68,11 @@ the private guest root.
 
 ## USB and NFS prerequisites
 
+Native Orchard recovery accepts its NFS location through the authenticated
+device protocol. Its producer replaces the manual init and removes any
+inherited `etc/nfsroot`. Follow the companion CLI's `docs/p105.md` for that
+flow. The root selection below applies to the manual Cascadia boot.
+
 The tested gadget uses `10.55.0.2/24`; configure its host interface as
 `10.55.0.1/24`. Serve the assembled guest root over NFSv3/TCP to that client,
 with numeric guest ownership and executable modes preserved. The host must
@@ -84,6 +91,11 @@ administrator Terminal session and approval for system-configuration access
 when requested. NFS and account provisioning belong to the host/image builder.
 
 ## Boot contract
+
+The Orchard RAM init waits for one identity-bound handoff request. It prepares
+the installed root, moves the early mounts and retires its first serial shell
+before entering systemd. Diagnostics keep their pinned SSH key through a RAM
+listener on port 2222. The installed serial rescue service then owns `ttyGS0`.
 
 `/etc/cascadia/systemd-root` contains `p105-systemd-v1`. Cascadia's RAM shell
 calls the installed `prepare-root` before moving mounts. It refreshes the

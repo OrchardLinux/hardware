@@ -14,5 +14,6 @@ recursive-include devices/p105 *.md *.toml *.json
 recursive-include kernel/p105 *.md *.lock *.fragment *.patch *.sh Containerfile prepare-source build
 recursive-include runtime/p105 *.py *.md *.patch
 recursive-include runtime/p105/overlay *
+recursive-include runtime/p105/recovery *.py init
 prune runtime/p105/build
 prune kernel/p105/.work

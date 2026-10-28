@@ -1,0 +1,71 @@
+#!/bin/sh
+# P105 RAM PID 1. Wait for an authenticated request before mounting an NFS root.
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root TERM=linux PS1='/ # '
+BB=/bin/busybox.static
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+mkdir -p /dev/pts /run /tmp
+mount -t devpts devpts /dev/pts
+mount -t tmpfs -o mode=755,size=32m,nosuid,nodev run /run
+mount -t tmpfs -o mode=1777,size=64m,nosuid,nodev tmp /tmp
+[ ! -f /etc/build-date ] || date -u -s "$(cat /etc/build-date)"
+mkdir -p /run/orchard
+chmod 700 /run/orchard
+if serial=$(/usr/bin/orchard-device identity); then
+    mount -t configfs configfs /sys/kernel/config
+    G=/sys/kernel/config/usb_gadget/orchard-p105
+    mkdir -p "$G"
+    echo 0x05ac > "$G/idVendor"
+    echo 0x4142 > "$G/idProduct"
+    echo 0x0200 > "$G/bcdUSB"
+    mkdir -p "$G/strings/0x409"
+    printf '%s' "$serial" > "$G/strings/0x409/serialnumber"
+    echo Orchard > "$G/strings/0x409/manufacturer"
+    echo Orchard-P105 > "$G/strings/0x409/product"
+    mkdir -p "$G/configs/c.1/strings/0x409" "$G/functions/acm.usb0" "$G/functions/ecm.usb0"
+    echo 'Orchard P105 recovery' > "$G/configs/c.1/strings/0x409/configuration"
+    echo 250 > "$G/configs/c.1/MaxPower"
+    echo 02:10:5a:05:00:01 > "$G/functions/ecm.usb0/host_addr"
+    echo 02:10:5a:05:00:02 > "$G/functions/ecm.usb0/dev_addr"
+    ln -s "$G/functions/acm.usb0" "$G/configs/c.1/"
+    ln -s "$G/functions/ecm.usb0" "$G/configs/c.1/"
+    for udc in /sys/class/udc/*; do
+        [ -e "$udc" ] && basename "$udc" > "$G/UDC"
+    done
+    ip link set lo up
+    ip link set usb0 up
+    ip addr add 10.55.0.2/24 dev usb0
+fi
+echo 'Orchard P105 RAM recovery; waiting for host SSH bootstrap' > /dev/kmsg
+(
+    while :; do
+        "$BB" getty -i -n -l /bin/sh 115200 ttyGS0 &
+        getty=$!
+        echo "$getty" > /run/orchard/getty.pid
+        wait "$getty"
+        "$BB" sleep 1
+    done
+) &
+console=$!
+while :; do
+    if [ -f /run/orchard/handoff.json ] && [ ! -f /run/orchard/handoff.attempted ]; then
+        touch /run/orchard/handoff.attempted
+        if /usr/bin/orchard-device pivot > /run/orchard/pivot.log 2>&1; then
+            if mount --move /dev /newroot/dev; then
+                if mount --move /proc /newroot/proc; then
+                    if mount --move /sys /newroot/sys; then
+                        kill "$console" 2>/dev/null
+                        [ ! -f /run/orchard/getty.pid ] || kill -KILL "$(cat /run/orchard/getty.pid)" 2>/dev/null
+                        [ ! -f /run/recovery/dropbear.pid ] || kill "$(cat /run/recovery/dropbear.pid)" 2>/dev/null
+                        exec "$BB" switch_root /newroot /usr/libexec/p105/systemd-init
+                    fi
+                    mount --move /newroot/proc /proc
+                fi
+                mount --move /newroot/dev /dev
+            fi
+            echo '{"operation":"handoff","error":"mount handoff failed"}' > /run/orchard/failure.json
+        fi
+    fi
+    "$BB" sleep 1
+done
