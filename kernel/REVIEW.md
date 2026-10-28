@@ -194,3 +194,30 @@ staged on-device check.
 - Config: `TOUCHSCREEN_APPLE_Z2=m` (in-tree touch) and `TSL2583=m` added.
 - Not established: runtime behavior. Touch especially (never run in this
   combined form) is the first item of the staged on-device check.
+
+## Device trees (2026-10-28)
+
+`patches/devices/t8010/`: board nodes shared by the iPad 6 (J71b/J72b) and
+iPad 7 (J171/J172) move into `t8010-ipad6.dtsi`, which the iPad 7 already
+includes. `t8010-ipad7.dtsi` keeps iPad 7 differences; new `t8010-j7xb.dtsi`
+holds iPad 6 differences; `t8010-j71b.dts`/`t8010-j72b.dts` hold per-model
+Wi-Fi board type and touch firmware name.
+
+Verified by decompiling all 104 Apple DTBs before and after:
+- 100 unchanged byte for byte;
+- J171/J172: only a `wifi` label symbol and a `wifi0` alias added, otherwise
+  identical apart from phandle numbering;
+- J71b compared with the old production DTB (d05ad7b7, overlay chain): Wi-Fi
+  regulator, PMIC GPIO, PCIe port 3, Wi-Fi node, platform control, Bluetooth
+  and HDQ nodes identical; SPI3 pins identical. Intended changes: Wi-Fi board
+  type, gauge monitored-battery, SIO DMA for touch, touch compatible and
+  properties (4 MHz, firmware, size; CS timing now in the driver).
+
+Driver additions for these DTs: `drivers/bluetooth` J71b BCM4355C1 entry
+(its validated settings; whether J172's would also work is untested) and the
+`apple,j71b-touchscreen` binding.
+
+Open: J72b needs its own touch firmware (`apple/j72b-fwstart.z2fw`) and Wi-Fi
+NVRAM names from its IPSW (firmware recipe, CLI phase). The iPad 6 battery
+capacity (8827 mAh) is the published figure, not read from the gauge.
+`t8010.dtsi` carries a pre-existing `simple_bus_reg` warning (bus@20c000000).

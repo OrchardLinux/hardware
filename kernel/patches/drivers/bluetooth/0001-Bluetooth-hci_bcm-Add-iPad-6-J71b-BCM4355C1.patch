@@ -1,0 +1,60 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Orchard migration <noreply@orchardlinux>
+Date: Wed, 28 Oct 2026 10:21:12 +0800
+Subject: [PATCH] Bluetooth: hci_bcm: Add iPad 6 (J71b) BCM4355C1
+
+The iPad 6 uses the same BCM4355C1 UART wiring as the iPad 7. Its
+settings were validated on the device (including Magic Keyboard
+pairing) with RTS driven on open instead of the iPad 7's wake before
+power cycling. Whether the iPad 7 settings would also work there has
+not been tested, so add a J71b entry with the validated ones.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../bindings/net/bluetooth/brcm,bluetooth.yaml         |  4 +++-
+ drivers/bluetooth/hci_bcm.c                            | 10 ++++++++++
+ 2 files changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/net/bluetooth/brcm,bluetooth.yaml b/Documentation/devicetree/bindings/net/bluetooth/brcm,bluetooth.yaml
+index 49247148b..a79982c00 100644
+--- a/Documentation/devicetree/bindings/net/bluetooth/brcm,bluetooth.yaml
++++ b/Documentation/devicetree/bindings/net/bluetooth/brcm,bluetooth.yaml
+@@ -19,7 +19,9 @@ properties:
+           - const: brcm,bcm4355c0-bt
+           - const: brcm,bcm4345c5
+       - items:
+-          - const: apple,j172-bcm4355c1-bt
++          - enum:
++              - apple,j71b-bcm4355c1-bt
++              - apple,j172-bcm4355c1-bt
+           - const: brcm,bcm4355c1-bt
+       - items:
+           - enum:
+diff --git a/drivers/bluetooth/hci_bcm.c b/drivers/bluetooth/hci_bcm.c
+index 8b2c808a5..588884c34 100644
+--- a/drivers/bluetooth/hci_bcm.c
++++ b/drivers/bluetooth/hci_bcm.c
+@@ -1646,6 +1646,14 @@ static struct bcm_device_data bcm4355_device_data = {
+ 	.drive_rts_on_open = true,
+ };
+ 
++static struct bcm_device_data bcm4355_j71b_device_data = {
++	.no_early_set_baudrate = true,
++	.drive_rts_on_open = true,
++	.set_baudrate_before_patch = true,
++	.broken_read_transmit_power = true,
++	.fixup_le_adv_report_evt_type = true,
++};
++
+ static struct bcm_device_data bcm4355_j172_device_data = {
+ 	.no_early_set_baudrate = true,
+ 	.wake_before_power_cycle = true,
+@@ -1677,6 +1685,8 @@ static const struct of_device_id bcm_bluetooth_of_match[] = {
+ 	{ .compatible = "brcm,bcm43438-bt", .data = &bcm43438_device_data },
+ 	{ .compatible = "brcm,bcm4349-bt", .data = &bcm43438_device_data },
+ 	{ .compatible = "brcm,bcm43540-bt", .data = &bcm4354_device_data },
++	{ .compatible = "apple,j71b-bcm4355c1-bt",
++	  .data = &bcm4355_j71b_device_data },
+ 	{ .compatible = "apple,j172-bcm4355c1-bt",
+ 	  .data = &bcm4355_j172_device_data },
+ 	{ .compatible = "brcm,bcm4355c1-bt", .data = &bcm4355_device_data },

@@ -1,0 +1,469 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Orchard migration <noreply@orchardlinux>
+Date: Wed, 28 Oct 2026 10:23:01 +0800
+Subject: [PATCH] arm64: dts: apple: t8010: Share iPad 6/7 board nodes;
+ describe iPad 6
+
+The iPad 6 (J71b/J72b) and iPad 7 (J171/J172) share their Wi-Fi PCIe
+port, Wi-Fi regulator and platform control, PMIC GPIO controller,
+Bluetooth UART, HDQ gauge UART and touchscreen SPI wiring; pins, GPIOs
+and interrupts match between the iPad 6 device tree from iBoot and the
+validated iPad 7 description. Move those nodes into t8010-ipad6.dtsi,
+which the iPad 7 already includes, and keep only real differences in
+t8010-ipad7.dtsi. No property of any iPad 7 node changes; both gain a
+wifi0 alias so the loader can attach the MAC address and calibration.
+
+Describe the iPad 6 in a new t8010-j7xb.dtsi: BQ27540 gauge, battery
+capacity, SPI3 clock, Bluetooth and the generation-1 touchscreen
+(4 MHz, no display-sync pins). The Wi-Fi board type and touch firmware
+name are per model.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/arm64/boot/dts/apple/t8010-ipad6.dtsi | 135 +++++++++++++++++++++
+ arch/arm64/boot/dts/apple/t8010-ipad7.dtsi | 133 ++------------------
+ arch/arm64/boot/dts/apple/t8010-j71b.dts   |  10 +-
+ arch/arm64/boot/dts/apple/t8010-j72b.dts   |  10 +-
+ arch/arm64/boot/dts/apple/t8010-j7xb.dtsi  |  54 +++++++++
+ 5 files changed, 217 insertions(+), 125 deletions(-)
+ create mode 100644 arch/arm64/boot/dts/apple/t8010-j7xb.dtsi
+
+diff --git a/arch/arm64/boot/dts/apple/t8010-ipad6.dtsi b/arch/arm64/boot/dts/apple/t8010-ipad6.dtsi
+index 98b3d82b3..6266a60bb 100644
+--- a/arch/arm64/boot/dts/apple/t8010-ipad6.dtsi
++++ b/arch/arm64/boot/dts/apple/t8010-ipad6.dtsi
+@@ -87,3 +87,138 @@
+ 		};
+ 	};
+ };
++
++/* Board wiring shared by the iPad 6 (J71b/J72b) and iPad 7 (J171/J172). */
++
++/ {
++	aliases {
++		bluetooth0 = &bluetooth;
++		wifi0 = &wifi;
++	};
++
++	wlan_vdd: regulator-wlan-vdd {
++		compatible = "regulator-fixed";
++		regulator-name = "wlan-vdd";
++		gpio = <&pmu_gpio 14 GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++		off-on-delay-us = <100000>;
++	};
++};
++
++&d2365_pmic {
++	pmu_gpio: gpio {
++		compatible = "apple,d2365-pmic-gpio";
++		gpio-controller;
++		#gpio-cells = <2>;
++		gpio-reserved-ranges = <0 13>, <15 9>;
++	};
++};
++
++&{/soc} {
++	wlan_uart2: wlan-platform-control@20a0c8000 {
++		compatible = "apple,t8010-wlan-uart-provider";
++		reg = <0x2 0x0a0c8000 0x0 0x4000>;
++		pinctrl-0 = <&wlan_uart2_pins>;
++		pinctrl-names = "default";
++		power-domains = <&ps_uart2>;
++		status = "okay";
++	};
++};
++
++&pcie0 {
++	iommu-map = <0x100 &pcie0_dart0 0 1>,
++		    <0x200 &pcie0_dart3 0 1>;
++	pinctrl-0 = <&wifi_clkreq>;
++	pinctrl-names = "default";
++
++	pci@3,0 {
++		device_type = "pci";
++		reg = <0x1800 0x0 0x0 0x0 0x0>;
++		bus-range = <2 2>;
++		max-link-speed = <1>;
++		apple,manual-availability-iommu = <&pcie0_dart3 0>;
++		apple,link-retry-after-power-cycle;
++		apple,hardware-trained-phy-lane;
++		apple,endpoint-power-after-link-setup;
++		apple,inherited-perst-before-link-setup;
++		reset-gpios = <&pinctrl_ap 15 GPIO_ACTIVE_LOW>;
++
++		#address-cells = <3>;
++		#size-cells = <2>;
++		ranges;
++
++		wifi: wifi@0,0 {
++			compatible = "pci14e4,43dc";
++			reg = <0x20000 0x0 0x0 0x0 0x0>;
++			interrupts-extended = <&pinctrl_ap 147 IRQ_TYPE_EDGE_FALLING>;
++			interrupt-names = "host-wake";
++			apple,wlan-uart = <&wlan_uart2>;
++			device-wake-gpios = <&pinctrl_ap 23 GPIO_ACTIVE_HIGH>;
++			vdd-supply = <&wlan_vdd>;
++		};
++	};
++};
++
++&pcie0_dart3 {
++	status = "okay";
++};
++
++&pinctrl_ap {
++	battery_swi_pins: battery-swi-pins {
++		pinmux = <APPLE_PINMUX(173, 1)>;
++	};
++
++	bluetooth_uart3_pins: bluetooth-uart3-pins {
++		pinmux = <APPLE_PINMUX(134, 1)>,
++			 <APPLE_PINMUX(135, 1)>,
++			 <APPLE_PINMUX(136, 1)>,
++			 <APPLE_PINMUX(137, 1)>;
++	};
++
++	wifi_clkreq: wifi-clkreq-pins {
++		pinmux = <APPLE_PINMUX(19, 1)>;
++	};
++
++	wlan_uart2_pins: wlan-uart2-pins {
++		pinmux = <APPLE_PINMUX(148, 1)>,
++			 <APPLE_PINMUX(150, 1)>;
++	};
++};
++
++&serial3 {
++	pinctrl-0 = <&bluetooth_uart3_pins>;
++	pinctrl-names = "default";
++	uart-has-rtscts;
++	status = "okay";
++
++	bluetooth: bluetooth {
++		current-speed = <115200>;
++		max-speed = <3000000>;
++		shutdown-gpios = <&pmu_gpio 13 GPIO_ACTIVE_HIGH>;
++		device-wakeup-gpios = <&pinctrl_ap 88 GPIO_ACTIVE_HIGH>;
++	};
++};
++
++&serial5 {
++	pinctrl-0 = <&battery_swi_pins>;
++	pinctrl-names = "default";
++	status = "okay";
++
++	onewire {
++		compatible = "ti,hdq-uart";
++
++		battery: fuel-gauge {
++		};
++	};
++};
++
++&spi3 {
++	cs-gpios = <&pinctrl_ap 85 GPIO_ACTIVE_LOW>;
++	dmas = <&sio 0x1a>;
++	dma-names = "tx";
++	status = "okay";
++};
++
++&sio {
++	status = "okay";
++};
+diff --git a/arch/arm64/boot/dts/apple/t8010-ipad7.dtsi b/arch/arm64/boot/dts/apple/t8010-ipad7.dtsi
+index 062884b24..06f621387 100644
+--- a/arch/arm64/boot/dts/apple/t8010-ipad7.dtsi
++++ b/arch/arm64/boot/dts/apple/t8010-ipad7.dtsi
+@@ -9,15 +9,11 @@
+  * The iPad 7 seems to be only an iteration over the iPad 6 with some
+  * small changes, like the a bigger screen and 1 GiB of RAM more, hence
+  * there is little to no differentiation between these 2 generations for
+- * now.
++ * now. Shared board wiring lives in t8010-ipad6.dtsi.
+  */
+ #include "t8010-ipad6.dtsi"
+ 
+ / {
+-	aliases {
+-		bluetooth0 = &bluetooth;
+-	};
+-
+ 	ipad7_battery: battery {
+ 		compatible = "simple-battery";
+ 		charge-full-design-microamp-hours = <8557000>;
+@@ -29,139 +25,38 @@
+ 		clock-frequency = <55384615>;
+ 		clock-output-names = "spi3-nclk";
+ 	};
+-
+-	wlan_vdd: regulator-wlan-vdd {
+-		compatible = "regulator-fixed";
+-		regulator-name = "wlan-vdd";
+-		gpio = <&pmu_gpio 14 GPIO_ACTIVE_HIGH>;
+-		enable-active-high;
+-		off-on-delay-us = <100000>;
+-	};
+-};
+-
+-&d2365_pmic {
+-	pmu_gpio: gpio {
+-		compatible = "apple,d2365-pmic-gpio";
+-		gpio-controller;
+-		#gpio-cells = <2>;
+-		gpio-reserved-ranges = <0 13>, <15 9>;
+-	};
+-};
+-
+-&{/soc} {
+-	wlan_uart2: wlan-platform-control@20a0c8000 {
+-		compatible = "apple,t8010-wlan-uart-provider";
+-		reg = <0x2 0x0a0c8000 0x0 0x4000>;
+-		pinctrl-0 = <&wlan_uart2_pins>;
+-		pinctrl-names = "default";
+-		power-domains = <&ps_uart2>;
+-		status = "okay";
+-	};
+ };
+ 
+ &pcie0 {
+ 	compatible = "apple,j172-pcie", "apple,t8010-pcie";
+-	iommu-map = <0x100 &pcie0_dart0 0 1>,
+-		    <0x200 &pcie0_dart3 0 1>;
+ 	apple,preinit-phy-port-mask = <0x4>;
+-	pinctrl-0 = <&wifi_clkreq>;
+-	pinctrl-names = "default";
+-
+-	pci@3,0 {
+-		device_type = "pci";
+-		reg = <0x1800 0x0 0x0 0x0 0x0>;
+-		bus-range = <2 2>;
+-		max-link-speed = <1>;
+-		apple,manual-availability-iommu = <&pcie0_dart3 0>;
+-		apple,link-retry-after-power-cycle;
+-		apple,hardware-trained-phy-lane;
+-		apple,endpoint-power-after-link-setup;
+-		apple,inherited-perst-before-link-setup;
+-		reset-gpios = <&pinctrl_ap 15 GPIO_ACTIVE_LOW>;
+-
+-		#address-cells = <3>;
+-		#size-cells = <2>;
+-		ranges;
+-
+-		wifi@0,0 {
+-			compatible = "pci14e4,43dc";
+-			reg = <0x20000 0x0 0x0 0x0 0x0>;
+-			interrupts-extended = <&pinctrl_ap 147 IRQ_TYPE_EDGE_FALLING>;
+-			interrupt-names = "host-wake";
+-			apple,wlan-uart = <&wlan_uart2>;
+-			device-wake-gpios = <&pinctrl_ap 23 GPIO_ACTIVE_HIGH>;
+-			vdd-supply = <&wlan_vdd>;
+-			apple,antenna-sku = "XX";
+-			brcm,board-type = "apple,rudderb";
+-		};
+-	};
+ };
+ 
+-&pcie0_dart3 {
+-	status = "okay";
++&wifi {
++	apple,antenna-sku = "XX";
++	brcm,board-type = "apple,rudderb";
+ };
+ 
+ &pinctrl_ap {
+-	battery_swi_pins: battery-swi-pins {
+-		pinmux = <APPLE_PINMUX(173, 1)>;
+-	};
+-
+-	bluetooth_uart3_pins: bluetooth-uart3-pins {
+-		pinmux = <APPLE_PINMUX(134, 1)>,
+-			 <APPLE_PINMUX(135, 1)>,
+-			 <APPLE_PINMUX(136, 1)>,
+-			 <APPLE_PINMUX(137, 1)>;
+-	};
+-
+ 	i2c1_gpio_pins: i2c1-gpio-pins {
+ 		pinmux = <APPLE_PINMUX(40, 0)>,
+ 			 <APPLE_PINMUX(39, 0)>;
+ 	};
+ 
+-	wifi_clkreq: wifi-clkreq-pins {
+-		pinmux = <APPLE_PINMUX(19, 1)>;
+-	};
+-
+-	wlan_uart2_pins: wlan-uart2-pins {
+-		pinmux = <APPLE_PINMUX(148, 1)>,
+-			 <APPLE_PINMUX(150, 1)>;
+-	};
+-
+ 	touch_display_sync_active: touch-display-sync-active-pins {
+ 		pinmux = <APPLE_PINMUX(176, 1)>,
+ 			 <APPLE_PINMUX(177, 1)>;
+ 	};
+ };
+ 
+-&serial3 {
+-	pinctrl-0 = <&bluetooth_uart3_pins>;
+-	pinctrl-names = "default";
+-	uart-has-rtscts;
+-	status = "okay";
+-
+-	bluetooth: bluetooth {
+-		compatible = "apple,j172-bcm4355c1-bt",
+-			     "brcm,bcm4355c1-bt";
+-		current-speed = <115200>;
+-		max-speed = <3000000>;
+-		shutdown-gpios = <&pmu_gpio 13 GPIO_ACTIVE_HIGH>;
+-		device-wakeup-gpios = <&pinctrl_ap 88 GPIO_ACTIVE_HIGH>;
+-	};
++&bluetooth {
++	compatible = "apple,j172-bcm4355c1-bt",
++		     "brcm,bcm4355c1-bt";
+ };
+ 
+-&serial5 {
+-	pinctrl-0 = <&battery_swi_pins>;
+-	pinctrl-names = "default";
+-	status = "okay";
+-
+-	onewire {
+-		compatible = "ti,hdq-uart";
+-
+-		battery: fuel-gauge {
+-			compatible = "ti,bq27545-hdq";
+-			monitored-battery = <&ipad7_battery>;
+-		};
+-	};
++&battery {
++	compatible = "ti,bq27545-hdq";
++	monitored-battery = <&ipad7_battery>;
+ };
+ 
+ &i2c1 {
+@@ -201,11 +96,7 @@
+ };
+ 
+ &spi3 {
+-	cs-gpios = <&pinctrl_ap 85 GPIO_ACTIVE_LOW>;
+ 	clocks = <&spi3_nclk>;
+-	dmas = <&sio 0x1a>;
+-	dma-names = "tx";
+-	status = "okay";
+ 
+ 	touchscreen@0 {
+ 		compatible = "apple,j172-touchscreen";
+@@ -233,7 +124,3 @@
+ 		touchscreen-size-y = <2160>;
+ 	};
+ };
+-
+-&sio {
+-	status = "okay";
+-};
+diff --git a/arch/arm64/boot/dts/apple/t8010-j71b.dts b/arch/arm64/boot/dts/apple/t8010-j71b.dts
+index 534eb8413..f0f2d2832 100644
+--- a/arch/arm64/boot/dts/apple/t8010-j71b.dts
++++ b/arch/arm64/boot/dts/apple/t8010-j71b.dts
+@@ -6,9 +6,17 @@
+ 
+ /dts-v1/;
+ 
+-#include "t8010-ipad6.dtsi"
++#include "t8010-j7xb.dtsi"
+ 
+ / {
+ 	compatible = "apple,j71b", "apple,t8010", "apple,arm-platform";
+ 	model = "Apple iPad 6 (Wi-Fi)";
+ };
++
++&wifi {
++	brcm,board-type = "apple,j71b";
++};
++
++&touchscreen {
++	firmware-name = "apple/j71b-fwstart.z2fw";
++};
+diff --git a/arch/arm64/boot/dts/apple/t8010-j72b.dts b/arch/arm64/boot/dts/apple/t8010-j72b.dts
+index 264924e41..f93ab6465 100644
+--- a/arch/arm64/boot/dts/apple/t8010-j72b.dts
++++ b/arch/arm64/boot/dts/apple/t8010-j72b.dts
+@@ -6,9 +6,17 @@
+ 
+ /dts-v1/;
+ 
+-#include "t8010-ipad6.dtsi"
++#include "t8010-j7xb.dtsi"
+ 
+ / {
+ 	compatible = "apple,j72b", "apple,t8010", "apple,arm-platform";
+ 	model = "Apple iPad 6 (Cellular)";
+ };
++
++&wifi {
++	brcm,board-type = "apple,j72b";
++};
++
++&touchscreen {
++	firmware-name = "apple/j72b-fwstart.z2fw";
++};
+diff --git a/arch/arm64/boot/dts/apple/t8010-j7xb.dtsi b/arch/arm64/boot/dts/apple/t8010-j7xb.dtsi
+new file mode 100644
+index 000000000..60245820d
+--- /dev/null
++++ b/arch/arm64/boot/dts/apple/t8010-j7xb.dtsi
+@@ -0,0 +1,54 @@
++// SPDX-License-Identifier: GPL-2.0+ OR MIT
++/*
++ * Apple iPad 6 (J71b/J72b) common device tree
++ *
++ * Board wiring shared with the iPad 7 lives in t8010-ipad6.dtsi; this file
++ * holds what differs on the iPad 6.
++ */
++
++#include "t8010-ipad6.dtsi"
++
++/ {
++	ipad6_battery: battery {
++		compatible = "simple-battery";
++		charge-full-design-microamp-hours = <8827000>;
++	};
++
++	spi3_nclk: clock-spi3-nclk {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++		clock-frequency = <61538461>;
++		clock-output-names = "spi3-nclk";
++	};
++};
++
++&bluetooth {
++	compatible = "apple,j71b-bcm4355c1-bt",
++		     "brcm,bcm4355c1-bt";
++};
++
++&battery {
++	compatible = "ti,bq27540-hdq";
++	monitored-battery = <&ipad6_battery>;
++};
++
++&spi3 {
++	clocks = <&spi3_nclk>;
++
++	touchscreen: touchscreen@0 {
++		compatible = "apple,j71b-touchscreen";
++		reg = <0>;
++		spi-max-frequency = <4000000>;
++		spi-cpol;
++		spi-cpha;
++		apple,z2-bpw16-min-len = <17>;
++		apple,z2-no-init-ack;
++		interrupts-extended = <&pinctrl_ap 21 IRQ_TYPE_EDGE_FALLING>;
++		power-ldo-gpios = <&pinctrl_ap 29 GPIO_ACTIVE_HIGH>;
++		reset-gpios = <&pinctrl_ap 31 GPIO_ACTIVE_LOW>;
++		power-ana-gpios = <&pinctrl_ap 145 GPIO_ACTIVE_HIGH>;
++		clocks = <&touchclk>;
++		touchscreen-size-x = <1536>;
++		touchscreen-size-y = <2048>;
++	};
++};

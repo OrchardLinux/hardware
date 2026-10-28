@@ -1,0 +1,48 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Orchard migration <noreply@orchardlinux>
+Date: Wed, 28 Oct 2026 10:21:12 +0800
+Subject: [PATCH] dt-bindings: input: apple,z2-multitouch: Add iPad 6 (J71b)
+
+The iPad 6 touchscreen uses the iPad 7 HBPP boot with generation-1
+runtime firmware. It has no display-sync pins.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../input/touchscreen/apple,z2-multitouch.yaml  | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml b/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml
+index 77e311df3..ab9074210 100644
+--- a/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml
++++ b/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml
+@@ -17,6 +17,7 @@ properties:
+     enum:
+       - apple,j293-touchbar
+       - apple,j493-touchbar
++      - apple,j71b-touchscreen
+       - apple,j172-touchscreen
+       - apple,d11-touchscreen
+       - apple,d111-touchscreen
+@@ -122,6 +123,22 @@ allOf:
+         - spi-cpol
+         - apple,z2-bpw16-min-len
+         - apple,z2-no-init-ack
++  - if:
++      properties:
++        compatible:
++          const: apple,j71b-touchscreen
++    then:
++      properties:
++        display-sync-gpios: false
++        display-sync1-gpios: false
++      required:
++        - clocks
++        - power-ana-gpios
++        - power-ldo-gpios
++        - spi-cpha
++        - spi-cpol
++        - apple,z2-bpw16-min-len
++        - apple,z2-no-init-ack
+   - if:
+       properties:
+         compatible:
