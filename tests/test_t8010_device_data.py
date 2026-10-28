@@ -43,7 +43,7 @@ class T8010DeviceData(unittest.TestCase):
                 self.assertEqual(device['match']['linux']['product'],
                                  profile[0].upper() + profile[1:] + ' Recovery')
                 self.assertEqual(device['kernel'], {'platform': 'apple', 'dtb': 't8010-' + profile})
-                self.assertIs(device['support']['install'], False)
+                self.assertIs(device['support']['install'], True)
                 self.assertEqual(recipe['device'], product)
 
     def test_ipsw_pinned(self):

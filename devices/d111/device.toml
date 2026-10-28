@@ -31,7 +31,7 @@ dtb = "t8010-d111"     # arch/arm64/boot/dts/apple/<dtb>.dtb
 recipe = "firmware.json" # Relative to this device.toml; public recipe, not firmware bytes.
 
 [support]
-install = false # No qualified install path on this board yet.
+install = true # Experimental: never installed on this model yet.
 wifi = true # Station mode validated on D111 by Pauli1Go (HoolockLinux, olaf PRNL m-5.7); AP mode froze; not yet in Orchard.
 usb_serial = false # No Orchard launcher/gadget validated on this board yet.
 usb_network = false

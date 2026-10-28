@@ -13,6 +13,21 @@ failed() {
 }
 trap failed EXIT
 step() { phase=$1; echo "$phase"; }
+# Storage and its read-only fence are required. Wi-Fi, touch and Bluetooth
+# are best effort: experimental boards may lack drivers, firmware or DT nodes,
+# and the install does not need them. Results go to /run/orchard/hardware.txt.
+report() { echo "$1: $2" | tee -a /run/orchard/hardware.txt; }
+optional() {
+ name=$1; shift
+ if ( "$@" ) >/run/orchard/"$name".log 2>&1; then report "$name" ready; else report "$name" missing; fi
+}
+wait_for() { n=0; while ! eval "$1"; do n=$((n+1)); [ "$n" -le 20 ] || return 1; sleep 1; done; }
+wifi_up() { modprobe cfg80211 && modprobe brcmutil && modprobe brcmfmac && wait_for '[ -d /sys/class/net/wlan0 ]'; }
+touch_up() {
+ modprobe apple-sio && modprobe apple-sio-dma && modprobe apple_z2 &&
+  wait_for 'grep -q "^N: Name=\".*Touchscreen\"" /proc/bus/input/devices'
+}
+bluetooth_up() { modprobe bluetooth && modprobe btbcm && modprobe hci_uart && wait_for '[ -d /sys/class/bluetooth/hci0 ]'; }
 [ "$(awk '$2=="/" {print $3}' /proc/mounts)" = rootfs ]
 [ ! -d /sys/module/nvme ]
 [ "$(grep -c '/dev/nvme' /proc/mounts || true)" = 0 ]
@@ -20,11 +35,7 @@ step boot-readiness
 [ "$(cat /sys/class/power_supply/battery/present)" = 1 ]
 sha256sum -c /etc/orchard/public.SHA256SUMS > /run/orchard/public-verification.log
 step wifi
-modprobe cfg80211
-modprobe brcmutil
-modprobe brcmfmac
-n=0
-while [ ! -d /sys/class/net/wlan0 ]; do n=$((n+1)); [ "$n" -le 20 ]; sleep 1; done
+optional wifi wifi_up
 step storage-fence
 modprobe nvme
 n=0
@@ -40,16 +51,8 @@ for block in /sys/class/block/nvme*; do
 done
 [ "$found" = 1 ]
 step touch
-modprobe apple-sio
-modprobe apple-sio-dma
-modprobe apple_z2
-n=0
-while ! grep -q '^N: Name=".*Touchscreen"' /proc/bus/input/devices; do n=$((n+1)); [ "$n" -le 20 ]; sleep 1; done
+optional touch touch_up
 step bluetooth
-modprobe bluetooth
-modprobe btbcm
-modprobe hci_uart
-n=0
-while [ ! -d /sys/class/bluetooth/hci0 ]; do n=$((n+1)); [ "$n" -le 20 ]; sleep 1; done
+optional bluetooth bluetooth_up
 [ "$(dmesg | grep -c 'apple-dart.*translation fault' || true)" = 0 ]
 echo hardware-ready
