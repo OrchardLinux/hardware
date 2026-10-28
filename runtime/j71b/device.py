@@ -286,9 +286,9 @@ def prepare(request):
             raise ValueError('Private mixin contains links, duplicates or special files')
         records = {m.name: bundle.extractfile(m).read() for m in members}
     metadata = json.loads(records.pop('mixin.json'))
-    live_adt = command('/sbin/capture-adt')
-    if metadata['adt_sha256'] != hashlib.sha256(live_adt).hexdigest() or metadata['profile'] != 'j71b':
-        raise ValueError('Private mixin is not for this recovery boot')
+    # Firmware is per model; per-unit calibration reaches the kernel from the ADT at boot.
+    if metadata['profile'] != 'j71b':
+        raise ValueError('Private mixin is not for this device model')
     if set(records) != allowed or set(metadata['files']) != allowed:
         raise ValueError('Private mixin must contain exactly firmware data')
     fixed = {p['destination']: p['sha256'] for p in json.loads(FIRMWARE.read_text())['files']}
