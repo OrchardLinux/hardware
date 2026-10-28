@@ -70,7 +70,7 @@ into the shared cache, replay them onto the stack, then run the semantic review
    **Verified:** for each of Paul's files, the replay equals a whole-file 3-way
    merge, except the three hand-ported files and the skipped README.
    torvalds + hoolock + pauli1go (215 patches) applies to exactly the replayed tree.
-3. **Semantic review of Orchard's delta.** Our current tree compared with Paul's
+3. **Semantic review of Orchard's delta. ✅ Reviewed (`REVIEW.md`); patches pending.** Our current tree compared with Paul's
    latest, over the files `0001` touches:
    - 15 files identical to Paul's (no Orchard delta);
    - ~480 lines of J71b-only additions (DTs, readiness touch driver, NVMe
