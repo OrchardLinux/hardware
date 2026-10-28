@@ -33,12 +33,27 @@ recipe = "firmware.json" # Relative to this device.toml; public recipe, not firm
 [support]
 install = true
 status = "experimental"
-limitations = [
-  "No touchscreen yet",
-  "No Wi-Fi yet",
-  "Bluetooth needs its module vendor chosen; not loaded yet",
-  "No phone or cellular functions",
+caveats = [
+  "Bluetooth needs its module vendor (Murata or USI) chosen per unit; not loaded yet.",
+  "The device tree does not describe Wi-Fi, touch or SmartIO yet.",
 ]
 wifi = false # The t8010-d10 DT has no Wi-Fi node.
 usb_serial = false # No Orchard launcher/gadget validated on this board yet.
 usb_network = false
+
+# States: working, partial, untested, missing, none (features.toml).
+[features]
+display = "untested"
+touch = "missing"
+wifi = "missing"
+bluetooth = "missing"
+storage = "untested"
+battery = "untested"
+charging = "missing"
+backlight = "untested"
+buttons = "untested"
+audio = "missing"
+camera = "missing"
+cellular = "missing"
+suspend = "missing"
+gpu = "missing"

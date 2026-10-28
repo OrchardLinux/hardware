@@ -166,7 +166,7 @@
             "experimental"
           ]
         },
-        "limitations": {
+        "caveats": {
           "type": "array",
           "items": {
             "type": "string",
@@ -180,6 +180,154 @@
         "usb_network"
       ],
       "additionalProperties": false
+    },
+    "features": {
+      "type": "object",
+      "properties": {
+        "display": {
+          "enum": [
+            "working",
+            "partial",
+            "untested",
+            "missing",
+            "none"
+          ]
+        },
+        "touch": {
+          "enum": [
+            "working",
+            "partial",
+            "untested",
+            "missing",
+            "none"
+          ]
+        },
+        "wifi": {
+          "enum": [
+            "working",
+            "partial",
+            "untested",
+            "missing",
+            "none"
+          ]
+        },
+        "bluetooth": {
+          "enum": [
+            "working",
+            "partial",
+            "untested",
+            "missing",
+            "none"
+          ]
+        },
+        "storage": {
+          "enum": [
+            "working",
+            "partial",
+            "untested",
+            "missing",
+            "none"
+          ]
+        },
+        "battery": {
+          "enum": [
+            "working",
+            "partial",
+            "untested",
+            "missing",
+            "none"
+          ]
+        },
+        "charging": {
+          "enum": [
+            "working",
+            "partial",
+            "untested",
+            "missing",
+            "none"
+          ]
+        },
+        "backlight": {
+          "enum": [
+            "working",
+            "partial",
+            "untested",
+            "missing",
+            "none"
+          ]
+        },
+        "buttons": {
+          "enum": [
+            "working",
+            "partial",
+            "untested",
+            "missing",
+            "none"
+          ]
+        },
+        "audio": {
+          "enum": [
+            "working",
+            "partial",
+            "untested",
+            "missing",
+            "none"
+          ]
+        },
+        "camera": {
+          "enum": [
+            "working",
+            "partial",
+            "untested",
+            "missing",
+            "none"
+          ]
+        },
+        "cellular": {
+          "enum": [
+            "working",
+            "partial",
+            "untested",
+            "missing",
+            "none"
+          ]
+        },
+        "suspend": {
+          "enum": [
+            "working",
+            "partial",
+            "untested",
+            "missing",
+            "none"
+          ]
+        },
+        "gpu": {
+          "enum": [
+            "working",
+            "partial",
+            "untested",
+            "missing",
+            "none"
+          ]
+        }
+      },
+      "required": [
+        "display",
+        "touch",
+        "wifi",
+        "bluetooth",
+        "storage",
+        "battery",
+        "charging",
+        "backlight",
+        "buttons",
+        "audio",
+        "camera",
+        "cellular",
+        "suspend",
+        "gpu"
+      ],
+      "additionalProperties": false
     }
   },
   "required": [
@@ -190,7 +338,8 @@
     "kernel",
     "boot",
     "firmware",
-    "support"
+    "support",
+    "features"
   ],
   "additionalProperties": false
 }

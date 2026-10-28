@@ -24,7 +24,7 @@ package-dir = {orchard_hardware = "."}
 
 [tool.setuptools.package-data]
 orchard_hardware = [
-  "devices/*/device.toml", "devices/*/firmware.json", "devices/*/public-firmware/*", "schemas/v1/*.json",
+  "features.toml", "devices/*/device.toml", "devices/*/firmware.json", "devices/*/public-firmware/*", "schemas/v1/*.json",
   "launcher/*.py", "runtime/j71b/*.py", "runtime/j71b/phase2-hardware",
   "boot/initramfs/recovery/*.json", "boot/initramfs/recovery/Containerfile",
   "boot/initramfs/recovery/init", "boot/initramfs/recovery/usb-gadget",

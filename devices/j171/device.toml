@@ -33,10 +33,26 @@ recipe = "firmware.json" # Relative to this device.toml; public recipe, not firm
 [support]
 install = true
 status = "experimental"
-limitations = [
-  "No touchscreen yet",
-  "Bluetooth needs its module vendor chosen; not loaded yet",
+caveats = [
+  "Bluetooth needs its module vendor (Murata or USI) chosen per unit; not loaded yet.",
 ]
 wifi = false # DT board-type is apple,rudderb but Apple's J171 ADT says module-instance "ruddera"; unvalidated.
 usb_serial = false # No Orchard launcher/gadget validated on this board yet.
 usb_network = false
+
+# States: working, partial, untested, missing, none (features.toml).
+[features]
+display = "untested"
+touch = "missing"
+wifi = "untested"
+bluetooth = "missing"
+storage = "untested"
+battery = "untested"
+charging = "missing"
+backlight = "untested"
+buttons = "untested"
+audio = "missing"
+camera = "missing"
+cellular = "none"
+suspend = "missing"
+gpu = "missing"

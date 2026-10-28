@@ -29,7 +29,26 @@ recipe = "firmware.json" # Relative to this device.toml; public recipe, not firm
 [support]
 install = true
 status = "supported"
-limitations = []
+caveats = [
+  "Charging uses the bootloader's conservative input limit until the kernel charging driver lands.",
+]
 wifi = true # Static support; provisioning requires runtime-confirmed availability.
 usb_serial = true
 usb_network = true
+
+# States: working, partial, untested, missing, none (features.toml).
+[features]
+display = "working"
+touch = "working"
+wifi = "working"
+bluetooth = "working"
+storage = "working"
+battery = "working"
+charging = "partial"
+backlight = "working"
+buttons = "untested"
+audio = "missing"
+camera = "missing"
+cellular = "none"
+suspend = "missing"
+gpu = "missing"
