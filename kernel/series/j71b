@@ -2,5 +2,5 @@
 # each directory is applied in path order.
 patches/hoolock
 patches/import/pauli1go
-patches/shared/fixes
+patches/shared
 patches/devices/j71b

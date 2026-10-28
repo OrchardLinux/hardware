@@ -183,3 +183,14 @@ verifies hashes), SIO payload counters, the readiness DT and driver,
 
 Risk: this combined path has never run on J71b. Touch is the first item of the
 staged on-device check.
+
+## Build status (2026-10-28)
+
+- Full J71b build on the new stack (torvalds v7.3-rc1 + hoolock + pauli1go +
+  shared): Image.gz, 55 modules and DTB, no compiler warnings.
+- Recompiled with `W=1`, no warnings: every file touched by the shared fixes,
+  the FlatDMA hand-port (`pci.c`, `pci-apple-ans.c`), the three `tsl2583`
+  hand-ports and the J71b touch variant (`apple_z2.c`).
+- Config: `TOUCHSCREEN_APPLE_Z2=m` (in-tree touch) and `TSL2583=m` added.
+- Not established: runtime behavior. Touch especially (never run in this
+  combined form) is the first item of the staged on-device check.
