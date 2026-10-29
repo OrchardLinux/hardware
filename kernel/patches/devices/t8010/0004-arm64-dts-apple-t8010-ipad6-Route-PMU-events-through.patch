@@ -7,9 +7,13 @@ Subject: [PATCH] arm64: dts: apple: t8010-ipad6: Route PMU events through the
 The PMIC GPIO node now owns the D2365 PMU event block and the PMU line (AP
 GPIO 38 on J71b). Make it the interrupt controller and let the Tristar
 charger take its events from it: the PMU line (240), ADC conversion
-complete, and the events the iPadOS charger callback subscribes to or its
-initial mask enables (16, 40-43, 72, 73, 77). The charger no longer maps
-the event block.
+complete, and the events the iPadOS charger callback subscribes to (16,
+40-43, 72, 77). The charger no longer maps the event block.
+
+Event 73 stays out although iPadOS's initial mask enables it: on J71b it
+latches every few seconds while the input current approaches 2 A, with
+the same source attached, and would restart identification each time.
+Detach still shows as event 72 and in the charger status.
 
 The iPad 7 keeps the PMU line undescribed until it is checked there.
 
@@ -18,12 +22,12 @@ J71t ledger 5.1 (one shared D2365 event interrupt controller).
 Signed-off-by: Henrik Klee <henrik@goat-code.com>
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- arch/arm64/boot/dts/apple/t8010-ipad6.dtsi | 23 +++++++++++++++++++---
+ arch/arm64/boot/dts/apple/t8010-ipad6.dtsi | 22 +++++++++++++++++++---
  arch/arm64/boot/dts/apple/t8010-ipad7.dtsi |  7 +++++++
- 2 files changed, 27 insertions(+), 3 deletions(-)
+ 2 files changed, 26 insertions(+), 3 deletions(-)
 
 diff --git a/arch/arm64/boot/dts/apple/t8010-ipad6.dtsi b/arch/arm64/boot/dts/apple/t8010-ipad6.dtsi
-index aaa903f54..ac106e5cf 100644
+index aaa903f54..23b92d308 100644
 --- a/arch/arm64/boot/dts/apple/t8010-ipad6.dtsi
 +++ b/arch/arm64/boot/dts/apple/t8010-ipad6.dtsi
 @@ -100,6 +100,9 @@
@@ -36,7 +40,7 @@ index aaa903f54..ac106e5cf 100644
  		};
  
  		rtc@500 {
-@@ -111,9 +114,23 @@
+@@ -111,9 +114,22 @@
  
  		tristar_charger: charger@180 {
  			compatible = "apple,j71b-tristar-charger", "apple,tristar-charger";
@@ -58,7 +62,6 @@ index aaa903f54..ac106e5cf 100644
 +				     <42 IRQ_TYPE_EDGE_RISING>,
 +				     <43 IRQ_TYPE_EDGE_RISING>,
 +				     <72 IRQ_TYPE_EDGE_RISING>,
-+				     <73 IRQ_TYPE_EDGE_RISING>,
 +				     <77 IRQ_TYPE_EDGE_RISING>;
  			apple,tristar = <&tristar>;
  			input-current-limit-microamp = <2400000>;

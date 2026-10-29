@@ -21,11 +21,11 @@ Reported-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
 Signed-off-by: Henrik Klee <henrik@goat-code.com>
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- .../power/supply/apple,tristar-charger.yaml   | 41 +++++++++++++++----
- 1 file changed, 33 insertions(+), 8 deletions(-)
+ .../power/supply/apple,tristar-charger.yaml   | 40 +++++++++++++++----
+ 1 file changed, 32 insertions(+), 8 deletions(-)
 
 diff --git a/Documentation/devicetree/bindings/power/supply/apple,tristar-charger.yaml b/Documentation/devicetree/bindings/power/supply/apple,tristar-charger.yaml
-index 629dbaf92..5e59cf90d 100644
+index 629dbaf92..521554c70 100644
 --- a/Documentation/devicetree/bindings/power/supply/apple,tristar-charger.yaml
 +++ b/Documentation/devicetree/bindings/power/supply/apple,tristar-charger.yaml
 @@ -13,7 +13,8 @@ description: |
@@ -67,7 +67,7 @@ index 629dbaf92..5e59cf90d 100644
  
    apple,tristar:
      $ref: /schemas/types.yaml#/definitions/phandle
-@@ -78,11 +84,30 @@ examples:
+@@ -78,11 +84,29 @@ examples:
          #address-cells = <1>;
          #size-cells = <1>;
  
@@ -96,7 +96,6 @@ index 629dbaf92..5e59cf90d 100644
 +                         <42 IRQ_TYPE_EDGE_RISING>,
 +                         <43 IRQ_TYPE_EDGE_RISING>,
 +                         <72 IRQ_TYPE_EDGE_RISING>,
-+                         <73 IRQ_TYPE_EDGE_RISING>,
 +                         <77 IRQ_TYPE_EDGE_RISING>;
              apple,tristar = <&tristar>;
              input-current-limit-microamp = <2400000>;
