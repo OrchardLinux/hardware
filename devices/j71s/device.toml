@@ -22,7 +22,7 @@ product = "J71S Recovery"
 methods = ["checkm8-pongo"]
 
 [kernel]
-platform = "apple"
+platform = "apple-16k" # kernel/series/apple-16k, kernel/configs/apple-16k
 dtb = "s8000-j71s"
 
 [firmware]

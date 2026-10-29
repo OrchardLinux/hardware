@@ -7,7 +7,7 @@ modules and every Apple DTB. A device name resolves to its platform through
 `DIRECTORY/<device>.dtb`. Git and Podman are required.
 
 ```sh
-./kernel/build j71b --output out/kernel/j71b     # platform "apple" + j71b.dtb
+./kernel/build j71b --output out/kernel/j71b     # platform "apple-16k" + j71b.dtb
 ./kernel/build apple --output out/kernel/apple   # platform only
 ```
 
