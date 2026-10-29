@@ -1,0 +1,4 @@
+# Ordered patch layers on top of upstream.lock, relative to boot/m1n1/.
+# Every *.patch in each directory is applied in name order.
+patches/hoolock
+patches/orchard

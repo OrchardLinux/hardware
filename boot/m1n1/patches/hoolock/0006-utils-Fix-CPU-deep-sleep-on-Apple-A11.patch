@@ -1,0 +1,85 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Thu, 9 Jul 2026 00:40:23 +0800
+Subject: [PATCH 06/47] utils: Fix CPU deep sleep on Apple A11
+
+On Apple A11, the E-cores uses a different encoding for their version of
+ACC_OVRD with the same bitfields. Fix by programming the correct register
+depending on core type.
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ src/chickens.c |  2 +-
+ src/cpu_regs.h |  3 ++-
+ src/utils.c    | 18 +++++++++++++-----
+ src/utils.h    |  1 +
+ 4 files changed, 17 insertions(+), 7 deletions(-)
+
+diff --git a/src/chickens.c b/src/chickens.c
+index 0c3b83ad..7fd4bc28 100644
+--- a/src/chickens.c
++++ b/src/chickens.c
+@@ -60,7 +60,7 @@ const struct midr_part_features features_a11 = {
+     .disable_dc_mva = true,
+     .acc_cfg = true,
+     .apple_sysregs_unlocked = true,
+-    .sleep_mode = SLEEP_GLOBAL,
++    .sleep_mode = SLEEP_CLUSTER,
+     .uncore_version = UNCORE_V1,
+     .nex_powergating = true,
+     .fast_ipi = true,
+diff --git a/src/cpu_regs.h b/src/cpu_regs.h
+index e0152400..2c552ef7 100644
+--- a/src/cpu_regs.h
++++ b/src/cpu_regs.h
+@@ -538,7 +538,8 @@
+ #define CYC_OVRD_DSBL_SNOOP_TIME_MASK     GENMASK(31, 30)
+ #define CYC_OVRD_DSBL_SNOOP_TIME_VALUE(x) (ULONG(x) << 30)
+ 
+-#define SYS_IMP_APL_ACC_OVRD sys_reg(3, 5, 15, 6, 0)
++#define SYS_IMP_APL_ACC_OVRD      sys_reg(3, 5, 15, 6, 0)
++#define SYS_IMP_APL_ACC_EBLK_OVRD sys_reg(3, 5, 15, 6, 1)
+ 
+ #define ACC_OVRD_PRE_RESET_CLK_CNTS                     (ULONG(x))
+ #define ACC_OVRD_PRE_RESET_CLK_CNTS_MASK                GENMASK(3, 0)
+diff --git a/src/utils.c b/src/utils.c
+index fd8b2cde..cd3e0ecd 100644
+--- a/src/utils.c
++++ b/src/utils.c
+@@ -250,11 +250,19 @@ void cpu_sleep(bool deep)
+ {
+     if (deep) {
+         switch (cpu_features->sleep_mode) {
+-            case SLEEP_GLOBAL:
+-                reg_mask(SYS_IMP_APL_ACC_OVRD, ACC_OVRD_DIS_L2_FLUSH_ACC_SLEEP_MASK,
+-                         ACC_OVRD_PWR_DN_SRM(3) | ACC_OVRD_DIS_L2_FLUSH_ACC_SLEEP(2) |
+-                             ACC_OVRD_TRAIN_DOWN_LINK(3) | ACC_OVRD_POWER_DOWN_CPM(3) |
+-                             ACC_OVRD_DISABLE_PIO_ON_WFI_CPU | ACC_OVRD_DEEP_SLEEP);
++            case SLEEP_CLUSTER:
++                if (is_ecore())
++                    reg_mask(SYS_IMP_APL_ACC_EBLK_OVRD, ACC_OVRD_DIS_L2_FLUSH_ACC_SLEEP_MASK,
++                             ACC_OVRD_PWR_DN_SRM(3) | ACC_OVRD_DIS_L2_FLUSH_ACC_SLEEP(2) |
++                                 ACC_OVRD_TRAIN_DOWN_LINK(3) | ACC_OVRD_POWER_DOWN_CPM(3) |
++                                 ACC_OVRD_DISABLE_PIO_ON_WFI_CPU | ACC_OVRD_DEEP_SLEEP);
++                else
++                    // fallthrough
++                case SLEEP_GLOBAL:
++                    reg_mask(SYS_IMP_APL_ACC_OVRD, ACC_OVRD_DIS_L2_FLUSH_ACC_SLEEP_MASK,
++                             ACC_OVRD_PWR_DN_SRM(3) | ACC_OVRD_DIS_L2_FLUSH_ACC_SLEEP(2) |
++                                 ACC_OVRD_TRAIN_DOWN_LINK(3) | ACC_OVRD_POWER_DOWN_CPM(3) |
++                                 ACC_OVRD_DISABLE_PIO_ON_WFI_CPU | ACC_OVRD_DEEP_SLEEP);
+                 break;
+ 
+             case SLEEP_LEGACY:
+diff --git a/src/utils.h b/src/utils.h
+index d675634a..94223e8b 100644
+--- a/src/utils.h
++++ b/src/utils.h
+@@ -487,6 +487,7 @@ extern u32 board_id, chip_id;
+ enum cpufeat_sleep_mode {
+     SLEEP_NONE,
+     SLEEP_LEGACY,
++    SLEEP_CLUSTER,
+     SLEEP_GLOBAL,
+ };
+ 

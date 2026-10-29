@@ -268,7 +268,7 @@ boards we can't run. Triggers:
 
 ## m1n1 (2026-10-28)
 
-`boot/m1n1/patches/0001` replaces the J71b-only loader patch and checks no
+`boot/m1n1/patches/orchard/0001` replaces the J71b-only loader patch and checks no
 board compatibles. Validated on J71b with the torvalds-base kernel:
 - Wi-Fi `local-mac-address` (6 bytes) and `brcm,cal-blob` (1780 bytes) are
   filled from the ADT, and no antenna SKU is set; association, DHCP and SSH

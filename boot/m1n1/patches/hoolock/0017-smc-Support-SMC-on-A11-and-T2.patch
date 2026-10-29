@@ -1,0 +1,95 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Wed, 6 Aug 2025 22:34:22 +0800
+Subject: [PATCH 17/47] smc: Support SMC on A11 and T2
+
+- Turn SMC on in PMGR before trying to use it
+- Turn SMC on before booting Linux so kernel can use it (SMC has no reason to
+be off during runtime even in sleep mode because it handles the battery, power
+supply and other stuff that needs to stay on)
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ src/kboot.c |  8 ++++++++
+ src/smc.c   | 15 +++++++++++++++
+ src/smc.h   |  1 +
+ 3 files changed, 24 insertions(+)
+
+diff --git a/src/kboot.c b/src/kboot.c
+index 32629947..597499c3 100644
+--- a/src/kboot.c
++++ b/src/kboot.c
+@@ -21,6 +21,7 @@
+ #include "pmgr.h"
+ #include "sep.h"
+ #include "sio.h"
++#include "smc.h"
+ #include "smp.h"
+ #include "tunables.h"
+ #include "types.h"
+@@ -3001,6 +3002,13 @@ int kboot_boot(void *kernel)
+     pcie_init();
+     dapf_init_all();
+ 
++    if (chip_id == T8015 || chip_id == T8012) {
++        smc_power_on();
++        asc_dev_t *smc = asc_init("/arm-io/smc");
++        asc_cpu_start(smc);
++        asc_free(smc);
++    }
++
+     printf("Setting SMP mode to WFE...\n");
+     smp_set_wfe_mode(true);
+     printf("Preparing to boot kernel at %p with fdt at %p\n", kernel, dt);
+diff --git a/src/smc.c b/src/smc.c
+index 3fee45ad..b1a82429 100644
+--- a/src/smc.c
++++ b/src/smc.c
+@@ -1,7 +1,9 @@
+ /* SPDX-License-Identifier: MIT */
+ 
++#include "adt.h"
+ #include "assert.h"
+ #include "malloc.h"
++#include "pmgr.h"
+ #include "smc.h"
+ #include "string.h"
+ #include "types.h"
+@@ -120,12 +122,25 @@ void smc_shutdown(smc_dev_t *smc)
+     free(smc);
+ }
+ 
++void smc_power_on(void)
++{
++    if (chip_id != T8015 && chip_id != T8012)
++        return;
++
++    pmgr_power_on(0, "SMC_I2CM1");
++    pmgr_power_on(0, "SMC_FABRIC");
++    pmgr_adt_power_enable("/arm-io/smc");
++}
++
+ smc_dev_t *smc_init(void)
+ {
+     smc_dev_t *smc = calloc(1, sizeof(smc_dev_t));
+     if (!smc)
+         return NULL;
+ 
++    if (chip_id == T8015 || chip_id == T8012)
++        smc_power_on();
++
+     smc->asc = asc_init("/arm-io/smc");
+     if (!smc->asc) {
+         printf("SMC: failed to initialize ASC\n");
+diff --git a/src/smc.h b/src/smc.h
+index 3cb47045..731d9054 100644
+--- a/src/smc.h
++++ b/src/smc.h
+@@ -12,6 +12,7 @@ typedef struct smc_dev smc_dev_t;
+ int smc_write_u32(smc_dev_t *smc, u32 key, u32 value);
+ 
+ smc_dev_t *smc_init(void);
++void smc_power_on(void);
+ void smc_shutdown(smc_dev_t *smc);
+ 
+ #endif

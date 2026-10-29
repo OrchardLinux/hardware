@@ -1,0 +1,162 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Wed, 6 Aug 2025 23:08:10 +0800
+Subject: [PATCH 45/47] proxyclient: Add support for A11 and T2 IOPs
+
+A lot of address hardcoding but this is required when only the base
+address is known.
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ proxyclient/experiments/smc.py         | 11 +++++
+ proxyclient/experiments/smc_watcher.py |  6 +++
+ proxyclient/m1n1/hw/asc.py             | 68 ++++++++++++++++++++++++--
+ 3 files changed, 81 insertions(+), 4 deletions(-)
+
+diff --git a/proxyclient/experiments/smc.py b/proxyclient/experiments/smc.py
+index 5e4a3839..f8405839 100755
+--- a/proxyclient/experiments/smc.py
++++ b/proxyclient/experiments/smc.py
+@@ -8,6 +8,10 @@ import struct
+ from m1n1.setup import *
+ from m1n1.fw.smc import SMCClient, SMCError
+ 
++chip_id = u.adt["/chosen"].chip_id
++if chip_id in (0x8015, 0x8012):
++    p.pmgr_adt_clocks_enable("/arm-io/smc")
++
+ smc_addr = u.adt["arm-io/smc"].get_reg(0)[0]
+ smc = SMCClient(u, smc_addr)
+ smc.start()
+@@ -34,6 +38,13 @@ print(f"Key count: {count}")
+ for i in range(count):
+     k = smcep.get_key_by_index(i)
+     length, type, flags = smcep.get_key_info(k)
++
++    if chip_id == 0x8015: # ugly hacks because t8015 smc lies!
++        if k == "D1SQ":
++            type = "ui32"
++        elif k == "WAID":
++            type = "ui16"
++
+     if flags & 0x80:
+         try:
+             val = smcep.read_type(k, length, type)
+diff --git a/proxyclient/experiments/smc_watcher.py b/proxyclient/experiments/smc_watcher.py
+index 9d07339a..ede3a059 100755
+--- a/proxyclient/experiments/smc_watcher.py
++++ b/proxyclient/experiments/smc_watcher.py
+@@ -9,7 +9,13 @@ from m1n1.setup import *
+ from m1n1.shell import run_shell
+ from m1n1.fw.smc import SMCClient, SMCError
+ 
++chip_id = u.adt["/chosen"].chip_id
++
+ smc_addr = u.adt["arm-io/smc"].get_reg(0)[0]
++
++if chip_id in (0x8015, 0x8012):
++    p.pmgr_adt_clocks_enable("/arm-io/smc")
++
+ smc = SMCClient(u, smc_addr)
+ smc.start()
+ smc.start_ep(0x20)
+diff --git a/proxyclient/m1n1/hw/asc.py b/proxyclient/m1n1/hw/asc.py
+index f0923f8d..099ce0a4 100644
+--- a/proxyclient/m1n1/hw/asc.py
++++ b/proxyclient/m1n1/hw/asc.py
+@@ -31,6 +31,15 @@ class R_OUTBOX1(Register64):
+     INPTR   = 43, 40
+     EP      = 7, 0
+ 
++
++class T8015ASCRegs(RegMap):
++    INBOX_CTRL  = 0x8108, R_MBOX_CTRL
++    OUTBOX_CTRL = 0x810c, R_MBOX_CTRL
++    INBOX0      = 0x8800, Register64
++    INBOX1      = 0x8808, R_INBOX1
++    OUTBOX0     = 0x8830, Register64
++    OUTBOX1     = 0x8838, R_OUTBOX1
++
+ class ASCRegs(RegMap):
+     CPU_CONTROL = 0x0044, R_CPU_CONTROL
+     CPU_STATUS  = 0x0048, R_CPU_STATUS
+@@ -44,10 +53,46 @@ class ASCRegs(RegMap):
+ 
+ class ASC:
+     def __init__(self, u, asc_base):
++        self.chip_id = u.adt["/chosen"].chip_id
++
+         self.u = u
+         self.p = u.proxy
+         self.iface = u.iface
+-        self.asc = ASCRegs(u, asc_base)
++        if self.chip_id == 0x8012:
++            self.asc = T8015ASCRegs(u, asc_base)
++            if asc_base == 0x203000000: # ans2
++                self.start_reg = 0x204d20044
++                self.start_val = 0x10
++            elif asc_base == 0x20da00000: # sep
++                self.start_reg = 0 # will be treated as always on
++            elif asc_base == 0x212800000: # smc
++                self.start_reg = 0x212000100
++                self.start_val = 1
++            elif asc_base == 0x210800000: # aop
++                self.start_reg = 0x210000200
++                self.start_val = 1
++            else:
++                raise ValueError("Unsupported ASC address")
++        elif self.chip_id == 0x8015:
++            self.asc = T8015ASCRegs(u, asc_base)
++            if asc_base == 0x257000000: # ans2
++                self.start_reg = 0x259d20044
++                self.start_val = 0x10
++            elif asc_base == 0x243000000: # sep
++                self.start_reg = 0 # will be treated as always on
++            elif asc_base == 0x236800000: # smc
++                self.start_reg = 0x236000100
++                self.start_val = 1
++            elif asc_base == 0x234800000: # aop
++                self.start_reg = 0x234000200
++                self.start_val = 1
++            elif asc_base == 0x232300000: # pmp
++                self.start_reg = 0x232400000
++                self.start_val = 1
++            else:
++                raise ValueError("Unsupported ASC address")
++        else:
++            self.asc = ASCRegs(u, asc_base)
+         self.verbose = 0
+         self.epmap = {}
+ 
+@@ -75,13 +120,28 @@ class ASC:
+             pass
+ 
+     def is_running(self):
+-        return not self.asc.CPU_STATUS.reg.STOPPED
++        if self.chip_id not in (0x8012, 0x8015):
++            return not self.asc.CPU_STATUS.reg.STOPPED
++        elif not self.start_reg:
++            return True
++        else:
++            return not not (self.p.read32(self.start_reg) & self.start_val)
+ 
+     def boot(self):
+-        self.asc.CPU_CONTROL.set(RUN=1)
++        if self.chip_id not in (0x8012, 0x8015):
++            self.asc.CPU_CONTROL.set(RUN=1)
++        elif not self.start_reg:
++            return
++        else:
++            self.p.set32(self.start_reg, self.start_val)
+ 
+     def shutdown(self):
+-        self.asc.CPU_CONTROL.set(RUN=0)
++        if self.chip_id not in (0x8012, 0x8015):
++            self.asc.CPU_CONTROL.set(RUN=0)
++        elif not self.start_reg:
++            return
++        else:
++            self.p.clear32(self.start_reg, self.start_val)
+ 
+     def add_ep(self, idx, ep):
+         self.epmap[idx] = ep

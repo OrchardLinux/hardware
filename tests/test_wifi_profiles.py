@@ -135,7 +135,7 @@ int main(void) {
             subprocess.run([str(binary)], check=True, capture_output=True)
 
     def test_loader_patches_are_device_generic(self):
-        patches = sorted((ROOT / 'boot/m1n1/patches').glob('*.patch'))
+        patches = sorted((ROOT / 'boot/m1n1/patches/orchard').glob('*.patch'))
         self.assertTrue(patches)
         for path in patches:
             added = [line for line in path.read_text().splitlines()
