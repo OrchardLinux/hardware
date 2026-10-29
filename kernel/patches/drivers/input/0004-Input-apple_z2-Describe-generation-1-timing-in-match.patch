@@ -1,0 +1,282 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <henrik@goat-code.com>
+Date: Wed, 28 Oct 2026 21:38:00 +0800
+Subject: [PATCH] Input: apple_z2: Describe generation-1 timing in match data
+
+The iPad 6 (J71b) runtime is the generation-1 byte-stream protocol: EB
+frames with a sequence tag and a byte-sum checksum, a data phase with
+byte 2 set to 1 and a length + 5 transfer, and a framed second phase for
+long report reads. The iPad 5 (J71t) touchscreen speaks the same
+protocol with different chip-select timing.
+
+Prepare for it without changing J71b behaviour: name the shared paths
+"generation 1" and move J71b's chip-select setup, hold and inactive
+delays (1000 us, 0, 1000 us) from the code into its match data. The
+500 kHz, SPI mode 0 data phase stays specific to J71b.
+
+This prepares the iPad 5 work (J71t ledger 8.1, 8.2).
+
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/input/touchscreen/apple_z2.c | 88 ++++++++++++++++++----------
+ 1 file changed, 57 insertions(+), 31 deletions(-)
+
+diff --git a/drivers/input/touchscreen/apple_z2.c b/drivers/input/touchscreen/apple_z2.c
+index e0c80f8c1..b1e1a4579 100644
+--- a/drivers/input/touchscreen/apple_z2.c
++++ b/drivers/input/touchscreen/apple_z2.c
+@@ -105,13 +105,25 @@ enum apple_z2_variant {
+ 	APPLE_Z2_VARIANT_D111,
+ };
+ 
++/**
++ * struct apple_z2_chip_info - per-compatible data
++ * @name:		input device name
++ * @variant:		protocol variant
++ * @cs_setup_us:	generation-1 chip-select setup delay
++ * @cs_hold_us:		generation-1 chip-select hold delay
++ * @cs_inactive_us:	generation-1 chip-select inactive delay
++ */
+ struct apple_z2_chip_info {
+ 	const char *name;
+ 	enum apple_z2_variant variant;
++	unsigned int cs_setup_us;
++	unsigned int cs_hold_us;
++	unsigned int cs_inactive_us;
+ };
+ 
+ struct apple_z2 {
+ 	struct spi_device *spidev;
++	const struct apple_z2_chip_info *info;
+ 	struct gpio_desc *reset_gpio;
+ 	struct gpio_desc *power_ana_gpio;
+ 	struct gpio_desc *power_ldo_gpio;
+@@ -169,6 +181,12 @@ static bool apple_z2_is_j71b(const struct apple_z2 *z2)
+ 	return z2->variant == APPLE_Z2_VARIANT_J71B;
+ }
+ 
++/* The generation-1 byte-stream runtime protocol of the iPad 6. */
++static bool apple_z2_is_gen1(const struct apple_z2 *z2)
++{
++	return apple_z2_is_j71b(z2);
++}
++
+ static bool apple_z2_is_d11(const struct apple_z2 *z2)
+ {
+ 	return z2->variant == APPLE_Z2_VARIANT_D11;
+@@ -569,25 +587,26 @@ static bool apple_z2_gen2_packet_valid(const u8 *buf, size_t buf_len,
+ }
+ 
+ /*
+- * J71b generation-1 data phases: the controller expects the request bytes
+- * to keep streaming while it answers, so transmit from a copy. Transfers
+- * above 16 bytes run in SPI mode 0 at 500 kHz.
++ * Generation-1 data phases: the controller expects the request bytes to
++ * keep streaming while it answers, so transmit from a copy. On J71b,
++ * transfers above 16 bytes run in SPI mode 0 at 500 kHz.
+  */
+-static int apple_z2_j71b_exchange(struct apple_z2 *z2, u8 *buf, size_t len)
++static int apple_z2_gen1_exchange(struct apple_z2 *z2, u8 *buf, size_t len)
+ {
+ 	struct spi_transfer xfer = {
+ 		.rx_buf = buf,
+ 		.len = len,
+ 		.bits_per_word = 8,
+-		.speed_hz = 500000,
+ 	};
+ 	u32 saved_mode = z2->spidev->mode;
+-	bool mode_changed = len > 16;
++	bool mode_changed = apple_z2_is_j71b(z2) && len > 16;
+ 	u8 *tx;
+ 	int error, restore;
+ 
+ 	if (!len || len > APPLE_Z2_RX_BUF_SIZE)
+ 		return -EMSGSIZE;
++	if (apple_z2_is_j71b(z2))
++		xfer.speed_hz = 500000;
+ 	tx = kmemdup(buf, len, GFP_KERNEL);
+ 	if (!tx)
+ 		return -ENOMEM;
+@@ -643,11 +662,11 @@ static int apple_z2_read_packet(struct apple_z2 *z2)
+ 		return 0;
+ 
+ 	payload_len = get_unaligned_le16(z2->rx_buf + 1);
+-	if (apple_z2_is_j71b(z2) && !payload_len) {
++	if (apple_z2_is_gen1(z2) && !payload_len) {
+ 		z2->runtime_queue_empty = true;
+ 		return 0;
+ 	}
+-	pkt_len = apple_z2_is_j71b(z2) ?
++	pkt_len = apple_z2_is_gen1(z2) ?
+ 		  max_t(size_t, 16, (size_t)payload_len + 5) :
+ 		  (payload_len + 8) & 0xfffffffc;
+ 	if (pkt_len > APPLE_Z2_RX_BUF_SIZE) {
+@@ -660,14 +679,14 @@ static int apple_z2_read_packet(struct apple_z2 *z2)
+ 				 APPLE_Z2_GEN2_MIN_RESULT_SIZE);
+ 
+ 	if (apple_z2_uses_ipad_protocol(z2) || apple_z2_is_iphone7_plus(z2)) {
+-		if (apple_z2_is_j71b(z2)) {
++		if (apple_z2_is_gen1(z2)) {
+ 			/* Data phase acknowledges the queued report. */
+ 			memset(z2->rx_buf, 0, wire_len);
+ 			z2->rx_buf[0] = APPLE_Z2_CMD_READ_INTERRUPT_DATA;
+ 			z2->rx_buf[1] = counter;
+ 			z2->rx_buf[2] = 1;
+ 			apple_z2_z2_checksum(z2->rx_buf, APPLE_Z2_CMD_SIZE);
+-			error = apple_z2_j71b_exchange(z2, z2->rx_buf, wire_len);
++			error = apple_z2_gen1_exchange(z2, z2->rx_buf, wire_len);
+ 		} else {
+ 			memset(z2->rx_buf, 0xa5, wire_len);
+ 			xfer.tx_buf = z2->rx_buf;
+@@ -687,7 +706,7 @@ static int apple_z2_read_packet(struct apple_z2 *z2)
+ 	 * Generation-1 firmware answers no-data (0) or a checksummed control
+ 	 * reply while service is pending. Neither is a frame; keep the tag.
+ 	 */
+-	if (apple_z2_is_j71b(z2) &&
++	if (apple_z2_is_gen1(z2) &&
+ 	    (!z2->rx_buf[0] ||
+ 	     (wire_len >= 16 && z2->rx_buf[0] == APPLE_Z2_CMD_LAST &&
+ 	      apple_z2_z2_checksum_valid(z2->rx_buf, 16)))) {
+@@ -768,22 +787,26 @@ static void apple_z2_set_spi_delay(struct spi_delay *delay,
+ static unsigned int apple_z2_effective_cs_delay_us(struct apple_z2 *z2)
+ {
+ 	/* J172 firmware expresses this field in ns; Linux SPI uses us here. */
+-	if (apple_z2_is_j71b(z2))
+-		return 1000;
++	if (apple_z2_is_gen1(z2))
++		return z2->info->cs_setup_us;
+ 	return apple_z2_uses_ipad_protocol(z2) ? 10 : z2->z2_cs_delay_us;
+ }
+ 
+ static void apple_z2_apply_z2_delays(struct apple_z2 *z2)
+ {
+ 	unsigned int cs_delay_us = apple_z2_effective_cs_delay_us(z2);
+-	unsigned int inactive_us = apple_z2_is_j71b(z2) ? 1000 :
+-				  apple_z2_uses_ipad_protocol(z2) ? 10 :
+-				  z2->z2_inter_packet_delay_us;
++	unsigned int hold_us = cs_delay_us;
++	unsigned int inactive_us = apple_z2_uses_ipad_protocol(z2) ? 10 :
++				   z2->z2_inter_packet_delay_us;
++
++	if (apple_z2_is_gen1(z2)) {
++		hold_us = z2->info->cs_hold_us;
++		inactive_us = z2->info->cs_inactive_us;
++	}
+ 
+ 	if (cs_delay_us) {
+ 		apple_z2_set_spi_delay(&z2->spidev->cs_setup, cs_delay_us);
+-		apple_z2_set_spi_delay(&z2->spidev->cs_hold,
+-				       apple_z2_is_j71b(z2) ? 0 : cs_delay_us);
++		apple_z2_set_spi_delay(&z2->spidev->cs_hold, hold_us);
+ 	}
+ 	if (inactive_us)
+ 		apple_z2_set_spi_delay(&z2->spidev->cs_inactive, inactive_us);
+@@ -1019,7 +1042,7 @@ static int apple_z2_read_report_locked(struct apple_z2 *z2, u8 report,
+ 
+ 	data_len = len + 5;
+ 	apple_z2_apply_z2_delays(z2);
+-	if (apple_z2_is_j71b(z2)) {
++	if (apple_z2_is_gen1(z2)) {
+ 		/* Long read request repeated with phase 1 and a checksum. */
+ 		memset(z2->rx_buf, 0, data_len);
+ 		z2->rx_buf[0] = APPLE_Z2_CMD_CTRL_READ_LONG;
+@@ -1027,7 +1050,7 @@ static int apple_z2_read_report_locked(struct apple_z2 *z2, u8 report,
+ 		z2->rx_buf[2] = 1;
+ 		put_unaligned_le16(len, z2->rx_buf + 3);
+ 		apple_z2_z2_checksum(z2->rx_buf, data_len);
+-		error = apple_z2_j71b_exchange(z2, z2->rx_buf, data_len);
++		error = apple_z2_gen1_exchange(z2, z2->rx_buf, data_len);
+ 	} else {
+ 		memset(z2->rx_buf, 0xa5, data_len);
+ 		xfer.tx_buf = z2->rx_buf;
+@@ -1060,7 +1083,7 @@ static int apple_z2_store_surface_descriptor(struct apple_z2 *z2, u16 len)
+ 	if (len != APPLE_Z2_SURFACE_DESCRIPTOR_SIZE ||
+ 	    z2->rx_buf[0] != APPLE_Z2_CMD_CTRL_READ_LONG ||
+ 	    z2->rx_buf[1] != APPLE_Z2_REPORT_SURFACE ||
+-	    z2->rx_buf[2] > (apple_z2_is_j71b(z2) ? 1 : 0) ||
++	    z2->rx_buf[2] > (apple_z2_is_gen1(z2) ? 1 : 0) ||
+ 	    !apple_z2_z2_checksum_valid(z2->rx_buf, len + 5))
+ 		return -EPROTO;
+ 
+@@ -1272,10 +1295,10 @@ static int apple_z2_j172_init_writes_locked(struct apple_z2 *z2)
+ }
+ 
+ /*
+- * J71b raises a level interrupt while reports are queued. Service it by
+- * reading (and so acknowledging) up to four reports.
++ * Generation-1 controllers raise a level interrupt while reports are
++ * queued. Service it by reading (and so acknowledging) up to four reports.
+  */
+-static int apple_z2_j71b_drain(struct apple_z2 *z2)
++static int apple_z2_gen1_drain(struct apple_z2 *z2)
+ {
+ 	unsigned int i;
+ 	int error;
+@@ -1291,7 +1314,7 @@ static int apple_z2_j71b_drain(struct apple_z2 *z2)
+ 	return 0;
+ }
+ 
+-static int apple_z2_j71b_set_level_irq(struct apple_z2 *z2)
++static int apple_z2_gen1_set_level_irq(struct apple_z2 *z2)
+ {
+ 	int error;
+ 
+@@ -1305,7 +1328,7 @@ static int apple_z2_j71b_set_level_irq(struct apple_z2 *z2)
+ 	return 0;
+ }
+ 
+-static void apple_z2_j71b_restore_irq_type(struct apple_z2 *z2)
++static void apple_z2_gen1_restore_irq_type(struct apple_z2 *z2)
+ {
+ 	int error;
+ 
+@@ -1328,7 +1351,7 @@ static irqreturn_t apple_z2_irq(int irq, void *data)
+ 		complete(&z2->boot_irq);
+ 	} else {
+ 		mutex_lock(&z2->io_lock);
+-		error = apple_z2_is_j71b(z2) ? apple_z2_j71b_drain(z2) :
++		error = apple_z2_is_gen1(z2) ? apple_z2_gen1_drain(z2) :
+ 						 apple_z2_read_packet(z2);
+ 		mutex_unlock(&z2->io_lock);
+ 		if (error)
+@@ -1470,8 +1493,8 @@ static void apple_z2_platform_power_off(struct apple_z2 *z2)
+ {
+ 	int error;
+ 
+-	if (apple_z2_is_j71b(z2))
+-		apple_z2_j71b_restore_irq_type(z2);
++	if (apple_z2_is_gen1(z2))
++		apple_z2_gen1_restore_irq_type(z2);
+ 	if (apple_z2_is_iphone7_plus(z2))
+ 		gpiod_set_value_cansleep(z2->reset_gpio, 1);
+ 
+@@ -2249,9 +2272,9 @@ static int apple_z2_upload_firmware(struct apple_z2 *z2)
+ 	if (!error && apple_z2_uses_ipad_protocol(z2))
+ 		error = apple_z2_j172_init_reads_locked(z2);
+ 	if (!error && apple_z2_is_j71b(z2))
+-		error = apple_z2_j71b_drain(z2);
++		error = apple_z2_gen1_drain(z2);
+ 	if (!error && apple_z2_is_j71b(z2))
+-		error = apple_z2_j71b_set_level_irq(z2);
++		error = apple_z2_gen1_set_level_irq(z2);
+ 	if (!error && apple_z2_is_j71b(z2) && z2->upload_irq_masked) {
+ 		z2->upload_irq_masked = false;
+ 		enable_irq(z2->spidev->irq);
+@@ -2473,6 +2496,8 @@ static const struct apple_z2_chip_info apple_z2_j493_info = {
+ static const struct apple_z2_chip_info apple_z2_j71b_info = {
+ 	.name = "iPad7,5 Touchscreen",
+ 	.variant = APPLE_Z2_VARIANT_J71B,
++	.cs_setup_us = 1000,
++	.cs_inactive_us = 1000,
+ };
+ 
+ static const struct apple_z2_chip_info apple_z2_j172_info = {
+@@ -2516,6 +2541,7 @@ static int apple_z2_probe(struct spi_device *spi)
+ 		return -ENOMEM;
+ 
+ 	z2->spidev = spi;
++	z2->info = info;
+ 	z2->variant = info->variant;
+ 	z2->boot_timeout_ms = 20;
+ 	if (apple_z2_is_iphone7_plus(z2)) {

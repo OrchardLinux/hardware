@@ -1,0 +1,103 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <henrik@goat-code.com>
+Date: Wed, 28 Oct 2026 21:40:02 +0800
+Subject: [PATCH] dt-bindings: power: supply: apple,tristar-charger: Take PMU
+ events as interrupts
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The charger used to own the D2365 PMU event block and the PMU line itself.
+The PMIC GPIO node is now the interrupt controller for that block, so the
+charger no longer describes the block and instead consumes the events it
+needs: the PMU line itself first (the controller's interrupt 240, run
+before the block is read, where the charger withdraws a grant), then ADC
+conversion complete, then every event that can signal a change of the
+attached source.
+
+J71t ledger 5.1 (one shared D2365 event interrupt controller).
+
+Reported-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../power/supply/apple,tristar-charger.yaml   | 41 +++++++++++++++----
+ 1 file changed, 33 insertions(+), 8 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/power/supply/apple,tristar-charger.yaml b/Documentation/devicetree/bindings/power/supply/apple,tristar-charger.yaml
+index 629dbaf92..5e59cf90d 100644
+--- a/Documentation/devicetree/bindings/power/supply/apple,tristar-charger.yaml
++++ b/Documentation/devicetree/bindings/power/supply/apple,tristar-charger.yaml
+@@ -13,7 +13,8 @@ description: |
+   Charging on Apple devices whose Lightning port uses a Tristar (NXP CBTL1610)
+   port controller and a D2365-family PMIC. The node is a child of the PMIC.
+   It identifies the attached source through the Tristar and the PMIC ADC and
+-  sets the PMIC input-current limit, which iBoot leaves at 100 mA.
++  sets the PMIC input-current limit, which iBoot leaves at 100 mA. PMU events
++  come from the PMIC's event interrupt controller (the PMIC GPIO node).
+ 
+ allOf:
+   - $ref: power-supply.yaml#
+@@ -29,19 +30,24 @@ properties:
+     items:
+       - description: Charger status register bank.
+       - description: Charger control register bank.
+-      - description: PMU event register block, read to acknowledge.
+       - description: ADC register bank.
+ 
+   reg-names:
+     items:
+       - const: status
+       - const: control
+-      - const: event
+       - const: adc
+ 
+   interrupts:
+-    maxItems: 1
+-    description: PMU event interrupt, active low.
++    minItems: 3
++    maxItems: 16
++    description: |
++      From the PMIC's event interrupt controller. The first is the PMU event
++      line itself, which runs before the events are read: the charger
++      withdraws a grant there, before it knows which event it was. The
++      second is ADC conversion complete. Every further entry is an event
++      that can signal a change of the attached source (attach, detach,
++      charger state); any of them starts a new identification.
+ 
+   apple,tristar:
+     $ref: /schemas/types.yaml#/definitions/phandle
+@@ -78,11 +84,30 @@ examples:
+         #address-cells = <1>;
+         #size-cells = <1>;
+ 
++        pmu_gpio: gpio {
++            compatible = "apple,d2365-pmic-gpio";
++            gpio-controller;
++            #gpio-cells = <2>;
++            interrupt-controller;
++            #interrupt-cells = <2>;
++            interrupts = <38 IRQ_TYPE_LEVEL_LOW>;
++        };
++
+         charger@180 {
+             compatible = "apple,j71b-tristar-charger", "apple,tristar-charger";
+-            reg = <0x180 0x10>, <0xa00 0x04>, <0x140 0x1e>, <0x4000 0x03>;
+-            reg-names = "status", "control", "event", "adc";
+-            interrupts = <38 IRQ_TYPE_LEVEL_LOW>;
++            reg = <0x180 0x10>, <0xa00 0x04>, <0x4000 0x03>;
++            reg-names = "status", "control", "adc";
++            interrupt-parent = <&pmu_gpio>;
++            interrupts = <240 IRQ_TYPE_EDGE_RISING>,
++                         <176 IRQ_TYPE_EDGE_RISING>,
++                         <16 IRQ_TYPE_EDGE_RISING>,
++                         <40 IRQ_TYPE_EDGE_RISING>,
++                         <41 IRQ_TYPE_EDGE_RISING>,
++                         <42 IRQ_TYPE_EDGE_RISING>,
++                         <43 IRQ_TYPE_EDGE_RISING>,
++                         <72 IRQ_TYPE_EDGE_RISING>,
++                         <73 IRQ_TYPE_EDGE_RISING>,
++                         <77 IRQ_TYPE_EDGE_RISING>;
+             apple,tristar = <&tristar>;
+             input-current-limit-microamp = <2400000>;
+         };

@@ -1,0 +1,143 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 21:27:10 +0800
+Subject: [PATCH] w1: masters: w1-uart: Retry a lost HDQ cycle
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In HDQ mode the receive callback accepts the eight echoed command
+symbols in order and skips any symbol that does not match. When one
+echo symbol is corrupted, the sixteen expected symbols never arrive and
+the transfer waits out the full 500 ms timeout. The read then fails
+with -EIO in the gauge driver: on the iPad 5 the bq27xxx refresh lost
+a 16-bit register (three HDQ transactions) now and then during boot,
+and every power supply uevent in the following refresh period logged
+"driver failed to report `charge_full' property: -5".
+
+Retry a timed-out cycle up to three times. Each attempt starts with a
+new break, which resynchronises the gauge's HDQ state machine. A
+transaction takes a few milliseconds, so lower the HDQ response timeout
+to 100 ms, which keeps a retry from holding the bus mutex for seconds.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux f5ce1082 (J71t ledger 6.17), cause in
+ omarchy-ipad5 docs/periph/battery-hdq-eio.md; taken unchanged on top
+ of the muxed HDQ support, so it applies to every HDQ gauge]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/w1/masters/w1-uart.c | 67 +++++++++++++++++++++++++-----------
+ 1 file changed, 47 insertions(+), 20 deletions(-)
+
+diff --git a/drivers/w1/masters/w1-uart.c b/drivers/w1/masters/w1-uart.c
+index 5041ba161..f29fa08a2 100644
+--- a/drivers/w1/masters/w1-uart.c
++++ b/drivers/w1/masters/w1-uart.c
+@@ -30,6 +30,9 @@
+ #define W1_UART_TIMEOUT msecs_to_jiffies(500)
+ 
+ #define W1_UART_HDQ_BAUDRATE		57600
++/* A transaction takes a few ms; do not hold the bus for long on a miss. */
++#define W1_UART_HDQ_TIMEOUT		msecs_to_jiffies(100)
++#define W1_UART_HDQ_TRIES		3
+ #define W1_UART_HDQ_BREAK_MIN_US		250
+ #define W1_UART_HDQ_BREAK_MAX_US		500
+ #define W1_UART_HDQ_RECOVERY_MIN_US	150
+@@ -339,31 +342,22 @@ static int w1_uart_hdq_break(struct w1_uart_device *w1dev)
+ 	return 0;
+ }
+ 
+-static int w1_uart_hdq_xfer(struct w1_uart_device *w1dev, u8 command)
++/*
++ * One break + command + response cycle. A corrupted echo symbol is never
++ * accepted by the receive callback, so the response then never completes
++ * and the cycle ends with -ETIMEDOUT.
++ */
++static int w1_uart_hdq_xfer_once(struct w1_uart_device *w1dev)
+ {
+ 	struct serdev_device *serdev = w1dev->serdev;
+ 	unsigned long flags;
+ 	unsigned long timeout;
+ 	ssize_t written;
+-	unsigned int bit;
+ 	int ret;
+-	int deselect_ret;
+-
+-	w1_uart_hdq_cancel_receive(w1dev);
+-
+-	if (w1dev->hdq_mux) {
+-		ret = mux_state_select(w1dev->hdq_mux);
+-		if (ret)
+-			return ret;
+-	}
+-
+-	for (bit = 0; bit < W1_UART_HDQ_BITS_PER_BYTE; bit++)
+-		w1dev->hdq_command[bit] = command & BIT(bit) ?
+-			W1_UART_HDQ_ONE : W1_UART_HDQ_ZERO;
+ 
+ 	ret = w1_uart_hdq_break(w1dev);
+ 	if (ret)
+-		goto deselect_mux;
++		return ret;
+ 
+ 	reinit_completion(&w1dev->rx_byte_received);
+ 	spin_lock_irqsave(&w1dev->hdq_rx_lock, flags);
+@@ -386,19 +380,52 @@ static int w1_uart_hdq_xfer(struct w1_uart_device *w1dev, u8 command)
+ 
+ 	serdev_device_wait_until_sent(serdev, HZ);
+ 	timeout = wait_for_completion_timeout(&w1dev->rx_byte_received,
+-					      W1_UART_TIMEOUT);
++					      W1_UART_HDQ_TIMEOUT);
+ 	if (!timeout) {
+ 		ret = -ETIMEDOUT;
+ 		goto cancel_receive;
+ 	}
+ 
+-	ret = 0;
+-	goto deselect_mux;
++	return 0;
+ 
+ cancel_receive:
+ 	w1_uart_hdq_cancel_receive(w1dev);
+ 
+-deselect_mux:
++	return ret;
++}
++
++static int w1_uart_hdq_xfer(struct w1_uart_device *w1dev, u8 command)
++{
++	unsigned int bit;
++	unsigned int try;
++	int ret;
++	int deselect_ret;
++
++	w1_uart_hdq_cancel_receive(w1dev);
++
++	if (w1dev->hdq_mux) {
++		ret = mux_state_select(w1dev->hdq_mux);
++		if (ret)
++			return ret;
++	}
++
++	for (bit = 0; bit < W1_UART_HDQ_BITS_PER_BYTE; bit++)
++		w1dev->hdq_command[bit] = command & BIT(bit) ?
++			W1_UART_HDQ_ONE : W1_UART_HDQ_ZERO;
++
++	/*
++	 * Retry a lost cycle: the gauge's response window is long over after
++	 * the timeout, and the next break resynchronizes its HDQ state.
++	 */
++	for (try = 0; try < W1_UART_HDQ_TRIES; try++) {
++		ret = w1_uart_hdq_xfer_once(w1dev);
++		if (ret != -ETIMEDOUT)
++			break;
++		dev_dbg(&w1dev->serdev->dev,
++			"HDQ command %02x timed out (try %u/%u)\n",
++			command, try + 1, W1_UART_HDQ_TRIES);
++	}
++
+ 	if (w1dev->hdq_mux) {
+ 		deselect_ret = mux_state_deselect(w1dev->hdq_mux);
+ 		if (!ret && deselect_ret) {

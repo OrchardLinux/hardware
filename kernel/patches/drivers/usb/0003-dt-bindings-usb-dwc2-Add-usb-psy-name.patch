@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <henrik@goat-code.com>
+Date: Wed, 28 Oct 2026 21:42:11 +0800
+Subject: [PATCH] dt-bindings: usb: dwc2: Add usb-psy-name
+
+Some boards charge from the USB device port through a charger that has no
+usb_phy and so cannot learn through usb_phy_set_power() what the host
+allows the device to draw. The snps,dwc3 driver solves the same problem by
+naming the power supply in usb-psy-name. Document the same property for
+dwc2.
+
+J71t ledger 6.8 (gadget current reported through vbus_draw).
+
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ Documentation/devicetree/bindings/usb/dwc2.yaml | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/usb/dwc2.yaml b/Documentation/devicetree/bindings/usb/dwc2.yaml
+index 166d37cd9..b1f66a663 100644
+--- a/Documentation/devicetree/bindings/usb/dwc2.yaml
++++ b/Documentation/devicetree/bindings/usb/dwc2.yaml
+@@ -172,6 +172,13 @@ properties:
+     description: If present indicates that we need to reset the PHY when we
+       detect a wakeup. This is due to a hardware errata.
+ 
++  usb-psy-name:
++    $ref: /schemas/types.yaml#/definitions/string
++    description:
++      Name of the power supply that limits the input current drawn from the
++      USB port. In gadget mode it is told the current the host allows the
++      device to draw, as the snps,dwc3 controllers do with the same property.
++
+   port:
+     description:
+       Any connector to the data bus of this controller should be modelled

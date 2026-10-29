@@ -1,0 +1,414 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <henrik@goat-code.com>
+Date: Wed, 28 Oct 2026 21:40:02 +0800
+Subject: [PATCH] power: supply: apple_tristar_charger: Take PMU events from
+ the event controller
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The charger read and acknowledged the D2365 event block itself, which
+acknowledges every other PMU client's events too (the Smart Cover halls,
+for one). The PMIC GPIO driver now owns that block and hands out each event
+as an interrupt.
+
+Request the PMU line, the ADC completion event and the source-change events
+from that controller instead. The withdrawal keeps its place ahead of
+everything else: the controller runs the line handler before it reads the
+event block, and that handler writes and verifies the 500 mA fallback, as
+the J71b prototype did on the falling edge of the line (under 1 ms from
+the edge on every unplug). The read of the block then tells what it was.
+A source event starts a new epoch and a new identification. If none was
+latched (another client's event), the poll ramps the grant back once the
+events of that assertion have been dispatched.
+
+The controller dispatches in ascending event order and ADC completion has
+the highest number, so a swap latched together with a completion
+invalidates the conversion before its waiter is woken. A completion nobody
+waited for counts as a source event. Unlike the prototype, the withdrawal
+no longer waits for a pending conversion.
+
+J71t ledger 5.1 (one shared D2365 event interrupt controller).
+
+Reported-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/power/supply/apple_tristar_charger.c | 239 +++++++++++--------
+ 1 file changed, 144 insertions(+), 95 deletions(-)
+
+diff --git a/drivers/power/supply/apple_tristar_charger.c b/drivers/power/supply/apple_tristar_charger.c
+index 7e6d611e0..58c559763 100644
+--- a/drivers/power/supply/apple_tristar_charger.c
++++ b/drivers/power/supply/apple_tristar_charger.c
+@@ -10,10 +10,11 @@
+  *   USB-A cable: Apple D+/D- divider (BrickID) on both Tristar mux banks
+  * Anything unidentified gets the fallback, the 500 mA of a USB 2.0 port.
+  *
+- * A source change does not reset the limit in hardware, so every PMU event
+- * interrupt first drops a grant to the fallback, then the events are
+- * attributed. ADC completion and USB endpoint events are benign; anything
+- * else starts a new identification.
++ * A source change does not reset the limit in hardware. The PMIC's event
++ * controller runs the handler of its PMU line before it reads the event
++ * block; that handler drops a grant to the fallback. The events that can mean
++ * a source change then start a new identification; when none was latched,
++ * the grant is ramped back. ADC completion is an event of its own.
+  *
+  * Copyright The Orchard Linux contributors
+  */
+@@ -43,14 +44,14 @@
+ #define TRISTAR_CHG_STATUS		0x0a	/* status bank */
+ #define TRISTAR_CHG_STATUS_ONLINE	0x42
+ #define TRISTAR_CHG_INPUT_LIMIT		0x03	/* control bank */
+-#define TRISTAR_CHG_EVENT_BYTES		30	/* event bank, read to acknowledge */
+ #define TRISTAR_CHG_ADC_SELECT		0x00	/* ADC bank */
+ #define TRISTAR_CHG_ADC_RESULT		0x01
+ 
+-/* PMU events that do not mean the source changed */
+-#define TRISTAR_EVENT_USB_A		56
+-#define TRISTAR_EVENT_USB_B		59
+-#define TRISTAR_EVENT_ADC_DONE		176
++/* Interrupts: the PMU line, ADC completion, then the source-change events. */
++#define TRISTAR_IRQ_LINE		0
++#define TRISTAR_IRQ_ADC			1
++#define TRISTAR_IRQ_SOURCE		2
++#define TRISTAR_IRQS_MAX		16
+ 
+ /* Input-current limit encoding: mA = code * 12.5 + 75 */
+ #define TRISTAR_CHG_HANDOFF_CODE	0x02	/* 100 mA, as iBoot leaves it */
+@@ -71,8 +72,10 @@
+ /* A half-inserted plug reads as no signature. */
+ #define TRISTAR_UNIDENTIFIED_RETRIES	2
+ #define TRISTAR_RETRY_MS		3000
+-/* More event interrupts than this per second means the line is stuck. */
++/* More source events than this per second means something is stuck. */
+ #define TRISTAR_IRQ_STORM		200
++/* After a line withdrawal, the time its events take to be dispatched. */
++#define TRISTAR_LINE_SETTLE_MS		200
+ 
+ enum tristar_phase {
+ 	TRISTAR_EMPTY,
+@@ -99,23 +102,28 @@ struct tristar_charger {
+ 	struct power_supply *psy;
+ 	struct delayed_work poll_work;
+ 	struct completion adc_done;
+-	int irq;
++	int irqs[TRISTAR_IRQS_MAX];
++	unsigned int nirqs;
+ 	u32 status_base;
+ 	u32 control_base;
+-	u32 event_base;
+ 	u32 adc_base;
+ 	unsigned int max_ma;
+ 
+ 	/* Serializes policy state and PMIC/Tristar sequences. */
+ 	struct mutex lock;
+-	/* Serializes reads of the shared event block. */
+-	struct mutex event_lock;
+ 
+-	/* Event attribution: a new epoch invalidates measurements and grants. */
++	/*
++	 * Event attribution: a new epoch invalidates measurements and grants.
++	 * Written only by the event handlers, which the PMIC event controller
++	 * runs one after another from one thread.
++	 */
+ 	unsigned int epoch;
+ 	bool adc_waiting;
+ 	u64 storm_start_ns;
+ 	unsigned int storm_count;
++	/* Last withdrawal by the line handler; line_seen once the poll handled it. */
++	u64 line_ns;
++	u64 line_seen;
+ 
+ 	enum tristar_phase phase;
+ 	bool online;
+@@ -349,43 +357,7 @@ out:
+ 	return ret;
+ }
+ 
+-/* ---- PMU events and ADC ---- */
+-
+-/* Read (and so acknowledge) the event block once. Returns true if the source may have changed. */
+-static bool tristar_service_events(struct tristar_charger *chg)
+-{
+-	u8 block[TRISTAR_CHG_EVENT_BYTES];
+-	bool invalidated = false, adc;
+-	unsigned int i;
+-
+-	mutex_lock(&chg->event_lock);
+-	if (regmap_bulk_read(chg->regmap, chg->event_base, block, sizeof(block))) {
+-		invalidated = true;
+-		goto out;
+-	}
+-	for (i = 0; i < sizeof(block) * 8; i++) {
+-		if (!(block[i / 8] & BIT(i % 8)))
+-			continue;
+-		if (i != TRISTAR_EVENT_USB_A && i != TRISTAR_EVENT_USB_B &&
+-		    i != TRISTAR_EVENT_ADC_DONE) {
+-			dev_dbg(chg->dev, "PMU event %u\n", i);
+-			invalidated = true;
+-		}
+-	}
+-	adc = block[TRISTAR_EVENT_ADC_DONE / 8] & BIT(TRISTAR_EVENT_ADC_DONE % 8);
+-	if (adc && !READ_ONCE(chg->adc_waiting))
+-		invalidated = true;	/* nobody started that conversion */
+-	/* Invalidate before waking an ADC waiter: a mixed event must not validate an old result. */
+-	if (invalidated)
+-		WRITE_ONCE(chg->epoch, chg->epoch + 1);
+-	if (adc && READ_ONCE(chg->adc_waiting)) {
+-		WRITE_ONCE(chg->adc_waiting, false);
+-		complete(&chg->adc_done);
+-	}
+-out:
+-	mutex_unlock(&chg->event_lock);
+-	return invalidated;
+-}
++/* ---- ADC ---- */
+ 
+ /* One conversion; completion arrives as a PMU event. Caller holds lock. */
+ static int tristar_adc_mv(struct tristar_charger *chg, unsigned int epoch,
+@@ -674,7 +646,7 @@ static void tristar_poll(struct work_struct *work)
+ 						   struct tristar_charger, poll_work);
+ 	unsigned int status, old_code;
+ 	bool old_online;
+-	u64 now = ktime_get_ns();
++	u64 now = ktime_get_ns(), line_ns;
+ 
+ 	mutex_lock(&chg->lock);
+ 	if (chg->stopping)
+@@ -713,13 +685,29 @@ static void tristar_poll(struct work_struct *work)
+ 	if (chg->phase == TRISTAR_FAULT)
+ 		goto again;
+ 	if (READ_ONCE(chg->epoch) != chg->epoch_seen && chg->phase != TRISTAR_SETTLING) {
+-		/* The interrupt thread already withdrew any grant. */
++		/* The event handler already withdrew any grant. */
+ 		chg->epoch_seen = READ_ONCE(chg->epoch);
++		chg->line_seen = READ_ONCE(chg->line_ns);
+ 		chg->phase = TRISTAR_SETTLING;
+ 		chg->attach_ns = now;
+ 		dev_dbg(chg->dev, "source event, re-identifying\n");
+ 		goto again;
+ 	}
++	line_ns = READ_ONCE(chg->line_ns);
++	if (line_ns != chg->line_seen) {
++		/*
++		 * The line handler withdrew the grant. Wait until the events of
++		 * that assertion have been dispatched; if none of them was a
++		 * source event, the source is unchanged: ramp back up.
++		 */
++		if ((s64)(now - line_ns) < (s64)TRISTAR_LINE_SETTLE_MS * NSEC_PER_MSEC)
++			goto again;
++		chg->line_seen = line_ns;
++		if (chg->phase == TRISTAR_CHARGING && chg->code < chg->target_code) {
++			chg->phase = TRISTAR_RAMPING;
++			chg->step_ns = 0;
++		}
++	}
+ 	switch (chg->phase) {
+ 	case TRISTAR_SETTLING:
+ 		if ((s64)(now - chg->attach_ns) >= (s64)TRISTAR_SETTLE_MS * NSEC_PER_MSEC)
+@@ -743,45 +731,96 @@ out:
+ 	mutex_unlock(&chg->lock);
+ }
+ 
+-/* ---- PMU interrupt ---- */
++/* ---- PMU events ---- */
+ 
+-static irqreturn_t tristar_irq_thread(int irq, void *data)
++/*
++ * Drop a grant to the fallback, from an event handler. No policy lock:
++ * regmap serializes the write against any sequence in flight, and a grant
++ * must never wait for the policy to finish. Returns true if it lowered one.
++ */
++static bool tristar_event_withdraw(struct tristar_charger *chg)
+ {
+-	struct tristar_charger *chg = data;
++	u32 reg = chg->control_base + TRISTAR_CHG_INPUT_LIMIT;
+ 	unsigned int readback;
++
++	if (READ_ONCE(chg->code) <= TRISTAR_CHG_FALLBACK_CODE)
++		return false;
++	if (!regmap_write(chg->regmap, reg, TRISTAR_CHG_FALLBACK_CODE) &&
++	    !regmap_read(chg->regmap, reg, &readback) &&
++	    readback == TRISTAR_CHG_FALLBACK_CODE)
++		WRITE_ONCE(chg->code, TRISTAR_CHG_FALLBACK_CODE);
++	else
++		dev_crit(chg->dev, "PMU event: withdrawal write failed\n");
++	return true;
++}
++
++/*
++ * The PMU line asserted and the event controller has not read the events
++ * yet. Withdraw first, attribute later: the grant is gone before the I2C
++ * read of the event block. The poll ramps it back if no source event
++ * follows (a GPIO edge or another PMU client's event).
++ */
++static irqreturn_t tristar_line_irq(int irq, void *data)
++{
++	struct tristar_charger *chg = data;
++
++	if (tristar_event_withdraw(chg))
++		WRITE_ONCE(chg->line_ns, ktime_get_ns() ?: 1);
++	return IRQ_HANDLED;
++}
++
++/*
++ * A PMU event that can mean a source change. The line handler has already
++ * withdrawn any grant; withdraw again in case one was raised since. Then a
++ * new epoch invalidates any measurement or grant in progress.
++ */
++static void tristar_source_event(struct tristar_charger *chg)
++{
+ 	u32 reg = chg->control_base + TRISTAR_CHG_INPUT_LIMIT;
+-	u64 now = ktime_get_ns();
++	unsigned int i;
++	u64 now;
+ 
+-	/*
+-	 * Withdraw first, attribute later. No policy lock: regmap serializes
+-	 * the write against any sequence in flight, and a grant never survives
+-	 * this. While an ADC conversion is pending the limit is already at the
+-	 * fallback.
+-	 */
+-	if (READ_ONCE(chg->code) > TRISTAR_CHG_FALLBACK_CODE &&
+-	    !READ_ONCE(chg->adc_waiting)) {
+-		if (!regmap_write(chg->regmap, reg, TRISTAR_CHG_FALLBACK_CODE) &&
+-		    !regmap_read(chg->regmap, reg, &readback) &&
+-		    readback == TRISTAR_CHG_FALLBACK_CODE) {
+-			WRITE_ONCE(chg->code, TRISTAR_CHG_FALLBACK_CODE);
+-		} else {
+-			dev_crit(chg->dev, "PMU event: withdrawal write failed\n");
+-		}
+-	}
+-	if (tristar_service_events(chg))
+-		mod_delayed_work(system_highpri_wq, &chg->poll_work, 0);
++	tristar_event_withdraw(chg);
++	WRITE_ONCE(chg->epoch, chg->epoch + 1);
++	mod_delayed_work(system_highpri_wq, &chg->poll_work, 0);
+ 
+-	/* The line is level-triggered: a stuck line would keep us here. */
++	now = ktime_get_ns();
+ 	if (now - chg->storm_start_ns > NSEC_PER_SEC) {
+ 		chg->storm_start_ns = now;
+ 		chg->storm_count = 0;
+ 	}
+ 	if (++chg->storm_count > TRISTAR_IRQ_STORM) {
+-		dev_crit(chg->dev, "PMU interrupt line stuck; holding the fallback\n");
++		dev_crit(chg->dev, "PMU source events storming; holding the fallback\n");
+ 		regmap_write(chg->regmap, reg, TRISTAR_CHG_FALLBACK_CODE);
+ 		WRITE_ONCE(chg->code, TRISTAR_CHG_FALLBACK_CODE);
+ 		WRITE_ONCE(chg->phase, TRISTAR_FAULT);
+-		disable_irq_nosync(irq);
++		for (i = TRISTAR_IRQ_SOURCE; i < chg->nirqs; i++)
++			disable_irq_nosync(chg->irqs[i]);
++	}
++}
++
++static irqreturn_t tristar_source_irq(int irq, void *data)
++{
++	tristar_source_event(data);
++	return IRQ_HANDLED;
++}
++
++/*
++ * The event controller dispatches in ascending event order and ADC
++ * completion has the highest number, so a source event latched together
++ * with it has already started a new epoch: the waiter then discards its
++ * result instead of accepting a conversion that straddled a swap.
++ */
++static irqreturn_t tristar_adc_irq(int irq, void *data)
++{
++	struct tristar_charger *chg = data;
++
++	if (READ_ONCE(chg->adc_waiting)) {
++		WRITE_ONCE(chg->adc_waiting, false);
++		complete(&chg->adc_done);
++	} else {
++		/* Nobody started that conversion. */
++		tristar_source_event(chg);
+ 	}
+ 	return IRQ_HANDLED;
+ }
+@@ -863,10 +902,13 @@ static void tristar_put_client(void *data)
+ /* Leave the limit as iBoot did, so a reboot or a kexec'd kernel starts safe. */
+ static void tristar_stop(struct tristar_charger *chg, const char *reason)
+ {
++	unsigned int i;
++
+ 	mutex_lock(&chg->lock);
+ 	chg->stopping = true;
+ 	mutex_unlock(&chg->lock);
+-	disable_irq(chg->irq);
++	for (i = 0; i < chg->nirqs; i++)
++		disable_irq(chg->irqs[i]);
+ 	cancel_delayed_work_sync(&chg->poll_work);
+ 	mutex_lock(&chg->lock);
+ 	if (tristar_set_code(chg, TRISTAR_CHG_HANDOFF_CODE))
+@@ -885,8 +927,7 @@ static int tristar_probe(struct platform_device *pdev)
+ 	struct power_supply_config config = {};
+ 	struct tristar_charger *chg;
+ 	struct device_node *np;
+-	u8 events[TRISTAR_CHG_EVENT_BYTES];
+-	unsigned int code;
++	unsigned int code, i;
+ 	u32 max_ua;
+ 	int ret;
+ 
+@@ -902,8 +943,6 @@ static int tristar_probe(struct platform_device *pdev)
+ 	if (!ret)
+ 		ret = tristar_get_bank(dev, "control", TRISTAR_CHG_INPUT_LIMIT + 1,
+ 				       &chg->control_base);
+-	if (!ret)
+-		ret = tristar_get_bank(dev, "event", TRISTAR_CHG_EVENT_BYTES, &chg->event_base);
+ 	if (!ret)
+ 		ret = tristar_get_bank(dev, "adc", TRISTAR_CHG_ADC_RESULT + 2, &chg->adc_base);
+ 	if (ret)
+@@ -927,13 +966,20 @@ static int tristar_probe(struct platform_device *pdev)
+ 	if (!i2c_check_functionality(chg->tristar->adapter, I2C_FUNC_I2C))
+ 		return dev_err_probe(dev, -EOPNOTSUPP, "Tristar bus lacks plain I2C\n");
+ 
+-	chg->irq = platform_get_irq(pdev, 0);
+-	if (chg->irq < 0)
+-		return chg->irq;
++	ret = platform_irq_count(pdev);
++	if (ret < 0)
++		return dev_err_probe(dev, ret, "failed to count the PMU event interrupts\n");
++	if (ret <= TRISTAR_IRQ_SOURCE || ret > TRISTAR_IRQS_MAX)
++		return dev_err_probe(dev, -EINVAL,
++				     "expected PMU line, ADC and source event interrupts\n");
++	chg->nirqs = ret;
++	for (i = 0; i < chg->nirqs; i++) {
++		chg->irqs[i] = platform_get_irq(pdev, i);
++		if (chg->irqs[i] < 0)
++			return chg->irqs[i];
++	}
+ 
+ 	ret = devm_mutex_init(dev, &chg->lock);
+-	if (!ret)
+-		ret = devm_mutex_init(dev, &chg->event_lock);
+ 	if (ret)
+ 		return ret;
+ 	init_completion(&chg->adc_done);
+@@ -958,12 +1004,15 @@ static int tristar_probe(struct platform_device *pdev)
+ 	if (IS_ERR(chg->psy))
+ 		return dev_err_probe(dev, PTR_ERR(chg->psy), "failed to register power supply\n");
+ 
+-	/* Acknowledge anything pending from before we owned the line. */
+-	regmap_bulk_read(chg->regmap, chg->event_base, events, sizeof(events));
+-	ret = devm_request_threaded_irq(dev, chg->irq, NULL, tristar_irq_thread,
+-					IRQF_ONESHOT, dev_name(dev), chg);
+-	if (ret)
+-		return dev_err_probe(dev, ret, "failed to request the PMU interrupt\n");
++	for (i = 0; i < chg->nirqs; i++) {
++		ret = devm_request_threaded_irq(dev, chg->irqs[i], NULL,
++						i == TRISTAR_IRQ_LINE ? tristar_line_irq :
++						i == TRISTAR_IRQ_ADC ? tristar_adc_irq :
++						tristar_source_irq,
++						IRQF_ONESHOT, dev_name(dev), chg);
++		if (ret)
++			return dev_err_probe(dev, ret, "failed to request PMU event %u\n", i);
++	}
+ 
+ 	platform_set_drvdata(pdev, chg);
+ 	ret = devm_add_action_or_reset(dev, tristar_stop_action, chg);

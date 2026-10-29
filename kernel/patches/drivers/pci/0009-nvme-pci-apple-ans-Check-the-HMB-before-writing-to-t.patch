@@ -1,0 +1,78 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 21:40:41 +0800
+Subject: [PATCH] nvme-pci: apple-ans: Check the HMB before writing to the
+ controller
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The ANS controller needs a host memory buffer that the boot loader
+reserved and the NVMMU maps through its SART window. The glue looked it
+up only after it had written the controller's configuration space and
+cleared CC.EN, so a kernel started by a loader that doesn't fill
+/reserved-memory/nvme-hmb stopped the controller and then gave up.
+
+Look the HMB up first, using only register reads, and leave the
+controller alone if there is none.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux 39b99e01 (J71t ledger 3.3); only the
+ ordering and an error message; the DART-mapped HMB fallback
+ (nvme.apple_ans_dart_hmb) is not needed, Orchard's m1n1 fills nvme-hmb
+ from the ADT nvme-mmu0 sart-region on every device]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/nvme/host/pci-apple-ans.c | 25 +++++++++++++++----------
+ 1 file changed, 15 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/nvme/host/pci-apple-ans.c b/drivers/nvme/host/pci-apple-ans.c
+index a949f7e43..10496dff0 100644
+--- a/drivers/nvme/host/pci-apple-ans.c
++++ b/drivers/nvme/host/pci-apple-ans.c
+@@ -233,15 +233,26 @@ static int nvme_pci_apple_ans_preinit(struct nvme_dev *dev)
+ 	if (!ans)
+ 		return 0;
+ 
+-	ret = nvme_pci_apple_ans_config(dev);
+-	if (ret)
+-		return ret;
+-
+ 	core_mask = readl(dev->bar + APPLE_ANS_REG_CORE_MASK);
+ 	log_size = readl(dev->bar + APPLE_ANS_REG_LOG_SIZE);
+ 	hmb_size = readl(dev->bar + APPLE_ANS_REG_HMB_SIZE_REQ);
+ 	hmb_align = readl(dev->bar + APPLE_ANS_REG_HMB_ALIGN_REQ);
+ 
++	/*
++	 * Check what the controller needs from the boot loader before writing
++	 * anything to it: without a usable HMB, leave it as the loader left it.
++	 */
++	if (!ans->hmb_size) {
++		ret = nvme_pci_apple_ans_find_hmb(dev, hmb_size, hmb_align);
++		if (ret)
++			return dev_err_probe(dev->dev, ret,
++					     "no usable ANS host memory buffer\n");
++	}
++
++	ret = nvme_pci_apple_ans_config(dev);
++	if (ret)
++		return ret;
++
+ 	writel(0, dev->bar + NVME_REG_CC);
+ 	ret = readl_poll_timeout(dev->bar + NVME_REG_CSTS, csts,
+ 				 !(csts & (NVME_CSTS_RDY | NVME_CSTS_CFS)),
+@@ -249,12 +260,6 @@ static int nvme_pci_apple_ans_preinit(struct nvme_dev *dev)
+ 	if (ret)
+ 		return ret;
+ 
+-	if (!ans->hmb_size) {
+-		ret = nvme_pci_apple_ans_find_hmb(dev, hmb_size, hmb_align);
+-		if (ret)
+-			return ret;
+-	}
+-
+ 	ret = nvme_pci_apple_ans_reset_dma(dev);
+ 	if (ret)
+ 		return dev_err_probe(dev->dev, ret,

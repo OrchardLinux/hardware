@@ -1,0 +1,74 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 21:47:14 +0800
+Subject: [PATCH] backlight: apple_dwi: Wait for the previous command before
+ sending
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Bit 0 of the DWI channel control register stays set while a command is
+being sent. iOS (AppleS8000DWI, _waitTransaction at 0xfffffff00634fbfc
+and the 1 ms deadline at 0xfffffff00634fac8) polls it clear before every
+command; the driver wrote the next command regardless, so a brightness
+change following closely on another could be lost.
+
+Poll the bit before writing a command, for up to 1 ms, and report a
+channel that stays busy.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux e846959b (J71t ledger 9.5); only the
+ busy wait. Not carried: the lock (9.6, the backlight core serialises
+ update_status) and the S8000 block initialisation at probe and resume
+ (9.7, deferred to the suspend work).]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/video/backlight/apple_dwi_bl.c | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/drivers/video/backlight/apple_dwi_bl.c b/drivers/video/backlight/apple_dwi_bl.c
+index 93bd74497..9900b592d 100644
+--- a/drivers/video/backlight/apple_dwi_bl.c
++++ b/drivers/video/backlight/apple_dwi_bl.c
+@@ -9,6 +9,7 @@
+ #include <linux/bitfield.h>
+ #include <linux/device.h>
+ #include <linux/io.h>
++#include <linux/iopoll.h>
+ #include <linux/module.h>
+ #include <linux/platform_device.h>
+ 
+@@ -33,6 +34,9 @@
+ 
+ #define DWI_BL_MAX_BRIGHTNESS		2047
+ 
++/* A command takes well under a millisecond on the wire. */
++#define DWI_BL_SEND_TIMEOUT_US		1000
++
+ struct apple_dwi_bl {
+ 	void __iomem *base;
+ };
+@@ -44,10 +48,21 @@ static int dwi_bl_update_status(struct backlight_device *bl)
+ 	int brightness = backlight_get_brightness(bl);
+ 
+ 	u32 cmd = 0;
++	u32 ctl;
++	int ret;
+ 
+ 	cmd |= FIELD_PREP(DWI_BL_CMD_DATA, brightness);
+ 	cmd |= FIELD_PREP(DWI_BL_CMD_TYPE, DWI_BL_CMD_TYPE_SET_BRIGHTNESS);
+ 
++	/* A command written while the previous one is still sent is lost. */
++	ret = readl_poll_timeout(dwi_bl->base + DWI_BL_CTL, ctl,
++				 !(ctl & DWI_BL_CTL_SEND1), 10,
++				 DWI_BL_SEND_TIMEOUT_US);
++	if (ret) {
++		dev_err(&bl->dev, "previous command still pending: %#x\n", ctl);
++		return ret;
++	}
++
+ 	writel(cmd, dwi_bl->base + DWI_BL_CMD);
+ 	writel(DWI_BL_CTL_SEND, dwi_bl->base + DWI_BL_CTL);
+ 

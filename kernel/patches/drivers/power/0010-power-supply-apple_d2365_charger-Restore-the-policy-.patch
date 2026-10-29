@@ -1,0 +1,98 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <henrik@goat-code.com>
+Date: Wed, 28 Oct 2026 21:48:24 +0800
+Subject: [PATCH] power: supply: apple_d2365_charger: Restore the policy limit
+ after the attach default
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+About 26 ms after a source attaches, the D2365 sets the input-current
+limit to its attach default (0x02), the same value as the handoff limit.
+If the policy has just written its charging limit, the next check sees
+0x02, treats it as an integrity failure and drops the policy for one
+policy interval before enabling it again.
+
+Within 15 s of enabling the policy, take the attach default for what it
+is and write the charging limit again, with readback. Check once 100 ms
+after enabling, so the restore follows the PMIC within a poll instead of
+five seconds later. Any other unexpected limit still stops the policy.
+
+J71t ledger 6.10 (found on the iPad 5, charge9; this applies it to the
+iPad 7 policy, to be checked there).
+
+Reported-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/power/supply/apple_d2365_charger.c | 35 ++++++++++++++++++++++
+ 1 file changed, 35 insertions(+)
+
+diff --git a/drivers/power/supply/apple_d2365_charger.c b/drivers/power/supply/apple_d2365_charger.c
+index be21ebdaf..63f78303c 100644
+--- a/drivers/power/supply/apple_d2365_charger.c
++++ b/drivers/power/supply/apple_d2365_charger.c
+@@ -32,6 +32,9 @@
+ #define D2365_POLICY_MIN_VOLTAGE_UV	3000000
+ #define D2365_POLICY_MAX_VOLTAGE_UV	4350000
+ #define D2365_POLICY_INTERVAL_MS	5000
++/* The PMIC applies its attach default shortly after a source attaches. */
++#define D2365_ATTACH_CHECK_MS	100
++#define D2365_ATTACH_WINDOW_MS	15000
+ #define D2365_RESTORE_RETRY_MS	100
+ #define D2365_STOP_RESTORE_ATTEMPTS	3
+ 
+@@ -71,6 +74,7 @@ struct apple_d2365_charger {
+ 	int input_limit_error;
+ 	u8 policy_old_input_limit;
+ 	bool policy_old_input_valid;
++	unsigned long attach_until;
+ 	bool policy_enabled;
+ 	bool restore_pending;
+ 	bool shutting_down;
+@@ -359,6 +363,29 @@ static void apple_d2365_charge_policy_work(struct work_struct *work)
+ 	}
+ 
+ 	if (charger->policy_enabled) {
++		/*
++		 * About 26 ms after a source attaches the D2365 sets the input
++		 * limit to its attach default, which is the handoff value. That
++		 * is not a lower limit from anyone: apply the policy again.
++		 */
++		if (input_limit == charger->config->handoff_input_limit &&
++		    time_before(jiffies, charger->attach_until)) {
++			ret = regmap_write(charger->regmap,
++					   charger->control_base +
++					   D2365_CONTROL_INPUT_LIMIT,
++					   charger->config->charging_input_limit);
++			if (!ret)
++				ret = regmap_read(charger->regmap,
++						  charger->control_base +
++						  D2365_CONTROL_INPUT_LIMIT,
++						  &input_limit);
++			apple_d2365_cache_input_limit(charger, ret,
++						      ret ? 0 : input_limit);
++			if (ret)
++				goto out_write_error;
++			dev_dbg(charger->dev,
++				"input limit restored after the PMIC attach default\n");
++		}
+ 		if (input_limit != charger->config->charging_input_limit) {
+ 			reject_reason = "input-limit integrity";
+ 			goto out_stop;
+@@ -391,7 +418,15 @@ static void apple_d2365_charge_policy_work(struct work_struct *work)
+ 	}
+ 
+ 	charger->policy_enabled = true;
++	charger->attach_until = jiffies +
++				msecs_to_jiffies(D2365_ATTACH_WINDOW_MS);
+ 	power_supply_changed(charger->psy);
++	/* Look again soon, in case the attach default follows the write. */
++	if (!charger->shutting_down)
++		mod_delayed_work(system_power_efficient_wq,
++				 &charger->charge_policy_work,
++				 msecs_to_jiffies(D2365_ATTACH_CHECK_MS));
++	goto out_unlock;
+ 
+ out_reschedule:
+ 	if (!charger->shutting_down)

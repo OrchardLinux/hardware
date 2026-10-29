@@ -1,0 +1,57 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 21:29:39 +0800
+Subject: [PATCH] iommu: apple-dart: Refuse S5L8960X DMA windows that aren't
+ base-aligned
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+An S5L8960X DART sees IOVAs relative to the base of its DMA window.
+Behind the A9 PCIe root complex (window 0x80000000 + 0x3c000000), the
+NVMe admin submission queue at IOVA 0xbbffe000 faulted at DART address
+0x3bffe000. apple-dart indexes its tables the same way by masking the
+window base off the IOVA (mask = ~dma_min), which equals subtracting it
+only if the base is aligned beyond the size of the window.
+
+Refuse a window that doesn't satisfy this when the domain is finalized,
+instead of silently translating through the wrong table entries. The
+windows in use (0x80000000 + 0x3c000000 and + 0x3ffff000) pass.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux 320a9f63 (J71t ledger 1.4); only the
+ alignment check, the window comes from the five-cell DMA window
+ specifier (ledger 1.5), checked before the page tables are allocated]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/iommu/apple-dart.c | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/drivers/iommu/apple-dart.c b/drivers/iommu/apple-dart.c
+index 2e23a3722..6d764cc29 100644
+--- a/drivers/iommu/apple-dart.c
++++ b/drivers/iommu/apple-dart.c
+@@ -879,6 +879,21 @@ static int apple_dart_finalize_domain(struct apple_dart_domain *dart_domain,
+ 	if (dart_domain->finalized)
+ 		goto done;
+ 
++	/*
++	 * S5L8960X DARTs see IOVAs relative to the window base: behind the A9
++	 * PCIe root complex, IOVA 0xbbffe000 of the window at 0x80000000
++	 * reaches the DART as 0x3bffe000. The tables are indexed the same way
++	 * by masking the base off below, which equals subtracting it only if
++	 * the base is aligned beyond the window size.
++	 */
++	if (dart->hw->type == DART_S5L8960X && cfg->dma_min &&
++	    cfg->dma_max - cfg->dma_min >= (cfg->dma_min & -cfg->dma_min)) {
++		dev_err(dart->dev, "DMA window %pad..%pad is not base-aligned\n",
++			&cfg->dma_min, &cfg->dma_max);
++		ret = -EINVAL;
++		goto done;
++	}
++
+ 	for (i = 0; i < MAX_DARTS_PER_DEVICE; ++i) {
+ 		dart_domain->stream_maps[i].dart = cfg->stream_maps[i].dart;
+ 		for (j = 0; j < BITS_TO_LONGS(dart->num_streams); j++)
