@@ -8,12 +8,17 @@ modules and every Apple DTB. A device name resolves to its platform through
 
 ```sh
 ./kernel/build j71b --output out/kernel/j71b     # platform "apple-16k" + j71b.dtb
-./kernel/build apple --output out/kernel/apple   # platform only
+./kernel/build apple-16k --output out/kernel/apple-16k   # platform only
 ```
 
-Scratch remains in ignored `kernel/.work/<platform>/`. `--resume` continues an
-interrupted build using that scratch directory; `--output` must name a new
-directory. The result contains `Image.gz`, `j71b.dtb`, `kernel.release` and
+The source and compiler output live in one incremental tree per platform and
+upstream pin, shared by every hardware checkout and worktree:
+`${ORCHARD_CACHE_DIR:-${XDG_CACHE_HOME:-~/.cache}/orchard}/kernel-work/<platform>-<pin>/`
+(`--work-dir` chooses another). Every build continues that tree: a changed patch
+series resets the files the old series touched and applies the new one, so only
+affected files recompile. Hand edits in the tree are refused rather than lost.
+A second build of the same tree waits for the first. `--output` must name a new
+directory; it receives `Image.gz`, `<device>.dtb`, `dtbs/`, `kernel.release` and
 `lib/modules/`.
 
 The kernel has no device-specific NVMe fences. Protecting Apple's data is
