@@ -9,3 +9,4 @@ recursive-include .github/workflows *.yml
 prune boot/m1n1/.work
 prune boot/quiet/.work
 global-exclude __pycache__ *.py[cod] .DS_Store
+recursive-include kernel/platforms *.toml

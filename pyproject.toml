@@ -36,6 +36,7 @@ orchard_hardware = [
   "boot/quiet/*.py", "boot/quiet/*.patch",
   "boot/m1n1/build", "boot/m1n1/install-toolchain", "boot/m1n1/Containerfile", "boot/m1n1/upstream.lock", "boot/m1n1/series", "boot/m1n1/sources.toml", "boot/m1n1/patches/*/*.patch",
   "kernel/Containerfile", "kernel/install-toolchain", "kernel/build", "kernel/build-modules", "kernel/stage-modules.py",
-  "kernel/upstream.lock", "kernel/series.py", "kernel/series/*", "kernel/configs/*/*", "kernel/devicetree/*/*",
+  "kernel/upstream.lock", "kernel/series.py", "kernel/series/*", "kernel/platforms/*.toml",
+  "kernel/configs/*/*", "kernel/devicetree/*/*",
   "kernel/patches/**/*.patch", "kernel/modules/*/*/*"
 ]

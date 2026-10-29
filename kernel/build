@@ -4,6 +4,17 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 device=${1:-}
 [[ $# -gt 0 ]] && shift
+if [[ ! "$device" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
+  echo 'Usage: ./kernel/build DEVICE|PLATFORM --output DIRECTORY [--work-dir DIRECTORY]' >&2
+  exit 2
+fi
+resolution=$(python3 "$here/series.py" --resolve "$device") || exit 1
+read -r platform device_dtb <<< "$resolution"
+producer=$(python3 "$here/series.py" --producer "$device") || exit 1
+case "$producer" in
+  linux-arm64) ;;
+  *) exec python3 "$here/$producer" "$@";;
+esac
 dest=
 work=
 while (($#)); do
@@ -14,13 +25,12 @@ while (($#)); do
     *) echo "Unknown argument: $1" >&2; exit 2;;
   esac
 done
-if [[ ! "$device" =~ ^[a-z0-9][a-z0-9_-]*$ || -z "$dest" || -e "$dest" ]]; then
+if [[ -z "$dest" || -e "$dest" ]]; then
   echo 'Usage: ./kernel/build DEVICE|PLATFORM --output DIRECTORY [--work-dir DIRECTORY]' >&2
   exit 2
 fi
 # One kernel per platform; a device only selects which DTB is also copied
 # to DIRECTORY/DEVICE.dtb. All platform DTBs land in DIRECTORY/dtbs/.
-read -r platform device_dtb < <(python3 "$here/series.py" --resolve "$device")
 config="$here/configs/$platform/config"
 patches=()
 while IFS= read -r patch; do
