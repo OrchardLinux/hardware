@@ -2063,7 +2063,7 @@ index 000000000..1d90de475
 +}
 diff --git a/drivers/media/platform/apple/vxd/apple-vxd-h264-cmd.c b/drivers/media/platform/apple/vxd/apple-vxd-h264-cmd.c
 new file mode 100644
-index 000000000..62d28da38
+index 000000000..c092a3f49
 --- /dev/null
 +++ b/drivers/media/platform/apple/vxd/apple-vxd-h264-cmd.c
 @@ -0,0 +1,587 @@
@@ -2164,12 +2164,12 @@ index 000000000..62d28da38
 +};
 +
 +/*
-+ * The scaling-list block (0x62c66b0 L39756-39766 of the dump): Inter Y and
-+ * Intra Y 8x8, then the 4x4 lists in this order of the H.264 list index
-+ * (Intra Y, Inter Y, Inter Cb, Intra Cb, Inter Cr, Intra Cr), each in
-+ * raster order: AppleD5500's scaling_list() parser (0xfffffff00629c918)
-+ * stores list[zigzag[i]], and its defaults (0xfffffff005596170) are raster
-+ * tables, which is also V4L2's order.
++ * The scaling-list block (0x62c66b0): Inter Y and Intra Y 8x8, then the
++ * 4x4 lists in this order of the H.264 list index (Intra Y, Inter Y,
++ * Inter Cb, Intra Cb, Inter Cr, Intra Cr), each in raster order:
++ * AppleD5500's scaling_list() parser (0xfffffff00629c918) stores
++ * list[zigzag[i]], and its defaults (0xfffffff005596170) are raster tables,
++ * which is also V4L2's order.
 + */
 +static const u8 vxd_h264_scaling_4x4_order[6] = { 0, 3, 4, 1, 5, 2 };
 +
@@ -2258,7 +2258,7 @@ index 000000000..62d28da38
 +	return bits;
 +}
 +
-+/* POC registers: 17 bits, sign in bit 16 (0x62c66b0 L39779-39792). */
++/* POC registers: 17 bits, sign in bit 16 (0x62c66b0). */
 +static u32 vxd_h264_poc(s32 poc)
 +{
 +	return ((u32)poc >> 15 & 0x10000) | ((u32)poc & 0xffff);
@@ -2273,7 +2273,7 @@ index 000000000..62d28da38
 +	       (pps->weighted_bipred_idc == 1 && code == VXD_H264_CODE_B);
 +}
 +
-+/* The weight tables go out for explicit and implicit modes (L40086). */
++/* The weight tables go out for explicit and implicit modes (0x62c66b0). */
 +static bool vxd_h264_weight_tables(const struct v4l2_ctrl_h264_pps *pps,
 +				   int code)
 +{
@@ -2291,7 +2291,7 @@ index 000000000..62d28da38
 +
 +	memset(bytes, VXD_H264_SCALING_FLAT, sizeof(bytes));
 +	if (vxd_h264_has_scaling(f->pps) && m) {
-+		/* 8x8 lists only with the 8x8 transform (0x62be538 L33469). */
++		/* 8x8 lists only with the 8x8 transform (0x62be538). */
 +		if (f->pps->flags & V4L2_H264_PPS_FLAG_TRANSFORM_8X8_MODE) {
 +			memcpy(&bytes[0], m->scaling_list_8x8[1], 64);
 +			memcpy(&bytes[64], m->scaling_list_8x8[0], 64);
@@ -2327,8 +2327,8 @@ index 000000000..62d28da38
 +/*
 + * B slices: the picture order counts (BE_FOC0/1, then TOP/BOT_FOC per
 + * hardware DPB slot) and the co-located picture block (BE_COL_PIC0,
-+ * BE_BASE_ADDR_COL_PIC, BE_LIST0_INVERSE x 8, BE_LIST1), 0x62c66b0
-+ * L39776-39887.  The co-located picture is RefPicList1[0].
++ * BE_BASE_ADDR_COL_PIC, BE_LIST0_INVERSE x 8, BE_LIST1), 0x62c66b0.
++ * The co-located picture is RefPicList1[0].
 + */
 +static void vxd_h264_emit_b(struct apple_vxd_cmdbuf *cb,
 +			    const struct apple_vxd_h264_frame *f,
@@ -2380,7 +2380,7 @@ index 000000000..62d28da38
 +
 +/*
 + * H264_WEIGHTED_FACTORS/OFFSET A (list 0) and B (list 1), 32 entries each
-+ * (0x62c66b0 L40086-40134, field layout as psb_video's msvdx_cmds_io2.h).
++ * (0x62c66b0, field layout as psb_video's msvdx_cmds_io2.h).
 + * Implicit bi-prediction leaves the kext's tables unrefreshed (zero in a
 + * fresh context); the core derives those weights from the POCs.
 + */
@@ -2430,7 +2430,7 @@ index 000000000..62d28da38
 +	bool min_bipred8, used[V4L2_H264_NUM_DPB_ENTRIES] = { };
 +	/*
 +	 * I slices zero both counts; P slices keep the parsed L1 count (the
-+	 * PPS default, 0x62a0058) as the kext does (0x62c5fb8 L39477-39483).
++	 * PPS default, 0x62a0058) as the kext does (0x62c5fb8).
 +	 */
 +	u8 l0_minus1 = code ? sl->num_ref_idx_l0_active_minus1 : 0;
 +	u8 l1_minus1 = code ? sl->num_ref_idx_l1_active_minus1 : 0;
@@ -2595,8 +2595,8 @@ index 000000000..62d28da38
 +
 +/*
 + * One picture: per slice, the chunk and its kind-1 packet (payload as
-+ * 0x62c4c98 fills it, L39392-39429 of the dump).  Returns 0, or -EINVAL /
-+ * -ENOSPC with @why set; the buffer is then unusable for this picture.
++ * 0x62c4c98 fills it).  Returns 0, or -EINVAL / -ENOSPC with @why set;
++ * the buffer is then unusable for this picture.
 + */
 +int apple_vxd_h264_build(struct apple_vxd_cmdbuf *cb,
 +			 const struct apple_vxd_h264_frame *f,
