@@ -19,7 +19,7 @@ Issues = "https://github.com/OrchardLinux/hardware/issues"
 
 [tool.setuptools]
 include-package-data = false
-packages = ["orchard_hardware", "orchard_hardware.image", "orchard_hardware.apple", "orchard_hardware.boot", "orchard_hardware.boot.initramfs"]
+packages = ["orchard_hardware", "orchard_hardware.image", "orchard_hardware.apple", "orchard_hardware.boot", "orchard_hardware.boot.initramfs", "orchard_hardware.boot.initramfs.nfs"]
 package-dir = {orchard_hardware = "."}
 
 [tool.setuptools.package-data]
@@ -32,6 +32,8 @@ orchard_hardware = [
   "boot/initramfs/recovery/capture-adt", "boot/initramfs/recovery/udhcpd.conf",
   "boot/initramfs/recovery/upstream.lock", "boot/initramfs/recovery/build-tools*",
   "boot/initramfs/recovery/install-toolchain",
+  "boot/initramfs/nfs/init", "boot/initramfs/nfs/usb-gadget", "boot/initramfs/nfs/handoff",
+  "boot/initramfs/nfs/validate-root", "boot/initramfs/nfs/acm-rescue", "boot/initramfs/nfs/README.md",
   "boot/initramfs/busybox/*.py", "boot/initramfs/busybox/Containerfile",
   "boot/quiet/*.py", "boot/quiet/*.patch",
   "boot/m1n1/build", "boot/m1n1/install-toolchain", "boot/m1n1/Containerfile", "boot/m1n1/upstream.lock", "boot/m1n1/series", "boot/m1n1/sources.toml", "boot/m1n1/patches/*/*.patch",
