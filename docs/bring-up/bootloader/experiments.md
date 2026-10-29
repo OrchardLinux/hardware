@@ -1,0 +1,138 @@
+# Bootloader experiments
+
+Each entry is one precise experiment that closes a gap in
+[the bootloader guide](README.md). Entries say which facts come from our sources
+and mark our own reasoning as *inferred*.
+
+## Rules for every experiment
+
+1. **Read-only storage.** No experiment writes to NVMe. Write and flush commands
+   are never built, not even behind a flag.
+2. **One attempt per boot.** Never retry a boot, link bring-up or controller
+   enable automatically. A failure is recorded and the device is restarted.
+3. **Change one thing.** Compare against a known-good boot that differs only in
+   the step under test.
+
+## BL-00
+
+**m1n1 USB proxy and a host-chosen kernel on J71b.**
+
+Boot a bare m1n1 (no payload) through Pongo. Then load the `0.1.11-local.3`
+recovery's kernel, DTB, initramfs and boot arguments with
+`proxyclient/tools/linux.py`. Only the delivery differs from `recovery.bin`.
+The prepared kit is `out/bootloader-e0/` (outside git; `run` and `README.md`).
+
+Pass:
+- the m1n1 proxy serial port appears;
+- `linux.py` reaches "Ready to boot";
+- "J71b Recovery" enumerates and SSH works;
+- the Wi-Fi MAC and the touch calibration in `/proc/device-tree` match a normal RAM boot.
+
+Send back: `linux.py.log`, and whether m1n1's console stayed readable on screen.
+
+**Result (J71b, 2026-10-29): passed.**
+- The m1n1 proxy enumerated on A10 (dwc2) and took the kernel, DTB and initramfs.
+- `kboot_prepare_dt` ran the Orchard fill-ins: NVMe HMB `0x87ee00000` size `0x1200000`, CPU 1 release address.
+- "J71b Recovery" came up with kernel `7.3.0-rc1-orchard-apple`, our boot arguments and 2 CPUs.
+- The DT has `local-mac-address` (6 B), `brcm,cal-blob` (1780 B) and `local-bd-address` (6 B), the same sizes as the RAM-boot record in `kernel/REVIEW.md`.
+- The storage endpoint (`106b:2002`) enumerated at 8 GT/s. The recovery binds NVMe only when an operation needs it, so it wasn't tested here.
+- The m1n1 framebuffer log was not checked.
+- A cosmetic glitch: `linux.py` ends with a `termios` traceback when run without a TTY, after the kernel jump.
+
+## BL-01
+
+**T8010 PCIe port 0 link from m1n1, read-only, over the proxy.** Prototype in Python
+(`proxyclient/experiments/`), the way Hoolock prototyped ANS1. Steps 1–3 of
+[the T8010 storage path](README.md#t8010-storage-path-from-the-linux-drivers),
+then stop.
+
+Pass: port 0 reaches L0, and the endpoint's config space reads vendor `0x106b`.
+
+Send back: the `LINKSTS` and LTSSM values at each step, plus the endpoint vendor, device and class.
+
+## BL-02
+
+**Read the GPT header from m1n1.** Continue BL-01 with the NVMMU, a minimal
+`pcie0_dart0` table for the queues, the ANS registers, controller enable, Identify, and a
+FlatDMA read of LBA 0–1. Then shut down per BL-03.
+
+Pass: LBA 1 starts with `EFI PART`, and the disk GUID matches `sgdisk -p` from a Linux boot.
+
+Send back: the HMB size and alignment requested, the Identify model and firmware strings, and the GPT disk GUID.
+
+**Result (J71b, 2026-10-29): BL-01 and BL-02 passed** with [bl02_storage.py](bl02_storage.py), run over the m1n1 proxy.
+- **Port 0:** reached L0 (`LINKSTS 0x9b401101`). Endpoint `106b:2002`, class `0x018002` rev `0x11`.
+- **Controller:** APPLE SSD AP0128K, firmware 57.20.01, `CAP 0x20f00103ff`. It requests an HMB of `0xe00000` with alignment `0x1000`.
+- **Disk:** 31,250,000 blocks of 4 KiB. GPT disk GUID `40bf8b49-2763-46fe-8bc8-8387167fbf51`. Partitions: 1 "Container" (APFS), 3 "OmarchySystems".
+- **Shutdown:** iBoot's stop sequence ended at `CC 0` / `CSTS 0`.
+
+What it took (each point found on hardware):
+- **Power first.** Power `/arm-io/apcie` (gates PCIE, PCIE_AUX, PCIE_REF) before any PCIe register read. A read of the unpowered port block takes a synchronous exception, which wedges m1n1.
+- **Do it the Linux way.** Give the controller the whole carve-out as HMB, as Linux does, and put the queues behind `pcie0_dart0`.
+  With the requested size only and the queues in the SART window, enable ends in `CSTS.CFS`.
+- **DART setup:** stream 0, iOS init order with the ADT values (reflector `0x20fffc`, fetch `0xe0303`, diag `0x100`). The same L1 table sits behind TTBR 0 and TTBR 2; which one the bridge uses is still open.
+
+## BL-03
+
+**Linux storage after m1n1 has used it.** This experiment decides the design.
+Run BL-02 including the shutdown, then boot the BL-00 kernel over the same proxy session.
+The shutdown sequence:
+1. iBoot's ANS stop.
+2. Port down (RC `0x124`, `0x114`, `0x100`).
+3. PERST# asserted.
+4. `ps_pcie` off.
+
+Pass: Linux mounts NVMe and survives a 10-minute read soak (`dd` of the root
+partition to `/dev/null`) without timeouts. Repeat over 5 cold boots.
+
+**First runs (J71b, 2026-10-29): Linux did not come back usable.** It happened both after the fatal-state run and after the clean BL-02 run with `ps_pcie` powered off.
+- "J71b Recovery" enumerates on USB, so the kernel ran and the recovery init started the gadget.
+- The serial shell never answers, not even raw. In BL-00 it answered at once.
+- The screen stays black, because the recovery's boot arguments map fbcon away.
+
+**Cause found and fixed (third and fourth runs).**
+- Taking the link down left the port's link-event bit (`0x1000`) pending, so IRQ 60 stormed 100,000 times. Linux then disabled it ("nobody cared").
+- The storm also caused the PMIC I²C reset loop, which showed up in one run only.
+- The fix: `port_down()` masks the port interrupts, then takes the link down, then clears the status while the port registers are still powered. Only after that does it switch off RC `0x124`/`0x114`/`0x100` and power.
+
+**Result (J71b, 2026-10-29, one boot): passed.**
+- IRQ 60 fires once, as on a normal boot. No I²C resets, and the serial shell answers.
+- `nvme.ko` probes the controller (`nvme0n1: p1 p3`), and the GPT disk GUID matches the one m1n1 read.
+- A 2 GiB read-only `dd` of p3 took 3.7 s with no NVMe or DART errors.
+
+Still owed for the pass criteria: the 10-minute soak and five cold boots.
+
+Before the fix: the same run with a visible kernel console (`BL03_BOOTARGS="orchard.recovery=1 loglevel=7"`) to see where Linux stops. Then `--keep-power`.
+
+If it fails, record the LTSSM state Linux reports. Compare with Berkay's
+`POLL_COMPLIANCE` result after kexec. Then try once with `ps_pcie` left on,
+to see whether powering the domain off helps or hurts.
+
+## BL-04
+
+**m1n1 C storage backend for A9/A10.** Port BL-02 into `main_storage_*` as an
+`s8000`/`t8010` backend. Then load a BLS entry from a FAT boot partition
+(host-parsed at first).
+
+Pass: BL-00's kernel boots from the boot partition instead of the host.
+
+**BL-04 result (J71b, 2026-10-29): the C backend passed.** Patch `boot/m1n1/patches/orchard/0002`, test [bl04_generic.py](bl04_generic.py).
+- `main_storage_init()` succeeded. Through the generic proxy ops alone, m1n1 read the GPT: disk GUID `40bf8b49-…`, partitions 1 and 3.
+- 256 single-block reads took 0.36 s, about 1.4 ms per USB round trip.
+- `main_storage_shutdown()` finished cleanly.
+- The first run read the endpoint's config space as `0xffffffff` right after link-up. The C code is fast enough to ask before the endpoint answers, so the backend now polls the vendor ID for up to 1 s, as PCIe allows.
+- Afterwards Linux booted to a normal console: no IRQ 60 storm, no I²C resets. NVMe under Linux after the C path is still unchecked, because the recovery's USB serial shell didn't answer. That happened once before with a normal boot as well, so it looks like a separate recovery console issue.
+
+## Per-device menu
+
+Every device runs [bl04_generic.py](bl04_generic.py) once during bring-up: it uses only
+m1n1's generic `main_storage_*` proxy calls, as the Orchard CLI does, then
+boots Linux and checks NVMe (BL-03).
+
+| Devices | SoC | m1n1 storage backend (match) | State |
+|---|---|---|---|
+| iPad 6 J71b/J72b, iPad 7 J171/J172, iPhone 7 D10/D11/D101/D111 | T8010 | Orchard `apcie_nvme` (`apcie,t8010`) | J71b: BL-02/03 passed (Python), BL-04 passed (C). Others: inferred from the same SoC and ADT-driven setup |
+| iPad 5 J71t/J72t | S8003 (TSMC) | Orchard `apcie_nvme` (`apcie,s8003`) | Ported from the integrated Linux S8003 code (Berkay Kösebay). Untested |
+| iPad 5 J71s/J72s | S8000 (Samsung) | None yet | Its root complex differs (no phy-ip) and has no Linux description either |
+| iPad Air 2 J81/J82 | T7001 | Hoolock `ans1` (`iop,s5l8960x` on `/arm-io/ans`) | Hoolock states A7/A8/A8X. Not checked against a J81 ADT; Linux storage on the Air 2 is still missing |
+| A11 devices | T8015 | Hoolock `nvme` (`iop-ans2,t8015`) | Untested by Orchard |
