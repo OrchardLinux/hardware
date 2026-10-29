@@ -1,4 +1,6 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Shayne Legault <8741557+shaynelegault@users.noreply.github.com>
+Date: Thu, 29 Oct 2026 11:46:46 -0600
 Subject: [PATCH] clk: apple: Add T7000 touch clock
 
 The T7000 touch clock uses the existing PMGR gate and divider operations. Match the T7000 compatible and retain the T8010 operations.

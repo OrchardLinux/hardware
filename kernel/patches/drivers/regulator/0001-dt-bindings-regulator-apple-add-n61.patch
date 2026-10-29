@@ -1,4 +1,6 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Shayne Legault <8741557+shaynelegault@users.noreply.github.com>
+Date: Thu, 29 Oct 2026 11:46:46 -0600
 Subject: [PATCH] dt-bindings: regulator: apple: Add N61 touch supplies
 
 Describe the D2186 core and Chestnut analog touch supply compatibles.

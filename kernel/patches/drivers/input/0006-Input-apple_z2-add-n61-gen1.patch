@@ -1,4 +1,6 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Stan Skowronek <skylark@disorder.metrascale.com>
+Date: Fri, 6 Mar 2020 15:53:13 +0000
 Subject: [PATCH] Input: apple_z2 - add N61 Gen1 touchscreen support
 
 Add the N61 Gen1 firmware framing, startup sequence and input reports. The device match data selects the N61 path; the J71b drain, IRQ and timing policy remain in their existing path.

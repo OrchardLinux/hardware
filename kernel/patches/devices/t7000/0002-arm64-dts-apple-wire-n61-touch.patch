@@ -1,4 +1,6 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Shayne Legault <8741557+shaynelegault@users.noreply.github.com>
+Date: Thu, 29 Oct 2026 11:46:47 -0600
 Subject: [PATCH] arm64: dts: apple: Wire N61 touch power and clock
 
 Describe the PMGR touch clock, N61 touch supplies and touchscreen child. The loader supplies per-unit calibration through the touchscreen alias.

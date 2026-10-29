@@ -1,4 +1,6 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Shayne Legault <8741557+shaynelegault@users.noreply.github.com>
+Date: Thu, 29 Oct 2026 11:46:46 -0600
 Subject: [PATCH] regulator: apple: Add N61 touch supplies
 
 Add D2186 LDO14 and Chestnut LDO2 support for the iPhone 6 touchscreen. Enable the Chestnut boost and Sage dependencies before the touch rail, and preserve those shared display bits when disabling the touch rail.

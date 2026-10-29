@@ -1,4 +1,6 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Shayne Legault <8741557+shaynelegault@users.noreply.github.com>
+Date: Thu, 29 Oct 2026 11:46:47 -0600
 Subject: [PATCH] kboot: forward proximity calibration for touchscreen aliases
 
 N61 Gen1 firmware optionally uses its per-unit proximity calibration in
