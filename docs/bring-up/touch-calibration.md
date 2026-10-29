@@ -11,7 +11,7 @@ It carries *calibration records* instead of calibration data. At boot:
 1. iBoot passes the ADT, which holds this unit's calibration in the
    touchscreen's ADT node.
 2. m1n1 copies the calibration properties into the DT node that the
-   `touchscreen0` alias points to (`boot/m1n1/patches/0001`).
+   `touchscreen0` alias points to (`boot/m1n1/patches/orchard/0001`).
 3. When it uploads the firmware, `apple_z2` reads each calibration
    record (address, maximum size, provider), takes the matching DT
    property, and sends it as an HBPP blob packet

@@ -1,0 +1,177 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Mon, 2 Dec 2024 19:31:43 +0800
+Subject: [PATCH 39/47] cpufreq: Add functions to unrestrict boost states
+
+This is used in conjunction with the CPU pstate latencies experiment.
+It is not for general use as it puts the CPU in an untested
+configuration.
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ .../experiments/cpu_pstate_latencies.py       |  1 +
+ proxyclient/m1n1/proxy.py                     |  4 ++
+ src/cpufreq.c                                 | 72 +++++++++++++++++++
+ src/cpufreq.h                                 |  1 +
+ src/proxy.c                                   |  3 +
+ src/proxy.h                                   |  1 +
+ 6 files changed, 82 insertions(+)
+
+diff --git a/proxyclient/experiments/cpu_pstate_latencies.py b/proxyclient/experiments/cpu_pstate_latencies.py
+index 7309dc3c..a36ad6a5 100755
+--- a/proxyclient/experiments/cpu_pstate_latencies.py
++++ b/proxyclient/experiments/cpu_pstate_latencies.py
+@@ -8,6 +8,7 @@ from m1n1 import asm
+ 
+ p.smp_start_secondaries()
+ p.cpufreq_init()
++p.cpufreq_unrestrict_boost()
+ 
+ tfreq = u.mrs(CNTFRQ_EL0)
+ 
+diff --git a/proxyclient/m1n1/proxy.py b/proxyclient/m1n1/proxy.py
+index 7a22d5e1..4911a0d9 100644
+--- a/proxyclient/m1n1/proxy.py
++++ b/proxyclient/m1n1/proxy.py
+@@ -700,6 +700,7 @@ class M1N1Proxy(Reloadable):
+     P_DAPF_INIT = 0x1201
+ 
+     P_CPUFREQ_INIT = 0x1300
++    P_CPUFREQ_UNRESTRICT_BOOST = 0x1301
+ 
+     P_READ_GIGALOCKER = 0x1400
+     P_FREE_GIGALOCKER = 0x1401
+@@ -1233,6 +1234,9 @@ class M1N1Proxy(Reloadable):
+     def free_gigalocker(self, buf):
+         return self.request(self.P_FREE_GIGALOCKER, buf)
+ 
++    def cpufreq_unrestrict_boost(self):
++        return self.request(self.P_CPUFREQ_UNRESTRICT_BOOST)
++
+ __all__.extend(k for k, v in globals().items()
+                if (callable(v) or isinstance(v, type)) and v.__module__ == __name__)
+ 
+diff --git a/src/cpufreq.c b/src/cpufreq.c
+index be99d4d2..dc93efc5 100644
+--- a/src/cpufreq.c
++++ b/src/cpufreq.c
+@@ -129,6 +129,67 @@ static int set_pstate(const struct cluster_t *cluster, uint32_t pstate)
+     return 0;
+ }
+ 
++// PSINFO: holds the frequency, voltage and boost information for each P-State
++// state 0 - 7, PSINFO1
++#define CLUSTER_PSINFO1_OFF_S5L8960X 0x20068
++// state 8 - 15, PSINFO1
++#define CLUSTER_PSINFO1_EXT_OFF_S8000 0x20368
++// state 0 - 15, PSINFO2
++#define CLUSTER_PSINFO2_OFF_S8000 0x20868
++
++// NOTE: state 8 - 15 is only available on S800X
++#define CLUSTER_PSINFO1_S5L8960X(pstate)                                                           \
++    ((pstate >= 8) ? (CLUSTER_PSINFO1_EXT_OFF_S8000 + (pstate - 8) * 8)                            \
++                   : (CLUSTER_PSINFO1_OFF_S5L8960X + (pstate * 8)))
++#define CLUSTER_PSINFO2_S8000(pstate) (CLUSTER_PSINFO2_OFF_S8000 + (pstate * 8))
++
++// Starting from T8010 it's much saner with all the PSINFO's in strides
++#define CLUSTER_PSINFO_STRIDE_T8010 0x20
++
++#define CLUSTER_PSINFO_OFF_T8010 0x80000
++#define CLUSTER_PSINFO_OFF_T8015 0x70000
++
++#define CLUSTER_PSINFO1_T8010(pstate)                                                              \
++    (CLUSTER_PSINFO_OFF_T8010 + (pstate * CLUSTER_PSINFO_STRIDE_T8010))
++#define CLUSTER_PSINFO2_T8010(pstate)                                                              \
++    (CLUSTER_PSINFO_OFF_T8010 + 8 + (pstate * CLUSTER_PSINFO_STRIDE_T8010))
++#define CLUSTER_PSINFO3_T8010(pstate)                                                              \
++    (CLUSTER_PSINFO_OFF_T8010 + 0x10 + (pstate * CLUSTER_PSINFO_STRIDE_T8010))
++
++#define CLUSTER_PSINFO1_T8015(pstate)                                                              \
++    (CLUSTER_PSINFO_OFF_T8015 + (pstate * CLUSTER_PSINFO_STRIDE_T8010))
++#define CLUSTER_PSINFO2_T8015(pstate)                                                              \
++    (CLUSTER_PSINFO_OFF_T8015 + 8 + (pstate * CLUSTER_PSINFO_STRIDE_T8010))
++#define CLUSTER_PSINFO3_T8015(pstate)                                                              \
++    (CLUSTER_PSINFO_OFF_T8015 + 0x10 + (pstate * CLUSTER_PSINFO_STRIDE_T8010))
++
++#define CLUSTER_PSINFO_MAX_LOAD GENMASK(43, 40)
++
++/*
++ * This function will unrestrict the boost modes for the cluster.
++ * However, only use this function for testing the state transistions
++ * as it puts the CPU in an untested configuration.
++ */
++void cpufreq_unrestrict_boost_cluster(const struct cluster_t *cluster)
++{
++    // Set max load to 15. This will allow us to enter said state without restrictions
++    if (chip_id == S8000 || chip_id == S8001 || chip_id == S8003) {
++        set64(cluster->base + CLUSTER_PSINFO2_S8000(8), FIELD_PREP(CLUSTER_PSINFO_MAX_LOAD, 15));
++        // board id 0x16: iPod touch 7
++    } else if ((chip_id == T8010 && board_id != 0x16) || chip_id == T8012) {
++        set64(cluster->base + CLUSTER_PSINFO2_T8010(11), FIELD_PREP(CLUSTER_PSINFO_MAX_LOAD, 15));
++    } else if (chip_id == T8011) {
++        set64(cluster->base + CLUSTER_PSINFO2_T8010(10), FIELD_PREP(CLUSTER_PSINFO_MAX_LOAD, 15));
++    } else if (chip_id == T8015) {
++        if (cluster->pcluster)
++            set64(cluster->base + CLUSTER_PSINFO2_T8015(8),
++                  FIELD_PREP(CLUSTER_PSINFO_MAX_LOAD, 15));
++        else
++            set64(cluster->base + CLUSTER_PSINFO2_T8015(7),
++                  FIELD_PREP(CLUSTER_PSINFO_MAX_LOAD, 15));
++    }
++}
++
+ int cpufreq_init_cluster(const struct cluster_t *cluster, const struct feat_t *features)
+ {
+     /* Reset P-State to the APSC p-state */
+@@ -566,3 +627,14 @@ void cpufreq_fixup(void)
+         cpufreq_fixup_cluster(cluster++);
+     }
+ }
++
++void cpufreq_unrestrict_boost(void)
++{
++    const struct cluster_t *cluster = cpufreq_get_clusters();
++
++    if (!cluster)
++        return;
++
++    while (cluster->base)
++        cpufreq_unrestrict_boost_cluster(cluster++);
++}
+diff --git a/src/cpufreq.h b/src/cpufreq.h
+index 3c0df877..0e411cbd 100644
+--- a/src/cpufreq.h
++++ b/src/cpufreq.h
+@@ -5,5 +5,6 @@
+ 
+ int cpufreq_init(void);
+ void cpufreq_fixup(void);
++void cpufreq_unrestrict_boost(void);
+ 
+ #endif
+diff --git a/src/proxy.c b/src/proxy.c
+index ff6d6e53..17e992c8 100644
+--- a/src/proxy.c
++++ b/src/proxy.c
+@@ -652,6 +652,9 @@ int proxy_process(ProxyRequest *request, ProxyReply *reply)
+         case P_CPUFREQ_INIT:
+             reply->retval = cpufreq_init();
+             break;
++        case P_CPUFREQ_UNRESTRICT_BOOST:
++            cpufreq_unrestrict_boost();
++            break;
+ 
+         case P_READ_GIGALOCKER: {
+             size_t size = 0;
+diff --git a/src/proxy.h b/src/proxy.h
+index 965807a4..73b3f2a5 100644
+--- a/src/proxy.h
++++ b/src/proxy.h
+@@ -185,6 +185,7 @@ typedef enum {
+     P_DAPF_INIT,
+ 
+     P_CPUFREQ_INIT = 0x1300,
++    P_CPUFREQ_UNRESTRICT_BOOST,
+ 
+     P_READ_GIGALOCKER = 0x1400,
+     P_FREE_GIGALOCKER,

@@ -1,0 +1,89 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Thu, 18 Dec 2025 23:25:44 +0800
+Subject: [PATCH 21/47] sep: Add capability framework to mark optional SEP
+ featuers
+
+Some SEP features are not supported on older implementations. Add a
+capability framework to communicate that to downstream clients.
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ src/kboot.c |  3 +++
+ src/sep.c   | 13 +++++++++++++
+ src/sep.h   |  5 +++++
+ 3 files changed, 21 insertions(+)
+
+diff --git a/src/kboot.c b/src/kboot.c
+index 597499c3..150e4dd5 100644
+--- a/src/kboot.c
++++ b/src/kboot.c
+@@ -111,6 +111,9 @@ static int dt_set_rng_seed_sep(int node)
+     u64 kaslr_seed;
+     uint8_t rng_seed[128]; // same size used by Linux for kexec
+ 
++    if (!(sep_get_capabilities() & SEP_CAPABILITY_GETRAND))
++        return -1;
++
+     if (sep_get_random(&kaslr_seed, sizeof(kaslr_seed)) != sizeof(kaslr_seed))
+         bail("SEP: couldn't get enough random bytes for KASLR seed\n");
+     if (sep_get_random(rng_seed, sizeof(rng_seed)) != sizeof(rng_seed))
+diff --git a/src/sep.c b/src/sep.c
+index 8be0fc1c..e59152c5 100644
+--- a/src/sep.c
++++ b/src/sep.c
+@@ -26,6 +26,7 @@ enum sep_mbox_type {
+ 
+ static struct sep_dev {
+     enum sep_mbox_type type;
++    sep_capabilities_t capabilities;
+     union {
+         asc_dev_t *asc;
+     };
+@@ -57,6 +58,8 @@ int sep_init(void)
+             break;
+     }
+ 
++    sep_dev->capabilities |= SEP_CAPABILITY_GETRAND;
++
+     return 0;
+ }
+ 
+@@ -86,6 +89,11 @@ bool sep_recv(u64 *reply)
+ 
+ size_t sep_get_random(void *buffer, size_t len)
+ {
++    if (!(sep_dev->capabilities & SEP_CAPABILITY_GETRAND)) {
++        printf("sep: SEP does not support GETRAND\n");
++        return 0;
++    }
++
+     const u64 msg_getrand =
+         FIELD_PREP(SEP_MSG_EP, SEP_EP_ROM) | FIELD_PREP(SEP_MSG_CMD, SEP_MSG_GETRAND);
+     int ret;
+@@ -121,3 +129,8 @@ size_t sep_get_random(void *buffer, size_t len)
+ 
+     return done;
+ }
++
++sep_capabilities_t sep_get_capabilities(void)
++{
++    return sep_dev->capabilities;
++}
+diff --git a/src/sep.h b/src/sep.h
+index 8d7d04a5..08398b3f 100644
+--- a/src/sep.h
++++ b/src/sep.h
+@@ -6,7 +6,12 @@
+ #include "asc.h"
+ #include "types.h"
+ 
++typedef enum {
++    SEP_CAPABILITY_GETRAND = BIT(0),
++} sep_capabilities_t;
++
+ int sep_init(void);
+ size_t sep_get_random(void *buffer, size_t len);
++sep_capabilities_t sep_get_capabilities(void);
+ 
+ #endif

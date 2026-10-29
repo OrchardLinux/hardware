@@ -1,0 +1,242 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Sat, 11 Jul 2026 02:18:10 +0800
+Subject: [PATCH 30/47] rtkit: Allow app endpoints to be used during
+ init/shutdown
+
+Some IOPs like the ANS1 in Apple A8X requires app endpoint usage
+during init/shutdown (i.e. IOP state != 0x20). If the endpoints are not
+started, then the IOP never reaches state 0x20.
+
+To accommodate this situation, add two optional callbacks in
+rtkit_init():
+
+- A callback that is be called during EPMap so the relvant endpoints can
+be started.
+
+- Another callback that is called when waiting for the IOP to boot or
+waiting for it to shutdown in order to handle messages on such endpoints.
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ src/dcp.c   |  3 ++-
+ src/nvme.c  |  4 ++--
+ src/rtkit.c | 54 ++++++++++++++++++++++++++++++++++++++++++++---------
+ src/rtkit.h | 12 +++++++-----
+ src/smc.c   |  2 +-
+ 5 files changed, 57 insertions(+), 18 deletions(-)
+
+diff --git a/src/dcp.c b/src/dcp.c
+index ce1dc01b..16b0225c 100644
+--- a/src/dcp.c
++++ b/src/dcp.c
+@@ -209,7 +209,8 @@ dcp_dev_t *dcp_init(const display_config_t *cfg)
+         goto out_iovad;
+     }
+ 
+-    dcp->rtkit = rtkit_init_asc("dcp", dcp->asc, dcp->dart_dcp, dcp->iovad_dcp, NULL, false);
++    dcp->rtkit =
++        rtkit_init_asc("dcp", dcp->asc, dcp->dart_dcp, dcp->iovad_dcp, NULL, false, NULL, NULL);
+     if (!dcp->rtkit) {
+         printf("dcp: failed to initialize RTKit\n");
+         goto out_iovad;
+diff --git a/src/nvme.c b/src/nvme.c
+index 7e200829..e6e3aa09 100644
+--- a/src/nvme.c
++++ b/src/nvme.c
+@@ -442,7 +442,7 @@ bool nvme_init(void)
+     if (!nvme_sart)
+         goto out_asc;
+ 
+-    nvme_rtkit = rtkit_init_asc("nvme", nvme_asc, NULL, NULL, nvme_sart, false);
++    nvme_rtkit = rtkit_init_asc("nvme", nvme_asc, NULL, NULL, nvme_sart, false, NULL, NULL);
+     if (!nvme_rtkit)
+         goto out_sart;
+ 
+@@ -562,7 +562,7 @@ void nvme_ensure_shutdown(void)
+     if (!nvme_sart)
+         goto fail;
+ 
+-    nvme_rtkit = rtkit_init_asc("nvme", nvme_asc, NULL, NULL, nvme_sart, false);
++    nvme_rtkit = rtkit_init_asc("nvme", nvme_asc, NULL, NULL, nvme_sart, false, NULL, NULL);
+     if (!nvme_rtkit)
+         goto fail;
+ 
+diff --git a/src/rtkit.c b/src/rtkit.c
+index ff7c8a70..3775841c 100644
+--- a/src/rtkit.c
++++ b/src/rtkit.c
+@@ -71,6 +71,9 @@
+ #define RTKIT_MIN_VERSION 10
+ #define RTKIT_MAX_VERSION 12
+ 
++#define RTKIT_APP_EP_START_V10 0x5
++#define RTKIT_APP_EP_START_V11 0x20
++
+ #define RTKIT_AKF_MSG_EP  GENMASK(63, 56)
+ #define RTKIT_AKF_MSG_MSG GENMASK(55, 0)
+ 
+@@ -109,6 +112,9 @@ struct rtkit_dev {
+     u8 app_ep_start;
+     u8 protocol_ver;
+ 
++    bool (*init_app_handler)(rtkit_dev_t *rtk, struct rtkit_message *msg);
++    bool (*epmap_cb)(rtkit_dev_t *rtk, u32 base, u32 bitmap);
++
+     u64 dva_base;
+ 
+     enum rtkit_power_state iop_power;
+@@ -290,7 +296,9 @@ static const struct rtkit_iop_ops __rtkit_akf_iop_ops = {
+ const struct rtkit_iop_ops *const rtkit_akf_iop_ops = &__rtkit_akf_iop_ops;
+ 
+ rtkit_dev_t *rtkit_init(const char *name, const struct rtkit_iop_ops *iop_ops, void *mbox,
+-                        dart_dev_t *dart, iova_domain_t *dart_iovad, sart_dev_t *sart, bool sram)
++                        dart_dev_t *dart, iova_domain_t *dart_iovad, sart_dev_t *sart, bool sram,
++                        bool (*epmap_cb)(rtkit_dev_t *rtk, u32 base, u32 bitmap),
++                        bool (*init_app_handler)(rtkit_dev_t *rtk, struct rtkit_message *msg))
+ {
+     if (dart && sart) {
+         printf("rtkit: Cannot use both SART and DART simultaneously\n");
+@@ -323,6 +331,8 @@ rtkit_dev_t *rtkit_init(const char *name, const struct rtkit_iop_ops *iop_ops, v
+     rtk->dart_iovad = dart_iovad;
+     rtk->sart = sart;
+     rtk->sram = sram;
++    rtk->init_app_handler = init_app_handler;
++    rtk->epmap_cb = epmap_cb;
+     /*
+      * treat only mgmt as system endpoint until more information
+      * can be obtained from mgmt's HELLO message
+@@ -716,6 +726,7 @@ bool rtkit_boot(rtkit_dev_t *rtk)
+     bool has_syslog = false;
+     bool has_oslog = false;
+     bool got_epmap = false;
++
+     while (!got_epmap) {
+         if (!rtk->iop_ops->recv_timeout(rtk, &msg, USEC_PER_SEC)) {
+             rtkit_printf("couldn't receive message while waiting for endpoint map\n");
+@@ -743,6 +754,7 @@ bool rtkit_boot(rtkit_dev_t *rtk)
+ 
+                 if (ep_idx >= rtk->app_ep_start)
+                     continue;
++
+                 switch (ep_idx) {
+                     case RTKIT_EP_CRASHLOG:
+                         has_crashlog = true;
+@@ -784,6 +796,10 @@ bool rtkit_boot(rtkit_dev_t *rtk)
+             rtkit_printf("couldn't reply to endpoint map\n");
+             return false;
+         }
++
++        if (rtk->epmap_cb)
++            if (!rtk->epmap_cb(rtk, base, bitmap))
++                return false;
+     }
+ 
+     /* start all required system endpoints */
+@@ -800,12 +816,20 @@ bool rtkit_boot(rtkit_dev_t *rtk)
+ 
+     while (rtk->iop_power != RTKIT_POWER_ON) {
+         struct rtkit_message rtk_msg;
++        bool handled = false;
+         int ret = rtkit_recv(rtk, &rtk_msg);
+-        if (ret == 1)
+-            rtkit_printf("unexpected message to non-system endpoint 0x%02x during boot: %lx\n",
+-                         rtk_msg.ep, rtk_msg.msg);
+-        else if (ret < 0)
++
++        if (ret < 0)
+             return false;
++
++        if (ret == 1) {
++            if (rtk->init_app_handler)
++                handled = rtk->init_app_handler(rtk, &rtk_msg);
++
++            if (!handled)
++                rtkit_printf("unexpected message to non-system endpoint 0x%02x during boot: %lx\n",
++                             rtk_msg.ep, rtk_msg.msg);
++        }
+     }
+ 
+     /* this enables syslog */
+@@ -839,10 +863,16 @@ static bool rtkit_switch_power_state(rtkit_dev_t *rtk, enum rtkit_power_state ta
+     while (rtk->ap_power != RTKIT_POWER_QUIESCED) {
+         struct rtkit_message rtk_msg;
+         int ret = rtkit_recv(rtk, &rtk_msg);
++        bool handled = false;
+ 
+         if (ret > 0) {
+-            rtkit_printf("unexpected message to non-system endpoint 0x%02x during shutdown: %lx\n",
+-                         rtk_msg.ep, rtk_msg.msg);
++            if (rtk->init_app_handler)
++                handled = rtk->init_app_handler(rtk, &rtk_msg);
++
++            if (!handled)
++                rtkit_printf(
++                    "unexpected message to non-system endpoint 0x%02x during shutdown: %lx\n",
++                    rtk_msg.ep, rtk_msg.msg);
+             continue;
+         } else if (ret < 0) {
+             rtkit_printf("IOP died during shutdown\n");
+@@ -859,10 +889,16 @@ static bool rtkit_switch_power_state(rtkit_dev_t *rtk, enum rtkit_power_state ta
+     while (rtk->iop_power != target) {
+         struct rtkit_message rtk_msg;
+         int ret = rtkit_recv(rtk, &rtk_msg);
++        bool handled = false;
+ 
+         if (ret > 0) {
+-            rtkit_printf("unexpected message to non-system endpoint 0x%02x during shutdown: %lx\n",
+-                         rtk_msg.ep, rtk_msg.msg);
++            if (rtk->init_app_handler)
++                handled = rtk->init_app_handler(rtk, &rtk_msg);
++
++            if (!handled)
++                rtkit_printf(
++                    "unexpected message to non-system endpoint 0x%02x during shutdown: %lx\n",
++                    rtk_msg.ep, rtk_msg.msg);
+             continue;
+         } else if (ret < 0) {
+             rtkit_printf("IOP died during shutdown\n");
+diff --git a/src/rtkit.h b/src/rtkit.h
+index c1d3737b..c896152e 100644
+--- a/src/rtkit.h
++++ b/src/rtkit.h
+@@ -9,11 +9,11 @@
+ #include "sart.h"
+ #include "types.h"
+ 
+-#define rtkit_init_asc(name, asc, dart, dart_iovad, sart, sram)                                    \
+-    rtkit_init(name, rtkit_asc_iop_ops, asc, dart, dart_iovad, sart, sram)
++#define rtkit_init_asc(name, asc, dart, dart_iovad, sart, sram, epmap_cb, handler)                 \
++    rtkit_init(name, rtkit_asc_iop_ops, asc, dart, dart_iovad, sart, sram, epmap_cb, handler)
+ 
+-#define rtkit_init_akf(name, akf, dart, dart_iovad, sart, sram)                                    \
+-    rtkit_init(name, rtkit_akf_iop_ops, asc, dart, dart_iovad, sart, sram)
++#define rtkit_init_akf(name, akf, dart, dart_iovad, sart, sram, epmap_cb, handler)                 \
++    rtkit_init(name, rtkit_akf_iop_ops, akf, dart, dart_iovad, sart, sram, epmap_cb, handler)
+ 
+ typedef struct rtkit_dev rtkit_dev_t;
+ 
+@@ -32,7 +32,9 @@ extern const struct rtkit_iop_ops *const rtkit_asc_iop_ops;
+ extern const struct rtkit_iop_ops *const rtkit_akf_iop_ops;
+ 
+ rtkit_dev_t *rtkit_init(const char *name, const struct rtkit_iop_ops *iop_ops, void *mbox,
+-                        dart_dev_t *dart, iova_domain_t *dart_iovad, sart_dev_t *sart, bool sram);
++                        dart_dev_t *dart, iova_domain_t *dart_iovad, sart_dev_t *sart, bool sram,
++                        bool (*epmap_cb)(rtkit_dev_t *rtk, u32 base, u32 bitmap),
++                        bool (*init_app_handler)(rtkit_dev_t *rtk, struct rtkit_message *msg));
+ bool rtkit_quiesce(rtkit_dev_t *rtk);
+ bool rtkit_sleep(rtkit_dev_t *rtk);
+ void rtkit_free(rtkit_dev_t *rtk);
+diff --git a/src/smc.c b/src/smc.c
+index e07268ae..a37708f7 100644
+--- a/src/smc.c
++++ b/src/smc.c
+@@ -146,7 +146,7 @@ smc_dev_t *smc_init(void)
+         goto out_free;
+     }
+ 
+-    smc->rtkit = rtkit_init_asc("smc", smc->asc, NULL, NULL, NULL, true);
++    smc->rtkit = rtkit_init_asc("smc", smc->asc, NULL, NULL, NULL, true, 0, NULL);
+     if (!smc->rtkit) {
+         printf("SMC: failed to initialize RTKit\n");
+         goto out_asc;

@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Wed, 6 Aug 2025 00:43:50 +0800
+Subject: [PATCH 14/47] asc: refractor ascwrap_v4_send() to not directly use
+ control registers
+
+Allows the function to be reused for T8015 IOP support which will be
+added soon.
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ src/asc.c | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/src/asc.c b/src/asc.c
+index b5c906d3..fa9afd0f 100644
+--- a/src/asc.c
++++ b/src/asc.c
+@@ -57,7 +57,13 @@ static bool ascwrap_v4_cpu_running(asc_dev_t *asc)
+ 
+ static bool ascwrap_v4_send(asc_dev_t *asc, const struct asc_message *msg)
+ {
+-    if (poll32(asc->base + ASC_MBOX_A2I_CONTROL, ASC_MBOX_CONTROL_FULL, 0, 200000)) {
++    bool can_send = false;
++    u64 timeout = timeout_calculate(200000);
++    while (!timeout_expired(timeout))
++        if ((can_send = asc_can_send(asc)))
++            break;
++
++    if (!can_send) {
+         printf("asc: A2I mailbox full for 200ms. Is the ASC stuck?");
+         return false;
+     }
