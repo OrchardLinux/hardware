@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Mon, 16 Jun 2025 09:31:50 +0800
+Subject: [PATCH 01/21] dt-bindings: arm: pmu: Add Apple A7-A11 SoC CPU PMU
+ compatibles
+
+Document the compatibles for Apple A7-A11 SoC CPU PMU.
+
+Acked-by: Krzysztof Kozlowski <krzysztof.kozlowski@linaro.org>
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ Documentation/devicetree/bindings/arm/pmu.yaml | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/arm/pmu.yaml b/Documentation/devicetree/bindings/arm/pmu.yaml
+index f47baaefc..97800a991 100644
+--- a/Documentation/devicetree/bindings/arm/pmu.yaml
++++ b/Documentation/devicetree/bindings/arm/pmu.yaml
+@@ -22,8 +22,14 @@ properties:
+           - apm,potenza-pmu
+           - apple,avalanche-pmu
+           - apple,blizzard-pmu
++          - apple,cyclone-pmu
+           - apple,firestorm-pmu
++          - apple,fusion-pmu
+           - apple,icestorm-pmu
++          - apple,monsoon-pmu
++          - apple,mistral-pmu
++          - apple,twister-pmu
++          - apple,typhoon-pmu
+           - arm,armv8-pmuv3 # Only for s/w models
+           - arm,arm1136-pmu
+           - arm,arm1176-pmu

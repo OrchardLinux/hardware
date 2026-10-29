@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Tue, 4 Aug 2026 18:08:40 +0200
+Subject: [PATCH 099/117] dt-bindings: input: apple,z2: Add D11 touchscreen
+
+Add the D11 touchscreen compatible and apply the same clock, reset,
+supply, firmware, calibration, and geometry requirements used by the
+related D111 hardware.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: a3171a598fc685794c8593345fa4297a8036556b
+---
+ .../bindings/input/touchscreen/apple,z2-multitouch.yaml      | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml b/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml
+index 078fcaf80..77e311df3 100644
+--- a/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml
++++ b/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml
+@@ -18,6 +18,7 @@ properties:
+       - apple,j293-touchbar
+       - apple,j493-touchbar
+       - apple,j172-touchscreen
++      - apple,d11-touchscreen
+       - apple,d111-touchscreen
+ 
+   interrupts:
+@@ -124,7 +125,9 @@ allOf:
+   - if:
+       properties:
+         compatible:
+-          const: apple,d111-touchscreen
++          enum:
++            - apple,d11-touchscreen
++            - apple,d111-touchscreen
+     then:
+       required:
+         - clocks

@@ -1,0 +1,58 @@
+# iPhone 7 Plus (Qualcomm) — D11: hardware identity, boot assets and firmware recipe.
+schema = 1
+kind = "hardware.device"
+
+[device]
+profile = "d11"
+name = "iPhone 7 Plus (Qualcomm)"
+apple_products = ["iPhone9,2"]
+dt_compatible = ["apple,d11"]
+
+# BDID: ApBoardID/ApChipID of the d11ap identities in the 19H422 (iOS 15.8.8) BuildManifest.plist;
+# cross-checked with api.ipsw.me/v4/device/iPhone9,2 ("bdid").
+[match.dfu]
+chip = 0x8010
+board = 0x0a
+
+# USB product of the Orchard recovery system ("<Board> Recovery").
+[match.linux]
+product = "D11 Recovery"
+
+[boot]
+methods = ["checkm8-pongo"]
+# Not published yet: no d11 launcher release exists. Mirrors the j71b URL pattern.
+launch_manifest = "https://github.com/OrchardLinux/hardware/releases/latest/download/d11-apple-launcher.boot.toml"
+
+[kernel]
+platform = "apple"     # kernel/series/apple, kernel/configs/apple
+dtb = "t8010-d11"     # arch/arm64/boot/dts/apple/<dtb>.dtb
+
+[firmware]
+recipe = "firmware.json" # Relative to this device.toml; public recipe, not firmware bytes.
+
+[support]
+install = true
+status = "experimental"
+caveats = [
+  "Bluetooth needs its module vendor (Murata or USI) chosen per unit; not loaded yet.",
+]
+wifi = false # Wi-Fi DT node and pinned sven firmware exist, but D11 has no hardware test yet.
+usb_serial = false # No Orchard launcher/gadget validated on this board yet.
+usb_network = false
+
+# States: working, partial, untested, missing, none (features.toml).
+[features]
+display = "untested"
+touch = "untested"
+wifi = "untested"
+bluetooth = "missing"
+storage = "untested"
+battery = "untested"
+charging = "missing"
+backlight = "untested"
+buttons = "untested"
+audio = "missing"
+camera = "missing"
+cellular = "missing"
+suspend = "missing"
+gpu = "missing"

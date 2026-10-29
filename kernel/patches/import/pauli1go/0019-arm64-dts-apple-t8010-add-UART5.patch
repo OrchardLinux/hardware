@@ -1,0 +1,56 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Wed, 22 Jul 2026 12:44:56 +0200
+Subject: [PATCH 019/117] arm64: dts: apple: t8010: add UART5
+
+The T8010 description lacked UART5, which is the serial block used by
+the J172 battery gauge path.
+
+Add the disabled UART node with its interrupt, clock and power-domain
+resources, plus a stable serial5 alias. Board files remain responsible
+for pinctrl and enabling the controller.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: c8ff28d6f5e8ac1af29388ecce3a2b67b7797bab
+---
+ arch/arm64/boot/dts/apple/t8010-common.dtsi |  1 +
+ arch/arm64/boot/dts/apple/t8010.dtsi        | 13 +++++++++++++
+ 2 files changed, 14 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/t8010-common.dtsi b/arch/arm64/boot/dts/apple/t8010-common.dtsi
+index e583b1c57..2044d7822 100644
+--- a/arch/arm64/boot/dts/apple/t8010-common.dtsi
++++ b/arch/arm64/boot/dts/apple/t8010-common.dtsi
+@@ -14,6 +14,7 @@
+ 		ausbphy0 = &ausbphy0; /* Used by loader */
+ 		nvme-hmb = &nvme_hmb; /* Used by loader */
+ 		serial0 = &serial0;
++		serial5 = &serial5;
+ 	};
+ 
+ 	chosen {
+diff --git a/arch/arm64/boot/dts/apple/t8010.dtsi b/arch/arm64/boot/dts/apple/t8010.dtsi
+index cdf451f14..ed7cf43a4 100644
+--- a/arch/arm64/boot/dts/apple/t8010.dtsi
++++ b/arch/arm64/boot/dts/apple/t8010.dtsi
+@@ -165,6 +165,19 @@
+ 			status = "disabled";
+ 		};
+ 
++		serial5: serial@20a0d4000 {
++			compatible = "apple,s5l-uart";
++			reg = <0x2 0x0a0d4000 0x0 0x4000>;
++			reg-io-width = <4>;
++			interrupt-parent = <&aic>;
++			interrupts = <AIC_IRQ 223 IRQ_TYPE_LEVEL_HIGH>;
++			/* Use the bootloader-enabled clocks for now. */
++			clocks = <&clkref>, <&clkref>;
++			clock-names = "uart", "clk_uart_baud0";
++			power-domains = <&ps_uart5>;
++			status = "disabled";
++		};
++
+ 		i2c0: i2c@20a110000 {
+ 			compatible = "apple,t8010-i2c", "apple,i2c";
+ 			reg = <0x2 0x0a110000 0x0 0x1000>;

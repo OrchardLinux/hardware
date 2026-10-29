@@ -1,0 +1,94 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Tue, 14 Jul 2026 16:01:13 +0200
+Subject: [PATCH 011/117] dt-bindings: spi: add T8010 SPI support
+
+The SPI controller in T8010 predates the implementations used by newer
+Apple SoCs.  It has legacy status and descriptor formats, a minimum clock
+divider of two and can feed transmit data through SmartIO.
+
+Add the T8010 compatible and an optional legacy word-delay property.  Model
+exactly one DMA channel named "tx": this series implements only the SPI3
+transmit endpoint and neither the controller nor SIO supports receive DMA.
+
+Keep the existing compatibles and non-T8010 properties unchanged.  Add a
+T8010 SPI MAINTAINERS section for the binding; the controller path follows
+in the next commit.
+
+The schema passes dt-doc-validate, and the final J172 DT was validated
+against it before the complete series passed the DT620 hardware test.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: 079c27971b3ce6d24734da9e075bb9834296a763
+---
+ .../devicetree/bindings/spi/apple,spi.yaml      | 17 +++++++++++++++++
+ MAINTAINERS                                     |  7 +++++++
+ 2 files changed, 24 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/spi/apple,spi.yaml b/Documentation/devicetree/bindings/spi/apple,spi.yaml
+index 9356b9c33..ac39df7b4 100644
+--- a/Documentation/devicetree/bindings/spi/apple,spi.yaml
++++ b/Documentation/devicetree/bindings/spi/apple,spi.yaml
+@@ -11,6 +11,7 @@ allOf:
+ 
+ maintainers:
+   - Hector Martin <marcan@marcan.st>
++  - Paul Praschl <praschlpaul@g-p.at>
+ 
+ properties:
+   compatible:
+@@ -20,6 +21,7 @@ properties:
+           - const: apple,t8103-spi
+       - items:
+           - enum:
++              - apple,t8010-spi
+               - apple,t8103-spi
+               - apple,t8112-spi
+               - apple,t6000-spi
+@@ -37,12 +39,27 @@ properties:
+   power-domains:
+     maxItems: 1
+ 
++  dmas:
++    maxItems: 1
++
++  dma-names:
++    const: tx
++
++  apple,t8010-word-delay:
++    $ref: /schemas/types.yaml#/definitions/uint32
++    description:
++      Legacy T8010 inter-word delay register value.
++
+ required:
+   - compatible
+   - reg
+   - clocks
+   - interrupts
+ 
++dependentRequired:
++  dmas:
++    - dma-names
++
+ unevaluatedProperties: false
+ 
+ examples:
+diff --git a/MAINTAINERS b/MAINTAINERS
+index bd2d3896f..b0779c495 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -2716,6 +2716,13 @@ F:	include/linux/mfd/macsmc.h
+ F:	include/linux/soc/apple/*
+ F:	include/uapi/drm/asahi_drm.h
+ 
++APPLE T8010 SPI SUPPORT
++M:	Paul Praschl <praschlpaul@g-p.at>
++L:	asahi@lists.linux.dev
++L:	linux-spi@vger.kernel.org
++S:	Maintained
++F:	Documentation/devicetree/bindings/spi/apple,spi.yaml
++
+ APPLE T8010 TOUCH CLOCK SUPPORT
+ M:	Paul Praschl <praschlpaul@g-p.at>
+ L:	asahi@lists.linux.dev

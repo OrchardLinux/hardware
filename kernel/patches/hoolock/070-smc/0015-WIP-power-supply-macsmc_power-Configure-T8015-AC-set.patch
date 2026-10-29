@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Mon, 12 Jan 2026 23:11:17 +0800
+Subject: [PATCH 15/21] [WIP] power: supply: macsmc_power: Configure T8015 AC
+ settings
+
+Write to the keys controlling AC power input to allow T8015-based
+devices to charge on AC.
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ drivers/power/supply/macsmc-power.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/drivers/power/supply/macsmc-power.c b/drivers/power/supply/macsmc-power.c
+index 28c4f0c30..ada65541e 100644
+--- a/drivers/power/supply/macsmc-power.c
++++ b/drivers/power/supply/macsmc-power.c
+@@ -887,6 +887,17 @@ static int macsmc_power_probe(struct platform_device *pdev)
+ 			props[nprops++] = POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT;
+ 		}
+ 
++		/*
++		 * On T8015, AC requires manual configuration. There is a D2*
++		 * version of keys with the seemingly same effect.
++		 */
++		if (apple_smc_key_exists(power->smc, SMC_KEY(D1NO))) {
++			apple_smc_write_u32(power->smc, SMC_KEY(D1AR), 1000); /* Current in mA */
++			apple_smc_write_u32(power->smc, SMC_KEY(D1VR), 5000); /* Voltage in mV */
++			apple_smc_write_u32(power->smc, SMC_KEY(D1IR), 1000); /* Current in mA */
++			apple_smc_write_u8(power->smc, SMC_KEY(D1NO), 1); /* Apply settings */
++		}
++
+ 		if (nprops > MACSMC_MAX_AC_PROPS)
+ 			return -ENOMEM;
+ 

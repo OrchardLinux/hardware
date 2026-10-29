@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Mon, 29 Jun 2026 00:02:35 +0800
+Subject: [PATCH 3/5] dt-bindings: iommu: apple,dart: Add Apple A7-A10 DART
+ bindings
+
+Add bindings for the DARTs found in Apple A7/A8/A8X/A9/A9X/A10/A10X/T2
+SoCs, all of which are compatible with the DART found in Apple A7
+(S5L8960X).
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ Documentation/devicetree/bindings/iommu/apple,dart.yaml | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/iommu/apple,dart.yaml b/Documentation/devicetree/bindings/iommu/apple,dart.yaml
+index 6efbe732b..de2ce3dd4 100644
+--- a/Documentation/devicetree/bindings/iommu/apple,dart.yaml
++++ b/Documentation/devicetree/bindings/iommu/apple,dart.yaml
+@@ -24,6 +24,7 @@ properties:
+   compatible:
+     oneOf:
+       - enum:
++          - apple,s5l8960x-dart
+           - apple,t8103-dart
+           - apple,t8103-usb4-dart
+           - apple,t8110-dart
+@@ -31,6 +32,12 @@ properties:
+       - items:
+           - const: apple,t6020-dart
+           - const: apple,t8110-dart
++      - items:
++          - enum:
++              - apple,t7000-dart
++              - apple,s8000-dart
++              - apple,t8010-dart
++          - const: apple,s5l8960x-dart
+ 
+   reg:
+     maxItems: 1

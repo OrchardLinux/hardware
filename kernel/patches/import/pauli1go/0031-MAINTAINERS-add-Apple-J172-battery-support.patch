@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Wed, 22 Jul 2026 12:48:38 +0200
+Subject: [PATCH 031/117] MAINTAINERS: add Apple J172 battery support
+
+The J172 battery stack spans board-specific bindings and Apple
+power-supply drivers but lacked a dedicated maintenance entry.
+
+Add the J172 BQ27545 binding together with the Bellatrix and D2365 files
+under an Apple battery and USB power section with the Asahi and
+power-management lists. The generic W1 UART master and BQ27xxx HDQ
+family driver remain under their existing subsystem ownership.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: c1dd06229023993148c25064a121c47e69348708
+---
+ MAINTAINERS | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/MAINTAINERS b/MAINTAINERS
+index d1b553476..3df1806e9 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -2716,6 +2716,17 @@ F:	include/linux/mfd/macsmc.h
+ F:	include/linux/soc/apple/*
+ F:	include/uapi/drm/asahi_drm.h
+ 
++APPLE J172 BATTERY AND USB POWER SUPPORT
++M:	Paul Praschl <praschlpaul@g-p.at>
++L:	asahi@lists.linux.dev
++L:	linux-pm@vger.kernel.org
++S:	Maintained
++F:	Documentation/devicetree/bindings/power/supply/apple,bellatrix.yaml
++F:	Documentation/devicetree/bindings/power/supply/apple,d2365-charger.yaml
++F:	Documentation/devicetree/bindings/power/supply/ti,bq27545-hdq.yaml
++F:	drivers/power/supply/apple_bellatrix_power.c
++F:	drivers/power/supply/apple_d2365_charger.c
++
+ APPLE J172 TOUCHSCREEN SUPPORT
+ M:	Paul Praschl <praschlpaul@g-p.at>
+ L:	asahi@lists.linux.dev

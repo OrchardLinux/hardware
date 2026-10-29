@@ -1,0 +1,40 @@
+# Every repository whose kernel work Orchard carries. Authorship lives in each
+# patch; this file records where it came from and what state the import is in.
+# status: found | imported | reviewed | integrated | upstreamed
+
+[base]
+url = "https://github.com/torvalds/linux.git"
+commit = "cee9395acd8043be0644b25c34bfa86623f2b935" # v7.3-rc1
+
+[[source]]
+name = "hoolock"
+url = "https://github.com/HoolockLinux/linux.git"
+branch = "hoolock"
+commit = "6831bc701a6ce059e71e5aaa9488c9195bea6927"
+contributors = ["Nick Chan"]
+devices = ["Apple A7-A11 platform support"]
+license = "GPL-2.0"
+patches = "patches/hoolock"
+status = "integrated"
+notes = "Staging tree for upstream. Exported verbatim by tools/linearize-merges.py; tree hash-verified against the commit above."
+
+[[source]]
+name = "pauli1go"
+url = "https://github.com/Pauli1Go/HoolockLinux.git"
+branch = "hoolock"
+commit = "7b3e4e8b0156e190d9175c6fcf396ae384419f14"
+contributors = ["Paul Praschl"]
+devices = ["j172 (iPad 7)", "d10/d11 (iPhone 7)", "d111 (iPhone 7 Plus)"]
+license = "GPL-2.0"
+patches = "patches/import/pauli1go"
+status = "imported"
+notes = "117 kernel commits replayed onto hoolock (README/photo commits skipped). 4 ported by hand to v7.3-rc1, each marked [Orchard: ...]. Split into shared/ and device series pending (MIGRATION.md step 3)."
+
+[[source]]
+name = "brkosebay-j71t"
+url = "https://github.com/OrchardLinux/hardware/pull/6"
+contributors = ["Berkay Kösebay"]
+devices = ["j71t (iPad 5)"]
+license = "GPL-2.0"
+status = "found"
+notes = "Unverified. Review hunk by hunk before adopting anything. Its CBTL1610 driver is reference only."

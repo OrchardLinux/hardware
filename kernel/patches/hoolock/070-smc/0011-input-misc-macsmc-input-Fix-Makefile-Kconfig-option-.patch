@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Mon, 22 Dec 2025 21:30:53 +0800
+Subject: [PATCH 11/21] input: misc: macsmc-input: Fix Makefile Kconfig option
+ and compilation
+
+The config option in the Makefile was wrong so this driver was never
+compiled. The driver itself also has a missing include so add it to fix
+compilation.
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ drivers/input/misc/Makefile       | 2 +-
+ drivers/input/misc/macsmc-input.c | 1 +
+ 2 files changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/input/misc/Makefile b/drivers/input/misc/Makefile
+index fc0563b96..5593e5f10 100644
+--- a/drivers/input/misc/Makefile
++++ b/drivers/input/misc/Makefile
+@@ -54,7 +54,7 @@ obj-$(CONFIG_INPUT_ISA1200_HAPTIC)	+= isa1200.o
+ obj-$(CONFIG_INPUT_KEYSPAN_REMOTE)	+= keyspan_remote.o
+ obj-$(CONFIG_INPUT_KXTJ9)		+= kxtj9.o
+ obj-$(CONFIG_INPUT_M68K_BEEP)		+= m68kspkr.o
+-obj-$(CONFIG_INPUT_MACSMC_INPUT)	+= macsmc-input.o
++obj-$(CONFIG_INPUT_MACSMC)		+= macsmc-input.o
+ obj-$(CONFIG_INPUT_MAX7360_ROTARY)	+= max7360-rotary.o
+ obj-$(CONFIG_INPUT_MAX77650_ONKEY)	+= max77650-onkey.o
+ obj-$(CONFIG_INPUT_MAX77693_HAPTIC)	+= max77693-haptic.o
+diff --git a/drivers/input/misc/macsmc-input.c b/drivers/input/misc/macsmc-input.c
+index eba5cf0c9..a2de77d95 100644
+--- a/drivers/input/misc/macsmc-input.c
++++ b/drivers/input/misc/macsmc-input.c
+@@ -9,6 +9,7 @@
+ 
+ #include <linux/device.h>
+ #include <linux/input.h>
++#include <linux/mfd/core.h>
+ #include <linux/mfd/macsmc.h>
+ #include <linux/module.h>
+ #include <linux/reboot.h>

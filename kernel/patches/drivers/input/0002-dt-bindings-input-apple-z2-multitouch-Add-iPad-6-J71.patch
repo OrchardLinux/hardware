@@ -1,0 +1,85 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Orchard migration <noreply@orchardlinux>
+Date: Wed, 28 Oct 2026 11:04:05 +0800
+Subject: [PATCH] dt-bindings: input: apple,z2-multitouch: Add iPad 6 (J71b)
+
+The iPad 6 touchscreen uses the iPad 7 HBPP boot with generation-1
+runtime firmware. It has no display-sync pins.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../touchscreen/apple,z2-multitouch.yaml      | 47 +++++++++++++++++++
+ 1 file changed, 47 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml b/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml
+index 77e311df3..78c212785 100644
+--- a/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml
++++ b/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml
+@@ -17,6 +17,7 @@ properties:
+     enum:
+       - apple,j293-touchbar
+       - apple,j493-touchbar
++      - apple,j71b-touchscreen
+       - apple,j172-touchscreen
+       - apple,d11-touchscreen
+       - apple,d111-touchscreen
+@@ -91,6 +92,36 @@ properties:
+     description:
+       Dynamic shape acceleration calibration blob supplied by the bootloader
+ 
++  apple,z2-display-offset-cal-blob:
++    $ref: /schemas/types.yaml#/definitions/uint8-array
++    maxItems: 4096
++    description:
++      Touch-to-display offset calibration blob supplied by the bootloader
++
++  apple,z2-firefly-cal-blob:
++    $ref: /schemas/types.yaml#/definitions/uint8-array
++    maxItems: 262144
++    description:
++      Firefly calibration blob supplied by the bootloader
++
++  apple,z2-pressure-cal-blob:
++    $ref: /schemas/types.yaml#/definitions/uint8-array
++    maxItems: 262144
++    description:
++      Pressure effect correction blob supplied by the bootloader
++
++  apple,z2-firefly-p100-cal-blob:
++    $ref: /schemas/types.yaml#/definitions/uint8-array
++    maxItems: 262144
++    description:
++      Firefly P100 calibration blob supplied by the bootloader
++
++  apple,z2-ext-cal-blob:
++    $ref: /schemas/types.yaml#/definitions/uint8-array
++    maxItems: 262144
++    description:
++      Extended multi-touch calibration blob supplied by the bootloader
++
+ required:
+   - compatible
+   - interrupts
+@@ -122,6 +153,22 @@ allOf:
+         - spi-cpol
+         - apple,z2-bpw16-min-len
+         - apple,z2-no-init-ack
++  - if:
++      properties:
++        compatible:
++          const: apple,j71b-touchscreen
++    then:
++      properties:
++        display-sync-gpios: false
++        display-sync1-gpios: false
++      required:
++        - clocks
++        - power-ana-gpios
++        - power-ldo-gpios
++        - spi-cpha
++        - spi-cpol
++        - apple,z2-bpw16-min-len
++        - apple,z2-no-init-ack
+   - if:
+       properties:
+         compatible:

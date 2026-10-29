@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Mon, 16 Jun 2025 09:32:08 +0800
+Subject: [PATCH 19/21] arm64: dts: apple: t8011: Add CPU PMU nodes
+
+Add CPU PMU nodse for Apple A10X SoC.
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ arch/arm64/boot/dts/apple/t8011.dtsi | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/t8011.dtsi b/arch/arm64/boot/dts/apple/t8011.dtsi
+index 039aa4d1e..7f7b0230c 100644
+--- a/arch/arm64/boot/dts/apple/t8011.dtsi
++++ b/arch/arm64/boot/dts/apple/t8011.dtsi
+@@ -329,6 +329,15 @@
+ 		interrupts = <AIC_FIQ AIC_TMR_GUEST_PHYS IRQ_TYPE_LEVEL_HIGH>,
+ 			     <AIC_FIQ AIC_TMR_GUEST_VIRT IRQ_TYPE_LEVEL_HIGH>;
+ 	};
++
++	pmu {
++		compatible = "apple,fusion-pmu";
++		interrupt-parent = <&aic>;
++		interrupts = <AIC_IRQ 83 IRQ_TYPE_LEVEL_HIGH>,
++			     <AIC_IRQ 86 IRQ_TYPE_LEVEL_HIGH>,
++			     <AIC_IRQ 89 IRQ_TYPE_LEVEL_HIGH>;
++		interrupt-affinity = <&cpu0 &cpu1 &cpu2>;
++	};
+ };
+ 
+ #include "t8011-pmgr.dtsi"

@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Thu, 16 Jul 2026 01:10:36 +0800
+Subject: [PATCH 19/20] rtc: apple-pmic: Add Calpe PMIC support
+
+Add support for RTC in Calpe PMICs found on Apple T2 BMCs.
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ drivers/rtc/rtc-apple-pmic.c | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/rtc/rtc-apple-pmic.c b/drivers/rtc/rtc-apple-pmic.c
+index ac1e086f7..ee56618c8 100644
+--- a/drivers/rtc/rtc-apple-pmic.c
++++ b/drivers/rtc/rtc-apple-pmic.c
+@@ -189,18 +189,21 @@ static const struct rtc_class_ops apple_pmic_rtc_ops = {
+ };
+ 
+ static const struct apple_pmic_rtc_regs amber_regs = {
+-	.control = 0x4,
+ 	.counter = 0x6
+ };
+ 
+ static const struct apple_pmic_rtc_regs antigua_regs = {
+-	.control = 0x0,
+ 	.counter = 0x2
+ };
+ 
++static const struct apple_pmic_rtc_regs calpe_regs = {
++	.counter = 0x5
++};
++
+ static const struct of_device_id apple_pmic_id_table[] = {
+ 	{ .compatible = "apple,amber-pmic-rtc", .data = &amber_regs },
+ 	{ .compatible = "apple,antigua-pmic-rtc", .data = &antigua_regs },
++	{ .compatible = "apple,calpe-pmic-rtc", .data = &calpe_regs },
+ 	{ },
+ };
+ MODULE_DEVICE_TABLE(of, apple_pmic_id_table);

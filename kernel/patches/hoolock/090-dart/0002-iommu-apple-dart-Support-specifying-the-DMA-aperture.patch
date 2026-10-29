@@ -1,0 +1,208 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Janne Grunau <j@jannau.net>
+Date: Wed, 2 Sep 2026 21:18:55 +0200
+Subject: [PATCH 2/5] iommu: apple-dart: Support specifying the DMA aperture in
+ the DT
+
+Apple DARTs are often connected directly to devices that expect only a
+portion of their address space to be used for DMA (for example, because
+other ranges are mapped directly to something else). Devices can specify
+the start and end of the aperture via "iommus" args if the DART device
+node specifies "#iommu-cells = <5>. Aperture start and length are 64-bit
+values as apertures above and larger than 4GB are used.
+Limit compile testing to 64-bit architectures to avoid warnings in the
+calculation of 64-bit dma_addr_t values.
+
+This range *can* be outside of the DART's IAS. In that case, it is
+assumed that the hardware truncates addresses and the page tables will
+only map the lower bits of the address. However, the specified range
+cannot straddle an IAS boundary (you cannot cover more than IAS worth
+of address space nor wrap).
+
+This corresponds to the vm-base and vm-size properties on the Apple
+device tree side of things.
+
+Co-developed-by: Hector Martin <marcan@marcan.st>
+Signed-off-by: Hector Martin <marcan@marcan.st>
+Reviewed-by: Sven Peter <sven@kernel.org>
+Signed-off-by: Janne Grunau <j@jannau.net>
+---
+ drivers/iommu/Kconfig      |  2 +-
+ drivers/iommu/apple-dart.c | 74 +++++++++++++++++++++++++++++++++-----
+ 2 files changed, 66 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/iommu/Kconfig b/drivers/iommu/Kconfig
+index 6e07bd694..27954f462 100644
+--- a/drivers/iommu/Kconfig
++++ b/drivers/iommu/Kconfig
+@@ -303,7 +303,7 @@ config SPAPR_TCE_IOMMU
+ 
+ config APPLE_DART
+ 	tristate "Apple DART IOMMU Support"
+-	depends on ARCH_APPLE || COMPILE_TEST
++	depends on ARCH_APPLE || (COMPILE_TEST && 64BIT)
+ 	depends on !GENERIC_ATOMIC64	# for IOMMU_IO_PGTABLE_DART
+ 	select IOMMU_API
+ 	select IOMMU_IO_PGTABLE_DART
+diff --git a/drivers/iommu/apple-dart.c b/drivers/iommu/apple-dart.c
+index b160fb464..ebf4547d3 100644
+--- a/drivers/iommu/apple-dart.c
++++ b/drivers/iommu/apple-dart.c
+@@ -21,6 +21,7 @@
+ #include <linux/io-pgtable.h>
+ #include <linux/iommu.h>
+ #include <linux/iopoll.h>
++#include <linux/minmax.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
+ #include <linux/of_address.h>
+@@ -267,6 +268,7 @@ struct apple_dart_domain {
+ 	struct io_pgtable_ops *pgtbl_ops;
+ 
+ 	bool finalized;
++	u64 mask;
+ 	struct mutex init_lock;
+ 	struct apple_dart_atomic_stream_map stream_maps[MAX_DARTS_PER_DEVICE];
+ 
+@@ -285,6 +287,13 @@ struct apple_dart_master_cfg {
+ 	/* Intersection of DART capabilitles */
+ 	u32 supports_bypass : 1;
+ 
++	/*
++	 * DMA aperture start and end to be overridden by "iommus"' phandle
++	 * args. By default determined by DART's ias but may be outside of it.
++	 */
++	dma_addr_t dma_min;
++	dma_addr_t dma_max;
++
+ 	struct apple_dart_stream_map stream_maps[MAX_DARTS_PER_DEVICE];
+ };
+ 
+@@ -537,7 +546,7 @@ static phys_addr_t apple_dart_iova_to_phys(struct iommu_domain *domain,
+ 	if (!ops)
+ 		return 0;
+ 
+-	return ops->iova_to_phys(ops, iova);
++	return ops->iova_to_phys(ops, iova & dart_domain->mask);
+ }
+ 
+ static int apple_dart_map_pages(struct iommu_domain *domain, unsigned long iova,
+@@ -551,8 +560,8 @@ static int apple_dart_map_pages(struct iommu_domain *domain, unsigned long iova,
+ 	if (!ops)
+ 		return -ENODEV;
+ 
+-	return ops->map_pages(ops, iova, paddr, pgsize, pgcount, prot, gfp,
+-			      mapped);
++	return ops->map_pages(ops, iova & dart_domain->mask, paddr, pgsize,
++			      pgcount, prot, gfp, mapped);
+ }
+ 
+ static size_t apple_dart_unmap_pages(struct iommu_domain *domain,
+@@ -563,7 +572,8 @@ static size_t apple_dart_unmap_pages(struct iommu_domain *domain,
+ 	struct apple_dart_domain *dart_domain = to_dart_domain(domain);
+ 	struct io_pgtable_ops *ops = dart_domain->pgtbl_ops;
+ 
+-	return ops->unmap_pages(ops, iova, pgsize, pgcount, gather);
++	return ops->unmap_pages(ops, iova & dart_domain->mask, pgsize, pgcount,
++				gather);
+ }
+ 
+ static void
+@@ -590,6 +600,7 @@ static int apple_dart_finalize_domain(struct apple_dart_domain *dart_domain,
+ {
+ 	struct apple_dart *dart = cfg->stream_maps[0].dart;
+ 	struct io_pgtable_cfg pgtbl_cfg;
++	u32 ias = min_t(u32, dart->ias, fls64(cfg->dma_max));
+ 	int ret = 0;
+ 	int i, j;
+ 
+@@ -610,7 +621,7 @@ static int apple_dart_finalize_domain(struct apple_dart_domain *dart_domain,
+ 
+ 	pgtbl_cfg = (struct io_pgtable_cfg){
+ 		.pgsize_bitmap = dart->pgsize,
+-		.ias = dart->ias,
++		.ias = ias,
+ 		.oas = dart->oas,
+ 		.coherent_walk = 1,
+ 		.iommu_dev = dart->dev,
+@@ -623,10 +634,10 @@ static int apple_dart_finalize_domain(struct apple_dart_domain *dart_domain,
+ 		goto done;
+ 	}
+ 
++	dart_domain->mask = DMA_BIT_MASK(pgtbl_cfg.ias);
+ 	dart_domain->domain.pgsize_bitmap = pgtbl_cfg.pgsize_bitmap;
+-	dart_domain->domain.geometry.aperture_start = 0;
+-	dart_domain->domain.geometry.aperture_end =
+-		(dma_addr_t)DMA_BIT_MASK(pgtbl_cfg.ias);
++	dart_domain->domain.geometry.aperture_start = cfg->dma_min;
++	dart_domain->domain.geometry.aperture_end = cfg->dma_max;
+ 	dart_domain->domain.geometry.force_aperture = true;
+ 
+ 	dart_domain->finalized = true;
+@@ -803,20 +814,65 @@ static int apple_dart_of_xlate(struct device *dev,
+ 	struct platform_device *iommu_pdev = of_find_device_by_node(args->np);
+ 	struct apple_dart *dart = platform_get_drvdata(iommu_pdev);
+ 	struct apple_dart *cfg_dart;
++	dma_addr_t dma_max = DMA_BIT_MASK(dart->ias);
++	dma_addr_t dma_min = 0;
+ 	int i, sid;
+ 
+ 	put_device(&iommu_pdev->dev);
+ 
+-	if (args->args_count != 1)
++	if (args->args_count != 1 && args->args_count != 5)
+ 		return -EINVAL;
++
+ 	sid = args->args[0];
+ 
++	if (args->args_count == 5) {
++		dma_addr_t length = ((dma_addr_t)args->args[3] << 32) | args->args[4];
++
++		if (!length)
++			return -EINVAL;
++
++		dma_min = ((dma_addr_t)args->args[1] << 32) | args->args[2];
++
++		if (!IS_ALIGNED(dma_min, dart->pgsize) ||
++		    !IS_ALIGNED(length, dart->pgsize)) {
++			dev_err(dev, "Unaligned DMA window %pad, %pad (0x%x)\n",
++				&dma_min, &length, dart->pgsize);
++			return -EINVAL;
++		}
++		if (check_add_overflow(dma_min, length - 1, &dma_max)) {
++			dev_err(dev, "DMA window length (%pad) overflows range for start %pad\n",
++				&length, &dma_min);
++			return -EINVAL;
++		}
++
++		/*
++		 * Ensure that the DMA window does not exceed the DART's ias.
++		 */
++		if ((dma_min ^ dma_max) & ~DMA_BIT_MASK(dart->ias)) {
++			dev_err(dev, "Invalid DMA window for ias=%d\n",
++				dart->ias);
++			return -EINVAL;
++		}
++	}
++
+ 	if (!cfg) {
+ 		cfg = kzalloc_obj(*cfg);
+ 		if (!cfg)
+ 			return -ENOMEM;
+ 		/* Will be ANDed with DART capabilities */
+ 		cfg->supports_bypass = true;
++		/* Will be merged with other DARTs to the common range. */
++		cfg->dma_min = dma_min;
++		cfg->dma_max = dma_max;
++	} else {
++		if (dma_min >= cfg->dma_max || cfg->dma_min >= dma_max) {
++			dev_err(dev, "non-overlapping DMA windows: %pad..%pad, %pad..%pad\n",
++				&dma_min, &dma_max,
++				&cfg->dma_min, &cfg->dma_max);
++			return -EINVAL;
++		}
++		cfg->dma_min = max(dma_min, cfg->dma_min);
++		cfg->dma_max = min(dma_max, cfg->dma_max);
+ 	}
+ 	dev_iommu_priv_set(dev, cfg);
+ 

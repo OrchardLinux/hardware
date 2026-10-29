@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Mon, 3 Aug 2026 12:45:30 +0200
+Subject: [PATCH 098/117] arm64: dts: apple: d111: Add ambient light sensor
+
+Describe the CT821 ambient-light sensor on D111 and route its active-low
+interrupt through the application-processor pin controller.
+
+The LSCI NVMEM provider and consumer link are published at boot by m1n1
+because the factory SysCfg record is not statically representable in this
+board DTS.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: e7a73be34e87d01ca8567f9e01d400be74280e65
+---
+ arch/arm64/boot/dts/apple/t8010-d111.dts | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/t8010-d111.dts b/arch/arm64/boot/dts/apple/t8010-d111.dts
+index 48a60acf2..aed2cbf3e 100644
+--- a/arch/arm64/boot/dts/apple/t8010-d111.dts
++++ b/arch/arm64/boot/dts/apple/t8010-d111.dts
+@@ -100,6 +100,16 @@
+ 	};
+ };
+ 
++&i2c2 {
++	status = "okay";
++
++	light-sensor@29 {
++		compatible = "apple,ct821", "amstaos,tsl2581";
++		reg = <0x29>;
++		interrupts-extended = <&pinctrl_ap 141 IRQ_TYPE_LEVEL_LOW>;
++	};
++};
++
+ &pinctrl_ap {
+ 	battery_swi_pins: battery-swi-pins {
+ 		pinmux = <APPLE_PINMUX(173, 1)>;

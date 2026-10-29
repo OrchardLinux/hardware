@@ -1,0 +1,31 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Thu, 16 Jul 2026 01:12:49 +0800
+Subject: [PATCH 20/20] arm64: dts: apple: t8012: Fix Calpe PMIC RTC
+ compatibles
+
+Use the newly supported apple,calpe-pmic-rtc compatible instead of another
+one with an offset in the middle of the RTC.
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ arch/arm64/boot/dts/apple/t8012.dtsi | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/apple/t8012.dtsi b/arch/arm64/boot/dts/apple/t8012.dtsi
+index 4d0083833..cbe9e61fd 100644
+--- a/arch/arm64/boot/dts/apple/t8012.dtsi
++++ b/arch/arm64/boot/dts/apple/t8012.dtsi
+@@ -329,9 +329,9 @@
+ 				#address-cells = <1>;
+ 				#size-cells = <1>;
+ 
+-				rtc@2603 {
+-					compatible = "apple,calpe-pmic-rtc", "apple,antigua-pmic-rtc";
+-					reg = <0x2603 0x10>;
++				rtc@2600 {
++					compatible = "apple,calpe-pmic-rtc";
++					reg = <0x2600 0x10>;
+ 					nvmem-cells = <&rtc_offset>;
+ 					nvmem-cell-names = "rtc_offset";
+ 				};

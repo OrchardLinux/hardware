@@ -14,28 +14,28 @@ while (($#)); do
   esac
 done
 if [[ ! "$device" =~ ^[a-z0-9][a-z0-9_-]*$ || -z "$dest" || -e "$dest" ]]; then
-  echo 'Usage: ./kernel/build DEVICE --output DIRECTORY [--resume]' >&2
+  echo 'Usage: ./kernel/build DEVICE|PLATFORM --output DIRECTORY [--resume]' >&2
   exit 2
 fi
-config="$here/configs/$device/config"
+# One kernel per platform; a device only selects which DTB is also copied
+# to DIRECTORY/DEVICE.dtb. All platform DTBs land in DIRECTORY/dtbs/.
+read -r platform device_dtb < <(python3 "$here/series.py" --resolve "$device")
+config="$here/configs/$platform/config"
 patches=()
-for patch in "$here/patches/$device/"*.patch; do
-  [[ -f "$patch" ]] && patches+=("$patch")
-done
-dtb_builder="$here/devicetree/$device/build"
-[[ -f "$config" && -x "$dtb_builder" ]] || {
-  echo "Missing kernel config or device-tree builder for $device" >&2; exit 1;
-}
+while IFS= read -r patch; do
+  patches+=("$patch")
+done < <(python3 "$here/series.py" "$device")
+[[ -f "$config" ]] || { echo "Missing kernel config for platform $platform" >&2; exit 1; }
 command -v git >/dev/null || { echo 'Git is required' >&2; exit 1; }
 if [[ ${ORCHARD_BUILD_NATIVE:-0} != 1 ]]; then
   podman info >/dev/null || { echo 'Podman is unavailable' >&2; exit 1; }
 fi
 url=$(awk -F= '$1=="url" {print substr($0,5)}' "$here/upstream.lock")
 commit=$(awk -F= '$1=="commit" {print $2}' "$here/upstream.lock")
-[[ "$url" == https://github.com/OrchardLinux/linux.git && "$commit" =~ ^[0-9a-f]{40}$ ]] || {
+[[ "$url" == https://github.com/torvalds/linux.git && "$commit" =~ ^[0-9a-f]{40}$ ]] || {
   echo 'Unexpected kernel/upstream.lock' >&2; exit 1;
 }
-work="$here/.work/$device"
+work="$here/.work/$platform"
 source="$work/source"
 build_output="$work/output"
 if "$resume"; then
@@ -59,7 +59,7 @@ if "$resume"; then
   applied="$work/applied-patches"
   if [[ -f "$applied" ]]; then
     cmp "$applied" <(for patch in "${patches[@]}"; do
-      printf '%s %s\n' "$(git hash-object "$patch")" "${patch##*/}"
+      printf '%s %s\n' "$(git hash-object "$patch")" "${patch#"$here"/}"
     done) || { echo 'Kernel patch set changed; use a fresh build directory' >&2; exit 1; }
   else
     for patch in "${patches[@]}"; do
@@ -68,7 +68,7 @@ if "$resume"; then
       git -C "$source" apply "$patch"
     done
     for patch in "${patches[@]}"; do
-      printf '%s %s\n' "$(git hash-object "$patch")" "${patch##*/}"
+      printf '%s %s\n' "$(git hash-object "$patch")" "${patch#"$here"/}"
     done > "$applied"
   fi
 else
@@ -86,7 +86,7 @@ else
     git -C "$source" apply "$patch"
   done
   for patch in "${patches[@]}"; do
-    printf '%s %s\n' "$(git hash-object "$patch")" "${patch##*/}"
+    printf '%s %s\n' "$(git hash-object "$patch")" "${patch#"$here"/}"
   done > "$work/applied-patches"
 fi
 cp "$config" "$build_output/.config"
@@ -98,31 +98,33 @@ echo 'Compiling kernel image, modules and device trees...'
 python3 -m orchard_hardware.buildenv run \
   --bind "$source:/src:ro" --bind "$build_output:/out:rw" --bind "$here/configs:/config:ro" \
   --image localhost/orchard-hardware-kernel-toolchain:bookworm -- bash -euc '
-    device=$1
+    platform=$1
     export KBUILD_BUILD_USER=orchard KBUILD_BUILD_HOST=builder
     export KBUILD_BUILD_VERSION=1 KBUILD_BUILD_TIMESTAMP="2026-10-22T00:00:00Z"
     make -C "$ORCHARD_SRC" O="$ORCHARD_OUT" LLVM=-19 ARCH=arm64 olddefconfig
-    cmp "$ORCHARD_OUT/.config" "$ORCHARD_CONFIG/$device/config"
-    make -C "$ORCHARD_SRC" O="$ORCHARD_OUT" -j2 LLVM=-19 ARCH=arm64 \
-      LOCALVERSION="-orchard-$device" DTC_FLAGS=-@ Image.gz modules dtbs
-  ' bash "$device"
-echo 'Staging kernel modules and final device tree...'
+    cmp "$ORCHARD_OUT/.config" "$ORCHARD_CONFIG/$platform/config"
+    make -C "$ORCHARD_SRC" O="$ORCHARD_OUT" -j"$2" LLVM=-19 ARCH=arm64 \
+      LOCALVERSION="-orchard-$platform" DTC_FLAGS=-@ Image.gz modules dtbs
+  ' bash "$platform" "${ORCHARD_KERNEL_JOBS:-2}"
+echo 'Staging kernel modules and device trees...'
 stage=$(mktemp -d "$work/stage.XXXXXX")
 trap 'rm -rf "$stage"' EXIT
 external=()
-if [[ -d "$here/modules/$device" ]]; then
+if [[ -d "$here/modules/$platform" ]]; then
   "$here/build-modules" --source "$source" --build "$build_output" \
-    --modules "$here/modules/$device" --localversion "-orchard-$device" \
+    --modules "$here/modules/$platform" --localversion "-orchard-$platform" \
     --output "$stage/external"
   external=(--external "$stage/external")
 fi
 python3 "$here/stage-modules.py" --build "$build_output" \
-  "${external[@]}" --output "$stage/module-root"
-"$dtb_builder" --kernel-build "$build_output" --headers "$source/include" \
-  --output "$stage/$device.dtb"
-mkdir -p "$dest"
+  ${external[@]+"${external[@]}"} --output "$stage/module-root"
+mkdir -p "$dest/dtbs"
+cp "$build_output/arch/arm64/boot/dts/apple/"*.dtb "$dest/dtbs/"
+if [[ "$device_dtb" != - ]]; then
+  [[ -f "$dest/dtbs/$device_dtb.dtb" ]] || { echo "Missing DTB $device_dtb for $device" >&2; exit 1; }
+  cp "$dest/dtbs/$device_dtb.dtb" "$dest/$device.dtb"
+fi
 cp "$build_output/arch/arm64/boot/Image.gz" "$dest/Image.gz"
-cp "$stage/$device.dtb" "$dest/$device.dtb"
 cp -R "$stage/module-root/lib" "$dest/lib"
 cp "$build_output/include/config/kernel.release" "$dest/kernel.release"
 echo "Kernel output: $dest"

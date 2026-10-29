@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Orchard migration <noreply@orchardlinux>
+Date: Wed, 28 Oct 2026 11:31:17 +0800
+Subject: [PATCH] wifi: brcmfmac: msgbuf: Map RX buffers for device reads too
+
+RX buffers posted to a PCIe dongle are mapped DMA_FROM_DEVICE, so an IOMMU
+that enforces access permissions gives the device write-only access. The
+BCM4355C1 firmware in the iPad 6 also reads posted RX buffers during
+association. Behind Apple's DART each read is a READ FAULT, at every
+EAPOL retry, and the firmware then stops answering control messages.
+Association never completes, and scans and ioctls time out.
+
+Map RX buffers DMA_BIDIRECTIONAL; map and unmap both take the direction
+from the pktid pool. Without an IOMMU only the cache maintenance on
+non-coherent systems changes: buffers are cleaned as well as invalidated.
+Tested on the iPad 6: association, DHCP and SSH work, with no DART faults.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/net/wireless/broadcom/brcm80211/brcmfmac/msgbuf.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/msgbuf.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/msgbuf.c
+index 069ba7016..ecf964a3e 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/msgbuf.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/msgbuf.c
+@@ -1638,8 +1638,9 @@ int brcmf_proto_msgbuf_attach(struct brcmf_pub *drvr)
+ 						     DMA_TO_DEVICE);
+ 	if (!msgbuf->tx_pktids)
+ 		goto fail;
++	/* Some firmware reads posted RX buffers, e.g. BCM4355C1 during association. */
+ 	msgbuf->rx_pktids = brcmf_msgbuf_init_pktids(NR_RX_PKTIDS,
+-						     DMA_FROM_DEVICE);
++						     DMA_BIDIRECTIONAL);
+ 	if (!msgbuf->rx_pktids)
+ 		goto fail;
+ 

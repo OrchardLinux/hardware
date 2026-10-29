@@ -17,17 +17,21 @@ def receipt(path):
     return {'bytes': path.stat().st_size, 'sha256': digest.hexdigest()}
 
 
-def package(directory, output):
+def package(directory, output, device='j71b', platform=None):
+    """A platform bundle carries every DTB in kernel/dtbs; a device bundle only its own."""
     if output.exists():
         raise FileExistsError(output)
     here = Path(__file__).resolve().parents[1]
-    for name in ('kernel/Image.gz', 'kernel/j71b.dtb', 'kernel/kernel.release',
+    dtb = 'kernel/dtbs' if platform else f'kernel/{device}.dtb'
+    if platform and not any((directory / dtb).glob('*.dtb')):
+        raise ValueError('Platform device trees are missing')
+    for name in ('kernel/Image.gz', *(() if platform else (dtb,)), 'kernel/kernel.release',
                  'boot/busybox', 'boot/dropbear', 'boot/dropbearkey',
                  'quiet/m1n1.bin', 'quiet/pongo.bin'):
         receipt(directory / name)
     if not any((directory / 'kernel/lib/modules').rglob('*.ko')):
         raise ValueError('Kernel modules are missing')
-    quiet = {'schema': 1, 'profile': 'j71b', 'presentation': 'black',
+    quiet = {'schema': 1, 'profile': platform or device, 'presentation': 'black',
              'files': {role: receipt(directory / 'quiet' / name)
                        for role, name in (('loader', 'm1n1.bin'), ('pongo', 'pongo.bin'))},
              'patches': {name: receipt(here / 'boot/quiet' / name)['sha256']
@@ -49,5 +53,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--directory', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    target = parser.add_mutually_exclusive_group()
+    target.add_argument('--device', default='j71b')
+    target.add_argument('--platform')
     args = parser.parse_args()
-    package(args.directory, args.output)
+    package(args.directory, args.output, args.device, args.platform)

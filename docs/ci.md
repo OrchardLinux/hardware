@@ -60,4 +60,4 @@ The producer validates component inventories, quiet-patch receipts, root streams
 
 By default the workflow only uploads `shared-launcher-assets`. Explicitly enable `attach_assets` to attach new assets to the selected hardware release. This never overwrites existing assets, changes the latest-release selection, or publishes a draft. The wheel/component checksums stay immutable; launcher assets have a separate `launcher.SHA256SUMS`.
 
-Keep the completed hardware release selected as latest so the device descriptor's `latest/download/j71b-launcher.boot.toml` URL works. A future wheel-only release must not displace it until its own matching launcher is complete.
+Keep the completed hardware release selected as latest so the device descriptor's `latest/download/j71b-apple-launcher.boot.toml` URL works, and older CLIs still find the legacy `j71b-launcher.boot.toml`, which every release republishes unchanged. A future wheel-only release must not displace it until its own matching launcher is complete.

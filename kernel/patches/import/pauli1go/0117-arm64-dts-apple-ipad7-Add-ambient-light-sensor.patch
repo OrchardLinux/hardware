@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Wed, 19 Aug 2026 14:48:00 +0200
+Subject: [PATCH 117/117] arm64: dts: apple: ipad7: Add ambient light sensor
+
+Describe the CT819 ambient-light sensor the iPad 7 carries on I2C2 and
+route its active-low interrupt through the application-processor pin
+controller.
+
+The LSCI NVMEM provider and consumer link are published at boot by m1n1
+because the factory SysCfg record is not statically representable in this
+board DTS.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: ae101dd0dee830c9133289d76635b48c3d01eb50
+---
+ arch/arm64/boot/dts/apple/t8010-ipad7.dtsi | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/t8010-ipad7.dtsi b/arch/arm64/boot/dts/apple/t8010-ipad7.dtsi
+index 2a3db7002..062884b24 100644
+--- a/arch/arm64/boot/dts/apple/t8010-ipad7.dtsi
++++ b/arch/arm64/boot/dts/apple/t8010-ipad7.dtsi
+@@ -181,6 +181,16 @@
+ 	};
+ };
+ 
++&i2c2 {
++	status = "okay";
++
++	light-sensor@39 {
++		compatible = "apple,ct819", "amstaos,tsl2581";
++		reg = <0x39>;
++		interrupts-extended = <&pinctrl_ap 27 IRQ_TYPE_LEVEL_LOW>;
++	};
++};
++
+ &d2365_pmic {
+ 	d2365_charger: charger@180 {
+ 		compatible = "apple,j172-d2365-charger", "apple,d2365-charger";

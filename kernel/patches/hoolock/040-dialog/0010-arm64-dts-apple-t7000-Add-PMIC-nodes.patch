@@ -1,0 +1,179 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Sun, 16 Feb 2025 22:44:09 +0800
+Subject: [PATCH 10/20] arm64: dts: apple: t7000: Add PMIC nodes
+
+Add PMIC and subdevice nodes for Apple A8 SoC.
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ arch/arm64/boot/dts/apple/t7000-6.dtsi     | 33 ++++++++++++++++++++++
+ arch/arm64/boot/dts/apple/t7000-j42d.dts   | 33 ++++++++++++++++++++++
+ arch/arm64/boot/dts/apple/t7000-mini4.dtsi | 33 ++++++++++++++++++++++
+ arch/arm64/boot/dts/apple/t7000-n102.dts   | 33 ++++++++++++++++++++++
+ 4 files changed, 132 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/t7000-6.dtsi b/arch/arm64/boot/dts/apple/t7000-6.dtsi
+index 7048d7383..d806865ae 100644
+--- a/arch/arm64/boot/dts/apple/t7000-6.dtsi
++++ b/arch/arm64/boot/dts/apple/t7000-6.dtsi
+@@ -56,3 +56,36 @@
+ &typhoon_opp06 {
+ 	status = "okay";
+ };
++
++&i2c0 {
++	status = "okay";
++
++	pmic@74 {
++		compatible = "apple,adi-pmic", "apple,i2c-pmic";
++		reg = <0x74>;
++		#address-cells = <1>;
++		#size-cells = <1>;
++
++		rtc@5c0 {
++			compatible = "apple,adi-pmic-rtc", "apple,amber-pmic-rtc";
++			reg = <0x5c0 0x10>;
++			nvmem-cells = <&rtc_offset>;
++			nvmem-cell-names = "rtc_offset";
++		};
++
++		nvmem@4000 {
++			compatible = "apple,pmic-nvmem";
++			reg = <0x4000 0x28>;
++
++			nvmem-layout {
++				compatible = "fixed-layout";
++				#address-cells = <1>;
++				#size-cells = <1>;
++
++				rtc_offset: rtc-offset@4 {
++					reg = <0x4 0x4>;
++				};
++			};
++		};
++	};
++};
+diff --git a/arch/arm64/boot/dts/apple/t7000-j42d.dts b/arch/arm64/boot/dts/apple/t7000-j42d.dts
+index 2ec9e06cc..b65d1d815 100644
+--- a/arch/arm64/boot/dts/apple/t7000-j42d.dts
++++ b/arch/arm64/boot/dts/apple/t7000-j42d.dts
+@@ -34,3 +34,36 @@
+ &typhoon_opp06 {
+ 	status = "okay";
+ };
++
++&i2c0 {
++	status = "okay";
++
++	pmic@74 {
++		compatible = "apple,adi-pmic", "apple,i2c-pmic";
++		reg = <0x74>;
++		#address-cells = <1>;
++		#size-cells = <1>;
++
++		rtc@5c0 {
++			compatible = "apple,adi-pmic-rtc", "apple,amber-pmic-rtc";
++			reg = <0x5c0 0x10>;
++			nvmem-cells = <&rtc_offset>;
++			nvmem-cell-names = "rtc_offset";
++		};
++
++		nvmem@4000 {
++			compatible = "apple,pmic-nvmem";
++			reg = <0x4000 0x28>;
++
++			nvmem-layout {
++				compatible = "fixed-layout";
++				#address-cells = <1>;
++				#size-cells = <1>;
++
++				rtc_offset: rtc-offset@4 {
++					reg = <0x4 0x4>;
++				};
++			};
++		};
++	};
++};
+diff --git a/arch/arm64/boot/dts/apple/t7000-mini4.dtsi b/arch/arm64/boot/dts/apple/t7000-mini4.dtsi
+index cc235c5a0..e46c03970 100644
+--- a/arch/arm64/boot/dts/apple/t7000-mini4.dtsi
++++ b/arch/arm64/boot/dts/apple/t7000-mini4.dtsi
+@@ -61,3 +61,36 @@
+ &typhoon_opp07 {
+ 	status = "okay";
+ };
++
++&i2c0 {
++	status = "okay";
++
++	pmic@3c {
++		compatible = "apple,arabela-pmic", "apple,i2c-pmic";
++		reg = <0x3c>;
++		#address-cells = <1>;
++		#size-cells = <1>;
++
++		rtc@5c0 {
++			compatible = "apple,arabela-pmic-rtc", "apple,amber-pmic-rtc";
++			reg = <0x5c0 0x10>;
++			nvmem-cells = <&rtc_offset>;
++			nvmem-cell-names = "rtc_offset";
++		};
++
++		nvmem@4000 {
++			compatible = "apple,pmic-nvmem";
++			reg = <0x4000 0x28>;
++
++			nvmem-layout {
++				compatible = "fixed-layout";
++				#address-cells = <1>;
++				#size-cells = <1>;
++
++				rtc_offset: rtc-offset@4 {
++					reg = <0x4 0x4>;
++				};
++			};
++		};
++	};
++};
+diff --git a/arch/arm64/boot/dts/apple/t7000-n102.dts b/arch/arm64/boot/dts/apple/t7000-n102.dts
+index 99eb8a2b8..71624430a 100644
+--- a/arch/arm64/boot/dts/apple/t7000-n102.dts
++++ b/arch/arm64/boot/dts/apple/t7000-n102.dts
+@@ -50,3 +50,36 @@
+ &framebuffer0 {
+ 	power-domains = <&ps_disp0 &ps_mipi_dsi>;
+ };
++
++&i2c0 {
++	status = "okay";
++
++	pmic@74 {
++		compatible = "apple,adi-pmic", "apple,i2c-pmic";
++		reg = <0x74>;
++		#address-cells = <1>;
++		#size-cells = <1>;
++
++		rtc@5c0 {
++			compatible = "apple,adi-pmic-rtc", "apple,amber-pmic-rtc";
++			reg = <0x5c0 0x10>;
++			nvmem-cells = <&rtc_offset>;
++			nvmem-cell-names = "rtc_offset";
++		};
++
++		nvmem@4000 {
++			compatible = "apple,pmic-nvmem";
++			reg = <0x4000 0x28>;
++
++			nvmem-layout {
++				compatible = "fixed-layout";
++				#address-cells = <1>;
++				#size-cells = <1>;
++
++				rtc_offset: rtc-offset@4 {
++					reg = <0x4 0x4>;
++				};
++			};
++		};
++	};
++};

@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Sun, 26 Jul 2026 17:27:04 +0200
+Subject: [PATCH 049/117] MAINTAINERS: add Apple J172 Wi-Fi support
+
+Add a focused MAINTAINERS entry for the new J172 Wi-Fi-specific
+bindings, drivers and DART interface without changing existing subsystem
+ownership.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: 1a8d10895862548cae39f5061e15669ab23ba2dd
+---
+ MAINTAINERS | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/MAINTAINERS b/MAINTAINERS
+index 3df1806e9..0580f18cc 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -2727,6 +2727,21 @@ F:	Documentation/devicetree/bindings/power/supply/ti,bq27545-hdq.yaml
+ F:	drivers/power/supply/apple_bellatrix_power.c
+ F:	drivers/power/supply/apple_d2365_charger.c
+ 
++APPLE J172 WI-FI SUPPORT
++M:	Paul Praschl <praschlpaul@g-p.at>
++L:	asahi@lists.linux.dev
++L:	linux-pci@vger.kernel.org
++L:	linux-wireless@vger.kernel.org
++S:	Maintained
++F:	Documentation/devicetree/bindings/gpio/apple,d2365-pmic-gpio.yaml
++F:	Documentation/devicetree/bindings/nvmem/layouts/apple,syscfg.yaml
++F:	Documentation/devicetree/bindings/soc/apple/apple,t8010-wlan-uart-provider.yaml
++F:	drivers/gpio/gpio-apple-d2365.c
++F:	drivers/nvmem/layouts/apple-syscfg.c
++F:	drivers/pci/pwrctrl/pci-pwrctrl-apple-wifi.c
++F:	drivers/soc/apple/apple-t8010-wlan.c
++F:	include/linux/apple-dart.h
++
+ APPLE J172 TOUCHSCREEN SUPPORT
+ M:	Paul Praschl <praschlpaul@g-p.at>
+ L:	asahi@lists.linux.dev

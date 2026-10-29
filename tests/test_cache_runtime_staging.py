@@ -15,8 +15,7 @@ class CacheRuntimeStaging(unittest.TestCase):
             release = modules / 'test-kernel'
             release.mkdir(parents=True)
             (root / 'kernel.release').write_text('test-kernel\n')
-            for name in {name for role in runtime.MODULES.values() for name in role}:
-                (release / (name + '.ko')).write_bytes(b'public module fixture')
+            (release / 'test-module.ko').write_bytes(b'public module fixture')
             policy = root / 'policy'
             policy.mkdir()
             (policy / 'image_policy.py').write_text('# public image policy\n')

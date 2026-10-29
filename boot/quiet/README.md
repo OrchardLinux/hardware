@@ -30,12 +30,15 @@ accidental reuse of distro-branded assets.
 
 Build the launcher with its existing root compatibility inputs and an immutable
 `--public-base-url https://github.com/OrchardLinux/hardware/releases/download/TAG`.
-The output includes a local `boot.toml` and public `j71b-launcher.boot.toml` with
-exact HTTPS URLs and content hashes. Publish `j71b-launcher.boot.toml`,
+The output includes a local `boot.toml` and public `j71b-apple-launcher.boot.toml` with
+exact HTTPS URLs and content hashes. Publish `j71b-apple-launcher.boot.toml`,
 `recovery.bin`, and `pongo.bin` together as assets of that hardware release.
 
 The J71b device descriptor selects
-`https://github.com/OrchardLinux/hardware/releases/latest/download/j71b-launcher.boot.toml`.
+`https://github.com/OrchardLinux/hardware/releases/latest/download/j71b-apple-launcher.boot.toml`
+for installs made with Orchard 0.1.11 or later. Older installs keep the pinned v0.1.10
+launcher (`legacy_launch_manifest`), which every release also republishes unchanged as
+`j71b-launcher.boot.toml` for older CLIs.
 The selected manifest references immutable assets; the CLI verifies their sizes
 and hashes. No distro registration or prior host installation history is used.
 Until those release assets are published, the default command cannot download

@@ -133,14 +133,14 @@ jobs:
           python3 -m venv .venv
           .venv/bin/python -m pip install out/packages/*.whl
           echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
-      - name: Build kernel, modules and device tree once
+      - name: Build the platform kernel, modules and all device trees once
         run: |
-          bash kernel/build j71b --output "$PWD/out/components/kernel"
+          bash kernel/build apple --output "$PWD/out/components/kernel"
           dpkg-query -W > out/components/kernel-toolchain-packages.lock
       - name: Archive components and corresponding kernel source
         run: |
           tar -C out -czf out/kernel-components.tar.gz components
-          tar -C kernel/.work/j71b/source --exclude=.git -czf out/kernel-source.tar.gz .
+          tar -C kernel/.work/apple/source --exclude=.git -czf out/kernel-source.tar.gz .
       - uses: actions/upload-artifact@v4
         with:
           name: hardware-kernel
@@ -194,13 +194,13 @@ jobs:
       - name: Build static recovery tools
         if: inputs.reuse_run_id == ''
         run: |
-          OMA_RECOVERY_TOOLS_WORK="$PWD/out/recovery-tools" bash boot/initramfs/j71b/recovery/build-tools
+          OMA_RECOVERY_TOOLS_WORK="$PWD/out/recovery-tools" bash boot/initramfs/recovery/build-tools
           mkdir -p out/components/boot
           cp out/recovery-tools/bin/* out/components/boot/
       - name: Build quiet loader
         if: inputs.reuse_run_id == ''
         run: |
-          bash boot/m1n1/build j71b --output "$PWD/out/components/quiet/m1n1.bin" \
+          bash boot/m1n1/build apple --output "$PWD/out/components/quiet/m1n1.bin" \
             --work-dir "$PWD/out/loader-work" --extra-patch "$PWD/boot/quiet/m1n1.patch" \
             --extra-cflags '-DQUIET_BOOT'
           dpkg-query -W > out/components/tools-toolchain-packages.lock
@@ -295,7 +295,20 @@ jobs:
           tar -xzf out/downloads/kernel-components.tar.gz -C out
           tar -xzf out/downloads/tool-components.tar.gz -C out
           tar -xzf out/downloads/quiet-pongo.tar.gz -C out/components/quiet
-          python ci/package_components.py --directory out/components --output out/publication/j71b-components.tar.gz
+          # The platform bundle carries the kernel, modules, every DTB and the shared
+          # loader; devices/<device>/device.toml names the DTB a device uses.
+          python ci/package_components.py --platform apple --directory out/components \
+            --output out/publication/apple-components.tar.gz
+          # Compatibility: the shared launcher still reads the J71b bundle layout.
+          bundle=out/bundles/j71b/components
+          mkdir -p "$bundle/kernel"
+          cp -R out/components/boot out/components/quiet out/components/*.lock "$bundle/"
+          cp -R out/components/kernel/Image.gz out/components/kernel/kernel.release \
+            out/components/kernel/lib "$bundle/kernel/"
+          read -r _ dtb < <(python kernel/series.py --resolve j71b)
+          cp "out/components/kernel/dtbs/$dtb.dtb" "$bundle/kernel/j71b.dtb"
+          python ci/package_components.py --device j71b --directory "$bundle" \
+            --output out/publication/j71b-components.tar.gz
           cp out/downloads/*.whl out/downloads/*.tar.gz out/publication/
           rm out/publication/kernel-components.tar.gz out/publication/tool-components.tar.gz out/publication/quiet-pongo.tar.gz
           git archive --format=tar.gz -o out/publication/hardware-source.tar.gz HEAD

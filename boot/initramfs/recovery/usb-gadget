@@ -1,0 +1,27 @@
+#!/bin/sh
+# USB NCM networking and ACM serial, restricted to the attached host.
+set -eu
+mkdir -p /sys/kernel/config
+mount -t configfs -o nodev,noexec,nosuid configfs /sys/kernel/config
+g=/sys/kernel/config/usb_gadget/linux-recovery
+[ ! -e "$g" ]
+identity=$(/usr/bin/python3 /usr/libexec/orchard-j71b/identity.py)
+# "apple,j71b" -> "J71b": hardware's device.toml matches "<Board> Recovery".
+board=$(tr '\000' '\n' < /proc/device-tree/compatible | head -1)
+board=${board#apple,}
+board=$(printf '%s' "${board%"${board#?}"}" | tr '[:lower:]' '[:upper:]')${board#?}
+mkdir "$g"
+echo 0x05ac > "$g/idVendor"
+echo 0x4142 > "$g/idProduct"
+mkdir -p "$g/strings/0x409" "$g/configs/c.1/strings/0x409"
+echo "$board Linux" > "$g/strings/0x409/manufacturer"
+echo "$board Recovery" > "$g/strings/0x409/product"
+printf '%s\n' "$identity" > "$g/strings/0x409/serialnumber"
+echo 'USB network and serial' > "$g/configs/c.1/strings/0x409/configuration"
+echo 500 > "$g/configs/c.1/MaxPower"
+mkdir "$g/functions/ncm.usb0" "$g/functions/acm.usb0"
+ln -s "$g/functions/ncm.usb0" "$g/configs/c.1/ncm.usb0"
+ln -s "$g/functions/acm.usb0" "$g/configs/c.1/acm.usb0"
+set -- /sys/class/udc/*
+[ "$#" -eq 1 ] && [ -e "$1" ]
+printf '%s\n' "${1##*/}" > "$g/UDC"

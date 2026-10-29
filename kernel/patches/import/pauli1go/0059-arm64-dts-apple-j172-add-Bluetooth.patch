@@ -1,0 +1,83 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Mon, 27 Jul 2026 10:22:52 +0200
+Subject: [PATCH 059/117] arm64: dts: apple: j172: add Bluetooth
+
+Enable UART3 on J172 with function-1 pinmux for all four transport
+signals and hardware RTS/CTS flow control. Release D2365 GPIO 13 from
+the reserved range for the active-high controller shutdown line and use
+AP GPIO 88 for BT_WAKE.
+
+Describe the BCM4355C1 ROM transport at 115200 bit/s and its 3-Mbit/s
+operational controller rate. Add a bluetooth0 alias so m1n1 can publish
+the device-specific local-bd-address through the standard property
+without embedding private address data in the device tree.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: 3a7932fdec65cecb22688990b61950046552aae2
+---
+ arch/arm64/boot/dts/apple/t8010-ipad7.dtsi | 29 +++++++++++++++++++++-
+ 1 file changed, 28 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/apple/t8010-ipad7.dtsi b/arch/arm64/boot/dts/apple/t8010-ipad7.dtsi
+index 258c43cf4..2a3db7002 100644
+--- a/arch/arm64/boot/dts/apple/t8010-ipad7.dtsi
++++ b/arch/arm64/boot/dts/apple/t8010-ipad7.dtsi
+@@ -14,6 +14,10 @@
+ #include "t8010-ipad6.dtsi"
+ 
+ / {
++	aliases {
++		bluetooth0 = &bluetooth;
++	};
++
+ 	ipad7_battery: battery {
+ 		compatible = "simple-battery";
+ 		charge-full-design-microamp-hours = <8557000>;
+@@ -40,7 +44,7 @@
+ 		compatible = "apple,d2365-pmic-gpio";
+ 		gpio-controller;
+ 		#gpio-cells = <2>;
+-		gpio-reserved-ranges = <0 14>, <15 9>;
++		gpio-reserved-ranges = <0 13>, <15 9>;
+ 	};
+ };
+ 
+@@ -102,6 +106,13 @@
+ 		pinmux = <APPLE_PINMUX(173, 1)>;
+ 	};
+ 
++	bluetooth_uart3_pins: bluetooth-uart3-pins {
++		pinmux = <APPLE_PINMUX(134, 1)>,
++			 <APPLE_PINMUX(135, 1)>,
++			 <APPLE_PINMUX(136, 1)>,
++			 <APPLE_PINMUX(137, 1)>;
++	};
++
+ 	i2c1_gpio_pins: i2c1-gpio-pins {
+ 		pinmux = <APPLE_PINMUX(40, 0)>,
+ 			 <APPLE_PINMUX(39, 0)>;
+@@ -122,6 +133,22 @@
+ 	};
+ };
+ 
++&serial3 {
++	pinctrl-0 = <&bluetooth_uart3_pins>;
++	pinctrl-names = "default";
++	uart-has-rtscts;
++	status = "okay";
++
++	bluetooth: bluetooth {
++		compatible = "apple,j172-bcm4355c1-bt",
++			     "brcm,bcm4355c1-bt";
++		current-speed = <115200>;
++		max-speed = <3000000>;
++		shutdown-gpios = <&pmu_gpio 13 GPIO_ACTIVE_HIGH>;
++		device-wakeup-gpios = <&pinctrl_ap 88 GPIO_ACTIVE_HIGH>;
++	};
++};
++
+ &serial5 {
+ 	pinctrl-0 = <&battery_swi_pins>;
+ 	pinctrl-names = "default";

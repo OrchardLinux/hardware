@@ -1,0 +1,466 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Wed, 22 Jul 2026 12:47:28 +0200
+Subject: [PATCH 025/117] i2c: pasemi: add T8010 init, STOP and recovery
+ support
+
+The T8010 integration needs controller initialization, an explicit STOP
+sequence and recovery for a bus held by a peripheral, none of which was
+provided by the existing PASemi paths.
+
+Add shared core support plus T8010 platform reset and GPIO recovery
+handling. Keep the PCI integration and non-T8010 controller behavior
+unchanged.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: 373bfa974b152601a31d086f8797c3f608e33192
+---
+ drivers/i2c/busses/i2c-pasemi-core.c     | 122 ++++++++++++++++-------
+ drivers/i2c/busses/i2c-pasemi-core.h     |   4 +
+ drivers/i2c/busses/i2c-pasemi-pci.c      |   1 +
+ drivers/i2c/busses/i2c-pasemi-platform.c |  64 +++++++++++-
+ 4 files changed, 152 insertions(+), 39 deletions(-)
+
+diff --git a/drivers/i2c/busses/i2c-pasemi-core.c b/drivers/i2c/busses/i2c-pasemi-core.c
+index f4eca44ed..c3f0daba7 100644
+--- a/drivers/i2c/busses/i2c-pasemi-core.c
++++ b/drivers/i2c/busses/i2c-pasemi-core.c
+@@ -49,11 +49,10 @@
+ #define SMSTA_TOM	BIT(6)
+ 
+ #define CTL_EN		BIT(11)
+-#define CTL_MRR		BIT(10)
+-#define CTL_MTR		BIT(9)
+-#define CTL_UJM		BIT(8)
+ #define CTL_CLK_M	GENMASK(7, 0)
+ 
++#define SMSTA_XFER_CLEAR	(SMSTA_XEN | SMSTA_MTO | SMSTA_MTN | SMSTA_TOM)
++
+ /*
+  * The hardware (supposedly) has a 25ms timeout for clock stretching, thus
+  * use 100ms here which should be plenty.
+@@ -69,6 +68,7 @@ static inline void reg_write(struct pasemi_smbus *smbus, int reg, int val)
+ static inline int reg_read(struct pasemi_smbus *smbus, int reg)
+ {
+ 	int ret;
++
+ 	ret = ioread32(smbus->ioaddr + reg);
+ 	dev_dbg(smbus->dev, "smbus read reg %x val %08x\n", reg, ret);
+ 	return ret;
+@@ -77,14 +77,33 @@ static inline int reg_read(struct pasemi_smbus *smbus, int reg)
+ #define TXFIFO_WR(smbus, reg)	reg_write((smbus), REG_MTXFIFO, (reg))
+ #define RXFIFO_RD(smbus)	reg_read((smbus), REG_MRXFIFO)
+ 
+-static void pasemi_reset(struct pasemi_smbus *smbus)
++static u32 pasemi_ctl_value(struct pasemi_smbus *smbus)
+ {
+-	u32 val = (CTL_MTR | CTL_MRR | CTL_UJM | (smbus->clk_div & CTL_CLK_M));
++	u32 val = smbus->ctl_flags | (smbus->clk_div & CTL_CLK_M);
+ 
+ 	if (smbus->hw_rev >= 6)
+ 		val |= CTL_EN;
+ 
+-	reg_write(smbus, REG_CTL, val);
++	return val;
++}
++
++static void pasemi_reset(struct pasemi_smbus *smbus)
++{
++	reg_write(smbus, REG_CTL, pasemi_ctl_value(smbus));
++	if (smbus->hw_init)
++		smbus->hw_init(smbus);
++
++	reinit_completion(&smbus->irq_completion);
++}
++
++static void pasemi_begin_xfer(struct pasemi_smbus *smbus)
++{
++	reg_write(smbus, REG_CTL, pasemi_ctl_value(smbus));
++	reg_write(smbus, REG_SMSTA, SMSTA_XFER_CLEAR);
++	reg_write(smbus, REG_IMASK, 0);
++	if (smbus->hw_init)
++		smbus->hw_init(smbus);
++
+ 	reinit_completion(&smbus->irq_completion);
+ }
+ 
+@@ -100,15 +119,18 @@ static int pasemi_smb_clear(struct pasemi_smbus *smbus)
+ 				 USEC_PER_MSEC * PASEMI_TRANSFER_TIMEOUT_MS);
+ 
+ 	if (ret < 0) {
+-		dev_err(smbus->dev, "Bus is still stuck (status 0x%08x xfstatus 0x%08x)\n",
+-			 status, reg_read(smbus, REG_XFSTA));
++		dev_err(smbus->dev,
++			"Bus is still stuck (status 0x%08x xfstatus 0x%08x)\n",
++			status, reg_read(smbus, REG_XFSTA));
+ 		return -EIO;
+ 	}
+ 
+-	/* If any badness happened or there is data in the FIFOs, reset the FIFOs */
+-	if ((status & (SMSTA_MRNE | SMSTA_JMD | SMSTA_MTO | SMSTA_TOM | SMSTA_MTN | SMSTA_MTA)) ||
++	/* If any badness happened or there is data in the FIFOs, reset the FIFOs. */
++	if ((status & (SMSTA_MRNE | SMSTA_JMD | SMSTA_MTO | SMSTA_TOM |
++		       SMSTA_MTN | SMSTA_MTA)) ||
+ 	    !(status & SMSTA_MTE)) {
+-		dev_warn(smbus->dev, "Issuing reset due to status 0x%08x (xfstatus 0x%08x)\n",
++		dev_warn(smbus->dev,
++			 "Issuing reset due to status 0x%08x (xfstatus 0x%08x)\n",
+ 			 status, reg_read(smbus, REG_XFSTA));
+ 		pasemi_reset(smbus);
+ 	}
+@@ -122,13 +144,13 @@ static int pasemi_smb_clear(struct pasemi_smbus *smbus)
+ static int pasemi_smb_waitready(struct pasemi_smbus *smbus)
+ {
+ 	unsigned int status;
++	int ret;
+ 
+ 	if (smbus->use_irq) {
+ 		reinit_completion(&smbus->irq_completion);
+ 		reg_write(smbus, REG_IMASK, SMSTA_XEN | SMSTA_MTN);
+-		int ret = wait_for_completion_timeout(
+-				&smbus->irq_completion,
+-				msecs_to_jiffies(PASEMI_TRANSFER_TIMEOUT_MS));
++		ret = wait_for_completion_timeout(&smbus->irq_completion,
++						  msecs_to_jiffies(PASEMI_TRANSFER_TIMEOUT_MS));
+ 		reg_write(smbus, REG_IMASK, 0);
+ 		status = reg_read(smbus, REG_SMSTA);
+ 
+@@ -142,11 +164,10 @@ static int pasemi_smb_waitready(struct pasemi_smbus *smbus)
+ 			return -ETIME;
+ 		}
+ 	} else {
+-		int ret = readx_poll_timeout(
+-				ioread32, smbus->ioaddr + REG_SMSTA,
+-				status, status & SMSTA_XEN,
+-				USEC_PER_MSEC,
+-				USEC_PER_MSEC * PASEMI_TRANSFER_TIMEOUT_MS);
++		ret = readx_poll_timeout(ioread32, smbus->ioaddr + REG_SMSTA,
++					 status, status & SMSTA_XEN,
++					 USEC_PER_MSEC,
++					 USEC_PER_MSEC * PASEMI_TRANSFER_TIMEOUT_MS);
+ 
+ 		if (ret < 0) {
+ 			dev_err(smbus->dev, "Timeout, status 0x%08x\n", status);
+@@ -166,12 +187,6 @@ static int pasemi_smb_waitready(struct pasemi_smbus *smbus)
+ 		return -ETIME;
+ 	}
+ 
+-	/* Still stuck in a transaction? */
+-	if (status & SMSTA_XIP) {
+-		dev_err(smbus->dev, "Bus stuck, status 0x%08x\n", status);
+-		return -EIO;
+-	}
+-
+ 	/* Arbitration loss? */
+ 	if (status & SMSTA_MTA) {
+ 		dev_err(smbus->dev, "Arbitration loss, status 0x%08x\n", status);
+@@ -184,26 +199,51 @@ static int pasemi_smb_waitready(struct pasemi_smbus *smbus)
+ 		return -ENXIO;
+ 	}
+ 
++	/* Still stuck in a transaction? */
++	if (status & SMSTA_XIP) {
++		dev_err(smbus->dev, "Bus stuck, status 0x%08x\n", status);
++		return -EIO;
++	}
++
+ 	/* Clear XEN */
+ 	reg_write(smbus, REG_SMSTA, SMSTA_XEN);
+ 
+ 	return 0;
+ }
+ 
++static void pasemi_recover_bus(struct i2c_adapter *adapter, int err)
++{
++	struct pasemi_smbus *smbus = adapter->algo_data;
++	int recovery_ret;
++
++	if (err != -EIO || !adapter->bus_recovery_info)
++		return;
++
++	recovery_ret = i2c_recover_bus(adapter);
++	if (recovery_ret)
++		dev_warn(smbus->dev,
++			 "I2C bus recovery failed after error %d: %d\n",
++			 err, recovery_ret);
++
++	pasemi_reset(smbus);
++}
++
+ static int pasemi_i2c_xfer_msg(struct i2c_adapter *adapter,
+ 			       struct i2c_msg *msg, int stop)
+ {
+ 	struct pasemi_smbus *smbus = adapter->algo_data;
+ 	int read, i, err;
++	bool send_stop;
+ 	u32 rd;
+ 
+ 	read = msg->flags & I2C_M_RD ? 1 : 0;
++	send_stop = stop || (msg->flags & I2C_M_STOP);
+ 
+ 	TXFIFO_WR(smbus, MTXFIFO_START | i2c_8bit_addr_from_msg(msg));
+ 
+ 	if (read) {
+ 		TXFIFO_WR(smbus, msg->len | MTXFIFO_READ |
+-				 (stop ? MTXFIFO_STOP : 0));
++				 (send_stop ? MTXFIFO_STOP : 0));
+ 
+ 		err = pasemi_smb_waitready(smbus);
+ 		if (err)
+@@ -221,10 +261,10 @@ static int pasemi_i2c_xfer_msg(struct i2c_adapter *adapter,
+ 		for (i = 0; i < msg->len - 1; i++)
+ 			TXFIFO_WR(smbus, msg->buf[i]);
+ 
+-		TXFIFO_WR(smbus, msg->buf[msg->len-1] |
+-			  (stop ? MTXFIFO_STOP : 0));
++		TXFIFO_WR(smbus, msg->buf[msg->len - 1] |
++			  (send_stop ? MTXFIFO_STOP : 0));
+ 
+-		if (stop) {
++		if (send_stop) {
+ 			err = pasemi_smb_waitready(smbus);
+ 			if (err)
+ 				goto reset_out;
+@@ -235,6 +275,7 @@ static int pasemi_i2c_xfer_msg(struct i2c_adapter *adapter,
+ 
+  reset_out:
+ 	pasemi_reset(smbus);
++	pasemi_recover_bus(adapter, err);
+ 	return err;
+ }
+ 
+@@ -244,9 +285,14 @@ static int pasemi_i2c_xfer(struct i2c_adapter *adapter,
+ 	struct pasemi_smbus *smbus = adapter->algo_data;
+ 	int ret, i;
+ 
++	pasemi_begin_xfer(smbus);
++
+ 	ret = pasemi_smb_clear(smbus);
+-	if (ret)
++	if (ret) {
++		pasemi_reset(smbus);
++		pasemi_recover_bus(adapter, ret);
+ 		return ret;
++	}
+ 
+ 	for (i = 0; i < num && !ret; i++)
+ 		ret = pasemi_i2c_xfer_msg(adapter, &msgs[i], (i == (num - 1)));
+@@ -254,9 +300,9 @@ static int pasemi_i2c_xfer(struct i2c_adapter *adapter,
+ 	return ret ? ret : num;
+ }
+ 
+-static int pasemi_smb_xfer(struct i2c_adapter *adapter,
+-		u16 addr, unsigned short flags, char read_write, u8 command,
+-		int size, union i2c_smbus_data *data)
++static int pasemi_smb_xfer(struct i2c_adapter *adapter, u16 addr,
++			   unsigned short flags, char read_write, u8 command,
++			   int size, union i2c_smbus_data *data)
+ {
+ 	struct pasemi_smbus *smbus = adapter->algo_data;
+ 	unsigned int rd;
+@@ -267,9 +313,14 @@ static int pasemi_smb_xfer(struct i2c_adapter *adapter,
+ 	addr <<= 1;
+ 	read_flag = read_write == I2C_SMBUS_READ;
+ 
++	pasemi_begin_xfer(smbus);
++
+ 	err = pasemi_smb_clear(smbus);
+-	if (err)
++	if (err) {
++		pasemi_reset(smbus);
++		pasemi_recover_bus(adapter, err);
+ 		return err;
++	}
+ 
+ 	switch (size) {
+ 	case I2C_SMBUS_QUICK:
+@@ -388,7 +439,7 @@ static int pasemi_smb_xfer(struct i2c_adapter *adapter,
+ 	case I2C_SMBUS_BLOCK_DATA:
+ 	case I2C_SMBUS_BLOCK_PROC_CALL:
+ 		data->block[0] = len;
+-		for (i = 1; i <= len; i ++) {
++		for (i = 1; i <= len; i++) {
+ 			rd = RXFIFO_RD(smbus);
+ 			if (rd & MRXFIFO_EMPTY) {
+ 				err = -ENODATA;
+@@ -403,6 +454,7 @@ static int pasemi_smb_xfer(struct i2c_adapter *adapter,
+ 
+  reset_out:
+ 	pasemi_reset(smbus);
++	pasemi_recover_bus(adapter, err);
+ 	return err;
+ }
+ 
+diff --git a/drivers/i2c/busses/i2c-pasemi-core.h b/drivers/i2c/busses/i2c-pasemi-core.h
+index 88821f4e8..1381336bc 100644
+--- a/drivers/i2c/busses/i2c-pasemi-core.h
++++ b/drivers/i2c/busses/i2c-pasemi-core.h
+@@ -1,5 +1,6 @@
+ /* SPDX-License-Identifier: GPL-2.0 */
+ #include <linux/atomic.h>
++#include <linux/bits.h>
+ #include <linux/clk.h>
+ #include <linux/delay.h>
+ #include <linux/device.h>
+@@ -10,14 +11,17 @@
+ #include <linux/completion.h>
+ 
+ #define PASEMI_HW_REV_PCI -1
++#define PASEMI_CTL_LEGACY_FLAGS	(GENMASK(10, 8))
+ 
+ struct pasemi_smbus {
+ 	struct device		*dev;
+ 	struct i2c_adapter	 adapter;
+ 	void __iomem		*ioaddr;
+ 	unsigned int		 clk_div;
++	unsigned int		 ctl_flags;
+ 	int			 hw_rev;
+ 	int			 use_irq;
++	void			 (*hw_init)(struct pasemi_smbus *smbus);
+ 	struct completion	 irq_completion;
+ };
+ 
+diff --git a/drivers/i2c/busses/i2c-pasemi-pci.c b/drivers/i2c/busses/i2c-pasemi-pci.c
+index b9ccb54ec..0b50409d6 100644
+--- a/drivers/i2c/busses/i2c-pasemi-pci.c
++++ b/drivers/i2c/busses/i2c-pasemi-pci.c
+@@ -41,6 +41,7 @@ static int pasemi_smb_pci_probe(struct pci_dev *dev,
+ 	base = pci_resource_start(dev, 0);
+ 	size = pci_resource_len(dev, 0);
+ 	smbus->clk_div = CLK_100K_DIV;
++	smbus->ctl_flags = PASEMI_CTL_LEGACY_FLAGS;
+ 
+ 	/*
+ 	 * The original PASemi PCI controllers don't have a register for
+diff --git a/drivers/i2c/busses/i2c-pasemi-platform.c b/drivers/i2c/busses/i2c-pasemi-platform.c
+index a486a37d3..ee51a01fc 100644
+--- a/drivers/i2c/busses/i2c-pasemi-platform.c
++++ b/drivers/i2c/busses/i2c-pasemi-platform.c
+@@ -5,19 +5,49 @@
+  * PA Semi PWRficient SMBus host driver for Apple SoCs
+  */
+ 
++#include <linux/bits.h>
+ #include <linux/clk.h>
+ #include <linux/i2c.h>
+ #include <linux/io.h>
+ #include <linux/kernel.h>
+ #include <linux/module.h>
+ #include <linux/platform_device.h>
++#include <linux/property.h>
++#include <linux/reset.h>
+ #include <linux/types.h>
+ 
+ #include "i2c-pasemi-core.h"
+ 
++#define APPLE_I2C_REG_RESET		0x10
++#define APPLE_I2C_RESET			BIT(31)
++#define APPLE_I2C_REG_FILTER		0x38
++#define APPLE_I2C_FILTER_DEFAULT	BIT(9)
++
++struct pasemi_platform_i2c_match_data {
++	void (*hw_init)(struct pasemi_smbus *smbus);
++	u32 ctl_flags;
++};
++
+ struct pasemi_platform_i2c_data {
+ 	struct pasemi_smbus smbus;
+ 	struct clk *clk_ref;
++	struct i2c_bus_recovery_info recovery;
++};
++
++static void pasemi_platform_i2c_t8010_init(struct pasemi_smbus *smbus)
++{
++	u32 filter;
++
++	iowrite32(APPLE_I2C_RESET, smbus->ioaddr + APPLE_I2C_REG_RESET);
++
++	filter = ioread32(smbus->ioaddr + APPLE_I2C_REG_FILTER);
++	iowrite32(filter | APPLE_I2C_FILTER_DEFAULT,
++		  smbus->ioaddr + APPLE_I2C_REG_FILTER);
++}
++
++static const struct pasemi_platform_i2c_match_data t8010_i2c_data = {
++	.hw_init = pasemi_platform_i2c_t8010_init,
++	.ctl_flags = 0,
+ };
+ 
+ static int
+@@ -45,25 +75,32 @@ pasemi_platform_i2c_calc_clk_div(struct pasemi_platform_i2c_data *data,
+ static int pasemi_platform_i2c_probe(struct platform_device *pdev)
+ {
+ 	struct device *dev = &pdev->dev;
++	const struct pasemi_platform_i2c_match_data *match_data;
+ 	struct pasemi_platform_i2c_data *data;
++	struct reset_control *reset;
+ 	struct pasemi_smbus *smbus;
+ 	u32 frequency;
+ 	int error;
+ 	int irq_num;
+ 
+-	data = devm_kzalloc(dev, sizeof(struct pasemi_platform_i2c_data),
+-			    GFP_KERNEL);
++	data = devm_kzalloc(dev, sizeof(*data), GFP_KERNEL);
+ 	if (!data)
+ 		return -ENOMEM;
+ 
+ 	smbus = &data->smbus;
+ 	smbus->dev = dev;
++	smbus->ctl_flags = PASEMI_CTL_LEGACY_FLAGS;
++	match_data = device_get_match_data(dev);
++	if (match_data) {
++		smbus->hw_init = match_data->hw_init;
++		smbus->ctl_flags = match_data->ctl_flags;
++	}
+ 
+ 	smbus->ioaddr = devm_platform_ioremap_resource(pdev, 0);
+ 	if (IS_ERR(smbus->ioaddr))
+ 		return PTR_ERR(smbus->ioaddr);
+ 
+-	if (of_property_read_u32(dev->of_node, "clock-frequency", &frequency))
++	if (device_property_read_u32(dev, "clock-frequency", &frequency))
+ 		frequency = I2C_MAX_STANDARD_MODE_FREQ;
+ 
+ 	data->clk_ref = devm_clk_get_enabled(dev, NULL);
+@@ -74,13 +111,31 @@ static int pasemi_platform_i2c_probe(struct platform_device *pdev)
+ 	if (error)
+ 		return error;
+ 
++	reset = devm_reset_control_get_optional_exclusive(dev, NULL);
++	if (IS_ERR(reset))
++		return dev_err_probe(dev, PTR_ERR(reset),
++				     "failed to get reset\n");
++
++	if (reset) {
++		error = reset_control_reset(reset);
++		if (error)
++			return dev_err_probe(dev, error,
++					     "failed to reset controller\n");
++	}
++
+ 	smbus->adapter.dev.of_node = pdev->dev.of_node;
++	if (device_property_present(dev, "scl-gpios")) {
++		data->recovery.recover_bus = i2c_generic_scl_recovery;
++		smbus->adapter.bus_recovery_info = &data->recovery;
++	}
++
+ 	error = pasemi_i2c_common_probe(smbus);
+ 	if (error)
+ 		return error;
+ 
+ 	irq_num = platform_get_irq(pdev, 0);
+-	error = devm_request_irq(smbus->dev, irq_num, pasemi_irq_handler, 0, "pasemi_apple_i2c", (void *)smbus);
++	error = devm_request_irq(smbus->dev, irq_num, pasemi_irq_handler, 0,
++				 "pasemi_apple_i2c", smbus);
+ 
+ 	if (!error)
+ 		smbus->use_irq = 1;
+@@ -92,6 +147,7 @@ static int pasemi_platform_i2c_probe(struct platform_device *pdev)
+ static void pasemi_platform_i2c_remove(struct platform_device *pdev) { }
+ 
+ static const struct of_device_id pasemi_platform_i2c_of_match[] = {
++	{ .compatible = "apple,t8010-i2c", .data = &t8010_i2c_data },
+ 	{ .compatible = "apple,t8103-i2c" },
+ 	{ .compatible = "apple,i2c" },
+ 	{},

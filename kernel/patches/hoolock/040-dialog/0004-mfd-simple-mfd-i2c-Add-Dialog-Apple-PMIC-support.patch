@@ -1,0 +1,48 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Sun, 16 Feb 2025 15:59:04 +0800
+Subject: [PATCH 04/20] mfd: simple-mfd-i2c: Add Dialog Apple PMIC support
+
+Add support for Apple PMICs attached over I2C with 16-bit register addresses and
+8-bit register values.
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ drivers/mfd/simple-mfd-i2c.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/drivers/mfd/simple-mfd-i2c.c b/drivers/mfd/simple-mfd-i2c.c
+index ef3ce4bdf..8a81d7acc 100644
+--- a/drivers/mfd/simple-mfd-i2c.c
++++ b/drivers/mfd/simple-mfd-i2c.c
+@@ -34,6 +34,11 @@ static const struct regmap_config regmap_config_8r_8v = {
+ 	.val_bits = 8,
+ };
+ 
++static const struct regmap_config regmap_config_16r_8v = {
++	.reg_bits = 16,
++	.val_bits = 8,
++};
++
+ static int simple_mfd_i2c_probe(struct i2c_client *i2c)
+ {
+ 	const struct simple_mfd_data *simple_mfd_data;
+@@ -67,6 +72,10 @@ static int simple_mfd_i2c_probe(struct i2c_client *i2c)
+ 	return ret;
+ }
+ 
++static const struct simple_mfd_data apple_i2c_pmic = {
++	.regmap_config = &regmap_config_16r_8v
++};
++
+ static const struct mfd_cell sy7636a_cells[] = {
+ 	{ .name = "sy7636a-regulator", },
+ 	{ .name = "sy7636a-temperature", },
+@@ -116,6 +125,7 @@ static const struct simple_mfd_data spacemit_p1 = {
+ };
+ 
+ static const struct of_device_id simple_mfd_i2c_of_match[] = {
++	{ .compatible = "apple,i2c-pmic", .data = &apple_i2c_pmic },
+ 	{ .compatible = "delta,tn48m-cpld" },
+ 	{ .compatible = "fsl,ls1028aqds-fpga" },
+ 	{ .compatible = "fsl,lx2160aqds-fpga" },

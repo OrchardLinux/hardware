@@ -1,0 +1,75 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Sun, 2 Aug 2026 12:15:05 +0200
+Subject: [PATCH 073/117] mfd: simple-mfd-i2c: add Apple SN2400 support
+
+Register the Apple SN2400 with simple-mfd-i2c using its 8-bit register
+map and bounded register range. Keep charging and HDQ routing policy in
+independent child drivers.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: 5ea3d74b49aba18611810f47f7c6d481fa94d966
+---
+ drivers/mfd/Kconfig          | 11 +++++++++++
+ drivers/mfd/simple-mfd-i2c.c | 11 +++++++++++
+ 2 files changed, 22 insertions(+)
+
+diff --git a/drivers/mfd/Kconfig b/drivers/mfd/Kconfig
+index f84468c55..6011146b0 100644
+--- a/drivers/mfd/Kconfig
++++ b/drivers/mfd/Kconfig
+@@ -1471,6 +1471,17 @@ config MFD_SI476X_CORE
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called si476x-core.
+ 
++config MFD_SN2400
++	tristate "Apple SN2400 battery charger core"
++	depends on I2C
++	select MFD_SIMPLE_MFD_I2C
++	help
++	  Support the I2C register map and child devices of the Apple SN2400
++	  battery charger through the simple MFD I2C driver. Charging policy is
++	  implemented by separate child drivers.
++
++	  To compile the simple MFD I2C driver as a module, choose M here.
++
+ config MFD_SIMPLE_MFD_I2C
+ 	tristate
+ 	depends on I2C
+diff --git a/drivers/mfd/simple-mfd-i2c.c b/drivers/mfd/simple-mfd-i2c.c
+index 636afd117..4442ea0e0 100644
+--- a/drivers/mfd/simple-mfd-i2c.c
++++ b/drivers/mfd/simple-mfd-i2c.c
+@@ -34,6 +34,12 @@ static const struct regmap_config regmap_config_8r_8v = {
+ 	.val_bits = 8,
+ };
+ 
++static const struct regmap_config apple_sn2400_regmap_config = {
++	.reg_bits = 8,
++	.val_bits = 8,
++	.max_register = 0x1d,
++};
++
+ static const struct regmap_config regmap_config_16r_8v = {
+ 	.reg_bits = 16,
+ 	.val_bits = 8,
+@@ -80,6 +86,10 @@ static const struct simple_mfd_data apple_chestnut_pmic = {
+ 	.regmap_config = &regmap_config_8r_8v
+ };
+ 
++static const struct simple_mfd_data apple_sn2400 = {
++	.regmap_config = &apple_sn2400_regmap_config,
++};
++
+ static const struct mfd_cell sy7636a_cells[] = {
+ 	{ .name = "sy7636a-regulator", },
+ 	{ .name = "sy7636a-temperature", },
+@@ -131,6 +141,7 @@ static const struct simple_mfd_data spacemit_p1 = {
+ static const struct of_device_id simple_mfd_i2c_of_match[] = {
+ 	{ .compatible = "apple,chestnut-pmic", .data = &apple_chestnut_pmic },
+ 	{ .compatible = "apple,i2c-pmic", .data = &apple_i2c_pmic },
++	{ .compatible = "apple,sn2400", .data = &apple_sn2400 },
+ 	{ .compatible = "delta,tn48m-cpld" },
+ 	{ .compatible = "fsl,ls1028aqds-fpga" },
+ 	{ .compatible = "fsl,lx2160aqds-fpga" },

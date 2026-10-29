@@ -1,0 +1,102 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Sat, 1 Aug 2026 17:17:02 +0200
+Subject: [PATCH 063/117] dt-bindings: regulator: add Apple PMIC touch supplies
+
+The A10 touchscreen receives its core and high-voltage rails from switches
+inside two different PMICs. Describing their register, mask and enable
+value in device tree would expose a Linux programming recipe instead of
+identifying stable hardware.
+
+Add supply-specific compatibles for the Adelyn core rail and Chestnut
+high-voltage rail. The parent Apple PMIC schema now accepts these
+regulator child nodes, while the regulator schema retains the common
+regulator constraints and leaves register layout to driver match data.
+
+This models the rails through the regulator provider/consumer relationship
+and requires no direct PMIC access from the touchscreen driver or generic
+regulator-core exception. The new schema and parent PMIC schema passed
+dt-doc-validate with dtschema 2026.6; the D111 DTB passed validation
+against the regulator schema. This patch was checked with checkpatch.pl
+--strict.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: afa803d8c6a7e549489b96d04a74b55e32c32814
+---
+ .../devicetree/bindings/mfd/apple,pmic.yaml   |  3 ++
+ .../regulator/apple,pmic-touch-regulator.yaml | 38 +++++++++++++++++++
+ MAINTAINERS                                   |  1 +
+ 3 files changed, 42 insertions(+)
+ create mode 100644 Documentation/devicetree/bindings/regulator/apple,pmic-touch-regulator.yaml
+
+diff --git a/Documentation/devicetree/bindings/mfd/apple,pmic.yaml b/Documentation/devicetree/bindings/mfd/apple,pmic.yaml
+index eb919db3b..80ad51588 100644
+--- a/Documentation/devicetree/bindings/mfd/apple,pmic.yaml
++++ b/Documentation/devicetree/bindings/mfd/apple,pmic.yaml
+@@ -73,6 +73,9 @@ patternProperties:
+   "^nvmem(@[0-9a-f]+)?$":
+     $ref: /schemas/nvmem/apple,pmic-nvmem.yaml
+ 
++  "^regulator-touch-(core|hv)$":
++    $ref: /schemas/regulator/apple,pmic-touch-regulator.yaml
++
+ required:
+   - compatible
+   - reg
+diff --git a/Documentation/devicetree/bindings/regulator/apple,pmic-touch-regulator.yaml b/Documentation/devicetree/bindings/regulator/apple,pmic-touch-regulator.yaml
+new file mode 100644
+index 000000000..5954379f7
+--- /dev/null
++++ b/Documentation/devicetree/bindings/regulator/apple,pmic-touch-regulator.yaml
+@@ -0,0 +1,38 @@
++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/regulator/apple,pmic-touch-regulator.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: Apple PMIC touchscreen supply regulators
++
++maintainers:
++  - Paul Praschl <praschlpaul@g-p.at>
++
++description:
++  Fixed touchscreen supply switches provided by the Adelyn and Chestnut
++  PMICs. The compatible identifies both the PMIC and the physical supply;
++  register layout is an implementation detail of the regulator driver.
++
++allOf:
++  - $ref: regulator.yaml#
++
++properties:
++  compatible:
++    enum:
++      - apple,adelyn-touch-core-regulator
++      - apple,chestnut-touch-hv-regulator
++
++required:
++  - compatible
++
++unevaluatedProperties: false
++
++examples:
++  - |
++    regulator-touch-core {
++        compatible = "apple,adelyn-touch-core-regulator";
++        regulator-name = "touch-core";
++    };
++
++...
+diff --git a/MAINTAINERS b/MAINTAINERS
+index 0580f18cc..31d88bd09 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -2660,6 +2660,7 @@ F:	Documentation/devicetree/bindings/pinctrl/apple,pinctrl.yaml
+ F:	Documentation/devicetree/bindings/power/apple*
+ F:	Documentation/devicetree/bindings/power/reset/apple,smc-reboot.yaml
+ F:	Documentation/devicetree/bindings/pwm/apple,s5l-fpwm.yaml
++F:	Documentation/devicetree/bindings/regulator/apple,pmic-touch-regulator.yaml
+ F:	Documentation/devicetree/bindings/rtc/apple,pmic-rtc.yaml
+ F:	Documentation/devicetree/bindings/rtc/apple,smc-rtc.yaml
+ F:	Documentation/devicetree/bindings/soc/apple/apple,t6000-pmgr-misc.yaml

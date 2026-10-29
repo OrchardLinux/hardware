@@ -1,0 +1,58 @@
+# iPad 6 (Cellular) — J72b: hardware identity, boot assets and firmware recipe.
+schema = 1
+kind = "hardware.device"
+
+[device]
+profile = "j72b"
+name = "iPad 6 (Cellular)"
+apple_products = ["iPad7,6"]
+dt_compatible = ["apple,j72b"]
+
+# BDID: ApBoardID/ApChipID of the j72bap identities in the 21H461 (iPadOS 17.7.11) BuildManifest.plist;
+# cross-checked with api.ipsw.me/v4/device/iPad7,6 ("bdid").
+[match.dfu]
+chip = 0x8010
+board = 0x1a
+
+# USB product of the Orchard recovery system ("<Board> Recovery").
+[match.linux]
+product = "J72b Recovery"
+
+[boot]
+methods = ["checkm8-pongo"]
+# Not published yet: no j72b launcher release exists. Mirrors the j71b URL pattern.
+launch_manifest = "https://github.com/OrchardLinux/hardware/releases/latest/download/j72b-apple-launcher.boot.toml"
+
+[kernel]
+platform = "apple"     # kernel/series/apple, kernel/configs/apple
+dtb = "t8010-j72b"     # arch/arm64/boot/dts/apple/<dtb>.dtb
+
+[firmware]
+recipe = "firmware.json" # Relative to this device.toml; public recipe, not firmware bytes.
+
+[support]
+install = true
+status = "experimental"
+caveats = [
+  "Bluetooth needs its module vendor (Murata or USI) chosen per unit; not loaded yet.",
+]
+wifi = false # Wi-Fi DT node and pinned figarob firmware exist, but no hardware validation yet.
+usb_serial = false # No Orchard launcher/gadget validated on this board yet.
+usb_network = false
+
+# States: working, partial, untested, missing, none (features.toml).
+[features]
+display = "untested"
+touch = "untested"
+wifi = "untested"
+bluetooth = "missing"
+storage = "untested"
+battery = "untested"
+charging = "untested"
+backlight = "untested"
+buttons = "untested"
+audio = "missing"
+camera = "missing"
+cellular = "missing"
+suspend = "missing"
+gpu = "missing"

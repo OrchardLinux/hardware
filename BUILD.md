@@ -26,7 +26,7 @@ HW=$(python -c 'from pathlib import Path; import orchard_hardware; print(Path(or
 "$HW/boot/m1n1/build" j71b --output "$PWD/out/m1n1.bin"
 ```
 
-Choose new output paths. Producers use pinned upstream revisions, hardware patches and public toolchains. Their `.work` cache lives beside the installed producer, so use a writable virtual environment. Kernel/module builds enforce matching kernel releases. See [kernel/README.md](kernel/README.md) and [recovery tools](boot/initramfs/j71b/recovery/README.md) for individual producers.
+Choose new output paths. Producers use pinned upstream revisions, hardware patches and public toolchains. Their `.work` cache lives beside the installed producer, so use a writable virtual environment. Kernel/module builds enforce matching kernel releases. See [kernel/README.md](kernel/README.md) and [recovery tools](boot/initramfs/recovery/README.md) for individual producers.
 
 The m1n1 backend is unbranded by default. A distro can pass `--extra-patch FILE`, `--include-header FILE`, and `--extra-cflags FLAGS` for its own presentation.
 
@@ -37,7 +37,6 @@ The m1n1 backend is unbranded by default. A distro can pass `--extra-patch FILE`
 - `image/recovery.py`: recovery assembly, newc packing and m1n1 framing.
 - `runtime/j71b`: archive containment, staging cleanup, storage fencing and PID-1 handoff.
 - [Root-image cache](docs/root-image-cache.md): optional public compressed-root reuse on existing ext4 storage.
-- `devices/j71b/touch/runtime`: device activation scripts.
 
 Image builders pass a `--policy-dir` containing `image_policy.py` and supporting modules. The policy is staged into the image, not imported on the host. It supplies `ready`, `validate_root`, `validate_handoff`, `verify_privileges`, `verify_session_access`, `diagnostics`, and `INIT`; diagnostic retirement also uses `stop_diagnostics` and `DIAGNOSTICS_EXECUTABLE`. Desktop and init policy belong to the image, not the shared hardware runtime.
 

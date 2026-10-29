@@ -1,0 +1,59 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Paul Praschl <praschlpaul@g-p.at>
+Date: Sun, 26 Jul 2026 17:17:02 +0200
+Subject: [PATCH 035/117] dt-bindings: net: brcmfmac: allow NVMEM calibration
+
+Describe optional named NVMEM cells for a device MAC address and
+Broadcom calibration data. Platforms can therefore reference
+loader-provided board data without embedding private MAC or calibration
+bytes in the device tree.
+
+Signed-off-by: Paul Praschl <praschlpaul@g-p.at>
+
+Orchard-replay-of: 16a17e08c373279f78bbc6e6cb9d26137c673466
+---
+ .../net/wireless/brcm,bcm4329-fmac.yaml       | 24 +++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/net/wireless/brcm,bcm4329-fmac.yaml b/Documentation/devicetree/bindings/net/wireless/brcm,bcm4329-fmac.yaml
+index 81fd3e374..88f190cbd 100644
+--- a/Documentation/devicetree/bindings/net/wireless/brcm,bcm4329-fmac.yaml
++++ b/Documentation/devicetree/bindings/net/wireless/brcm,bcm4329-fmac.yaml
+@@ -105,6 +105,24 @@ properties:
+       should be filled in by the bootloader from platform configuration
+       data, if necessary, and will be uploaded to the device if present.
+ 
++  nvmem-cells:
++    minItems: 1
++    items:
++      - description: Reference to an nvmem cell named in nvmem-cell-names
++      - description: Reference to an nvmem cell named in nvmem-cell-names
++    description:
++      Reference to nvmem nodes for the MAC address and/or calibration data.
++
++  nvmem-cell-names:
++    oneOf:
++      - items:
++          - const: mac-address
++      - items:
++          - const: calibration
++      - items:
++          - const: mac-address
++          - const: calibration
++
+   brcm,board-type:
+     $ref: /schemas/types.yaml#/definitions/string
+     description: Overrides the board type, which is normally the compatible of
+@@ -136,6 +154,12 @@ required:
+   - compatible
+   - reg
+ 
++dependentRequired:
++  nvmem-cells:
++    - nvmem-cell-names
++  nvmem-cell-names:
++    - nvmem-cells
++
+ unevaluatedProperties: false
+ 
+ examples:

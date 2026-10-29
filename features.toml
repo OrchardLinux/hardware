@@ -1,0 +1,16 @@
+# Feature vocabulary for devices/*/device.toml [features], in display order.
+# States: working, partial, untested, missing, none (the model has no such hardware).
+display = "Display"
+touch = "Touchscreen"
+wifi = "Wi-Fi"
+bluetooth = "Bluetooth"
+storage = "Internal storage"
+battery = "Battery status"
+charging = "Charging control"
+backlight = "Backlight"
+buttons = "Buttons"
+audio = "Audio"
+camera = "Cameras"
+cellular = "Cellular"
+suspend = "Suspend"
+gpu = "GPU acceleration"
