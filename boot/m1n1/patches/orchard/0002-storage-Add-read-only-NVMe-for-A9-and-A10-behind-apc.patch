@@ -25,11 +25,11 @@ Rust side already does.
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  Makefile         |    1 +
- src/apcie_nvme.c | 1153 ++++++++++++++++++++++++++++++++++++++++++++++
+ src/apcie_nvme.c | 1162 ++++++++++++++++++++++++++++++++++++++++++++++
  src/apcie_nvme.h |   11 +
  src/chainload.c  |    6 +-
  src/utils.c      |   18 +-
- 5 files changed, 1185 insertions(+), 4 deletions(-)
+ 5 files changed, 1194 insertions(+), 4 deletions(-)
  create mode 100644 src/apcie_nvme.c
  create mode 100644 src/apcie_nvme.h
 
@@ -47,10 +47,10 @@ index 4c02f7b..6f51220 100644
  	chainload.o \
 diff --git a/src/apcie_nvme.c b/src/apcie_nvme.c
 new file mode 100644
-index 0000000..eaa0f52
+index 0000000..eb6d743
 --- /dev/null
 +++ b/src/apcie_nvme.c
-@@ -0,0 +1,1153 @@
+@@ -0,0 +1,1162 @@
 +/* SPDX-License-Identifier: MIT */
 +/*
 + * Read-only NVMe for A9 (S8003) and A10 (T8010), where ANS is an NVMe
@@ -788,8 +788,17 @@ index 0000000..eaa0f52
 +    write32(root + 0x20, window << 16 | window);
 +    set32(root + 0x04, 0x6);
 +
++    /*
++     * The endpoint may not answer configuration requests right after link
++     * training; PCIe allows up to 1 s (Linux's PCI core waits as well).
++     */
 +    u64 ep = cfg_addr(1);
 +    u32 ids = read32(ep);
++    u64 timeout = timeout_calculate(1000000);
++    while ((ids & 0xffff) != 0x106b && !timeout_expired(timeout)) {
++        udelay(1000);
++        ids = read32(ep);
++    }
 +    if ((ids & 0xffff) != 0x106b) {
 +        printf("apcie-nvme: unexpected endpoint 0x%08x\n", ids);
 +        return -1;

@@ -116,6 +116,13 @@ to see whether powering the domain off helps or hurts.
 
 Pass: BL-00's kernel boots from the boot partition instead of the host.
 
+**BL-04 result (J71b, 2026-10-29): the C backend passed.** Patch `boot/m1n1/patches/orchard/0002`, test [bl04_generic.py](bl04_generic.py).
+- `main_storage_init()` succeeded. Through the generic proxy ops alone, m1n1 read the GPT: disk GUID `40bf8b49-…`, partitions 1 and 3.
+- 256 single-block reads took 0.36 s, about 1.4 ms per USB round trip.
+- `main_storage_shutdown()` finished cleanly.
+- The first run read the endpoint's config space as `0xffffffff` right after link-up. The C code is fast enough to ask before the endpoint answers, so the backend now polls the vendor ID for up to 1 s, as PCIe allows.
+- Afterwards Linux booted to a normal console: no IRQ 60 storm, no I²C resets. NVMe under Linux after the C path is still unchecked, because the recovery's USB serial shell didn't answer. That happened once before with a normal boot as well, so it looks like a separate recovery console issue.
+
 ## Per-device menu
 
 Every device runs [bl04_generic.py](bl04_generic.py) once during bring-up: it uses only
@@ -124,7 +131,7 @@ boots Linux and checks NVMe (BL-03).
 
 | Devices | SoC | m1n1 storage backend (match) | State |
 |---|---|---|---|
-| iPad 6 J71b/J72b, iPad 7 J171/J172, iPhone 7 D10/D11/D101/D111 | T8010 | Orchard `apcie_nvme` (`apcie,t8010`) | J71b: Python sequence passed BL-02/03; C backend pending BL-04. Others: inferred from the same SoC and ADT-driven setup |
+| iPad 6 J71b/J72b, iPad 7 J171/J172, iPhone 7 D10/D11/D101/D111 | T8010 | Orchard `apcie_nvme` (`apcie,t8010`) | J71b: BL-02/03 passed (Python), BL-04 passed (C). Others: inferred from the same SoC and ADT-driven setup |
 | iPad 5 J71t/J72t | S8003 (TSMC) | Orchard `apcie_nvme` (`apcie,s8003`) | Ported from the integrated Linux S8003 code (Berkay Kösebay). Untested |
 | iPad 5 J71s/J72s | S8000 (Samsung) | None yet | Its root complex differs (no phy-ip) and has no Linux description either |
 | iPad Air 2 J81/J82 | T7001 | Hoolock `ans1` (`iop,s5l8960x` on `/arm-io/ans`) | Hoolock states A7/A8/A8X. Not checked against a J81 ADT; Linux storage on the Air 2 is still missing |
