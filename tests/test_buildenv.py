@@ -24,6 +24,15 @@ class BuildEnvironment(unittest.TestCase):
             self.assertIn('ORCHARD_SRC=/src', argv)
             self.assertEqual(argv[-3:], ['builder', 'make', '-j2'])
 
+    def test_host_architecture_builds_name_the_host_architecture(self):
+        # An arm64 recipe re-points shared base tags; host builds must not inherit that.
+        for machine, arch in (('x86_64', 'amd64'), ('aarch64', 'arm64'), ('arm64', 'arm64')):
+            with self.subTest(machine=machine), patch.dict(os.environ, {'ORCHARD_BUILD_NATIVE': '0'}), \
+                 patch.object(buildenv.platform, 'machine', return_value=machine), \
+                 patch.object(buildenv.subprocess, 'run') as run:
+                buildenv.build('builder', Path('Containerfile'), Path('.'))
+                self.assertEqual(run.call_args.args[0][:4], ['podman', 'build', '--arch', arch])
+
     def test_native_execution_uses_real_paths_not_podman(self):
         with patch.dict(os.environ, {'ORCHARD_BUILD_NATIVE': '1', 'ORCHARD_BUILD_ENV_ID': 'test-toolchain'}), \
              patch.object(buildenv.platform, 'system', return_value='Linux'), \
