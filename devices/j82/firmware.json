@@ -1,0 +1,372 @@
+{
+  "schema": 2,
+  "device": "iPad5,4",
+  "ipsw": {
+    "version": "15.8.8",
+    "build": "19H422",
+    "url": "https://updates.cdn-apple.com/2025FallFCS/fullrestores/122-77369/9704B32E-FACF-4595-93E4-E35EDD25E793/iPad_64bit_TouchID_15.8.8_19H422_Restore.ipsw",
+    "bytes": 5046203202,
+    "sha256": "4de5c8c453328205b1e741faae218ee0f7848993334ff77f690c5a64a765a623"
+  },
+  "inputs": {
+    "P-rieslingb_M-STEL_V-m__m-3.8.txt": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-m__m-3.8.txt"
+      },
+      "device": "/usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-m__m-3.8.txt",
+      "sha256": "16c70c76c9ecf9b23c5459bf6396e1099eda0fdd4ef442e5590a2361f4674685"
+    },
+    "P-rieslingb_M-STEL_V-m__m-3.9.txt": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-m__m-3.9.txt"
+      },
+      "device": "/usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-m__m-3.9.txt",
+      "sha256": "16c70c76c9ecf9b23c5459bf6396e1099eda0fdd4ef442e5590a2361f4674685"
+    },
+    "P-rieslingb_M-STEL_V-m__m-4.0.txt": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-m__m-4.0.txt"
+      },
+      "device": "/usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-m__m-4.0.txt",
+      "sha256": "16c70c76c9ecf9b23c5459bf6396e1099eda0fdd4ef442e5590a2361f4674685"
+    },
+    "P-rieslingb_M-STEL_V-m__m-4.1.txt": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-m__m-4.1.txt"
+      },
+      "device": "/usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-m__m-4.1.txt",
+      "sha256": "16c70c76c9ecf9b23c5459bf6396e1099eda0fdd4ef442e5590a2361f4674685"
+    },
+    "P-rieslingb_M-STEL_V-m__m-4.11.txt": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-m__m-4.11.txt"
+      },
+      "device": "/usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-m__m-4.11.txt",
+      "sha256": "16c70c76c9ecf9b23c5459bf6396e1099eda0fdd4ef442e5590a2361f4674685"
+    },
+    "P-rieslingb_M-STEL_V-m__m-4.13.txt": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-m__m-4.13.txt"
+      },
+      "device": "/usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-m__m-4.13.txt",
+      "sha256": "16c70c76c9ecf9b23c5459bf6396e1099eda0fdd4ef442e5590a2361f4674685"
+    },
+    "P-rieslingb_M-STEL_V-m__m-4.2.txt": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-m__m-4.2.txt"
+      },
+      "device": "/usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-m__m-4.2.txt",
+      "sha256": "16c70c76c9ecf9b23c5459bf6396e1099eda0fdd4ef442e5590a2361f4674685"
+    },
+    "P-rieslingb_M-STEL_V-m__m-4.3.txt": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-m__m-4.3.txt"
+      },
+      "device": "/usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-m__m-4.3.txt",
+      "sha256": "16c70c76c9ecf9b23c5459bf6396e1099eda0fdd4ef442e5590a2361f4674685"
+    },
+    "P-rieslingb_M-STEL_V-m__m-4.6.txt": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-m__m-4.6.txt"
+      },
+      "device": "/usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-m__m-4.6.txt",
+      "sha256": "16c70c76c9ecf9b23c5459bf6396e1099eda0fdd4ef442e5590a2361f4674685"
+    },
+    "P-rieslingb_M-STEL_V-m__m-4.7.txt": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-m__m-4.7.txt"
+      },
+      "device": "/usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-m__m-4.7.txt",
+      "sha256": "16c70c76c9ecf9b23c5459bf6396e1099eda0fdd4ef442e5590a2361f4674685"
+    },
+    "P-rieslingb_M-STEL_V-m__m-4.9.txt": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-m__m-4.9.txt"
+      },
+      "device": "/usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-m__m-4.9.txt",
+      "sha256": "16c70c76c9ecf9b23c5459bf6396e1099eda0fdd4ef442e5590a2361f4674685"
+    },
+    "P-rieslingb_M-STEL_V-u__m-2.10.txt": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-u__m-2.10.txt"
+      },
+      "device": "/usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-u__m-2.10.txt",
+      "sha256": "cce2e5bf37c9be098f48dbfb49571b2eedb17c78c3a5994edbef99bd13fce570"
+    },
+    "P-rieslingb_M-STEL_V-u__m-2.11.txt": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-u__m-2.11.txt"
+      },
+      "device": "/usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-u__m-2.11.txt",
+      "sha256": "cce2e5bf37c9be098f48dbfb49571b2eedb17c78c3a5994edbef99bd13fce570"
+    },
+    "P-rieslingb_M-STEL_V-u__m-3.0.txt": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-u__m-3.0.txt"
+      },
+      "device": "/usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-u__m-3.0.txt",
+      "sha256": "cce2e5bf37c9be098f48dbfb49571b2eedb17c78c3a5994edbef99bd13fce570"
+    },
+    "P-rieslingb_M-STEL_V-u__m-3.1.txt": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-u__m-3.1.txt"
+      },
+      "device": "/usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-u__m-3.1.txt",
+      "sha256": "cce2e5bf37c9be098f48dbfb49571b2eedb17c78c3a5994edbef99bd13fce570"
+    },
+    "P-rieslingb_M-STEL_V-u__m-3.4.txt": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-u__m-3.4.txt"
+      },
+      "device": "/usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-u__m-3.4.txt",
+      "sha256": "cce2e5bf37c9be098f48dbfb49571b2eedb17c78c3a5994edbef99bd13fce570"
+    },
+    "P-rieslingb_M-STEL_V-u__m-3.5.txt": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-u__m-3.5.txt"
+      },
+      "device": "/usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-u__m-3.5.txt",
+      "sha256": "cce2e5bf37c9be098f48dbfb49571b2eedb17c78c3a5994edbef99bd13fce570"
+    },
+    "P-rieslingb_M-STEL_V-u__m-3.9.txt": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-u__m-3.9.txt"
+      },
+      "device": "/usr/share/firmware/wifi/C-4350__s-C2/P-rieslingb_M-STEL_V-u__m-3.9.txt",
+      "sha256": "cce2e5bf37c9be098f48dbfb49571b2eedb17c78c3a5994edbef99bd13fce570"
+    },
+    "rieslingb.clmb": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4350__s-C2/rieslingb.clmb"
+      },
+      "device": "/usr/share/firmware/wifi/C-4350__s-C2/rieslingb.clmb",
+      "sha256": "e033a748cb0f309068a9efad7eece247aa69252444bc4dcd0026050793e66039"
+    },
+    "rieslingb.trx": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4350__s-C2/rieslingb.trx"
+      },
+      "device": "/usr/share/firmware/wifi/C-4350__s-C2/rieslingb.trx",
+      "sha256": "fb1c8d1d73c6742226bd12a19d09630190f4cac053792a6bae96aab6bc1e59f8"
+    },
+    "rieslingb.txcb": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4350__s-C2/rieslingb.txcb"
+      },
+      "device": "/usr/share/firmware/wifi/C-4350__s-C2/rieslingb.txcb",
+      "sha256": "00d2b4fc7e294d33bd061c3e57a54d7ffdac41bec08274a5619cf7fee077eafc"
+    }
+  },
+  "outputs": [
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4350c2-pcie.apple,rieslingb-STEL-m-3.8.txt",
+      "sha256": "16c70c76c9ecf9b23c5459bf6396e1099eda0fdd4ef442e5590a2361f4674685",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-rieslingb_M-STEL_V-m__m-3.8.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4350c2-pcie.apple,rieslingb-STEL-m-3.9.txt",
+      "sha256": "16c70c76c9ecf9b23c5459bf6396e1099eda0fdd4ef442e5590a2361f4674685",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-rieslingb_M-STEL_V-m__m-3.9.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4350c2-pcie.apple,rieslingb-STEL-m-4.0.txt",
+      "sha256": "16c70c76c9ecf9b23c5459bf6396e1099eda0fdd4ef442e5590a2361f4674685",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-rieslingb_M-STEL_V-m__m-4.0.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4350c2-pcie.apple,rieslingb-STEL-m-4.1.txt",
+      "sha256": "16c70c76c9ecf9b23c5459bf6396e1099eda0fdd4ef442e5590a2361f4674685",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-rieslingb_M-STEL_V-m__m-4.1.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4350c2-pcie.apple,rieslingb-STEL-m-4.11.txt",
+      "sha256": "16c70c76c9ecf9b23c5459bf6396e1099eda0fdd4ef442e5590a2361f4674685",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-rieslingb_M-STEL_V-m__m-4.11.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4350c2-pcie.apple,rieslingb-STEL-m-4.13.txt",
+      "sha256": "16c70c76c9ecf9b23c5459bf6396e1099eda0fdd4ef442e5590a2361f4674685",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-rieslingb_M-STEL_V-m__m-4.13.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4350c2-pcie.apple,rieslingb-STEL-m-4.2.txt",
+      "sha256": "16c70c76c9ecf9b23c5459bf6396e1099eda0fdd4ef442e5590a2361f4674685",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-rieslingb_M-STEL_V-m__m-4.2.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4350c2-pcie.apple,rieslingb-STEL-m-4.3.txt",
+      "sha256": "16c70c76c9ecf9b23c5459bf6396e1099eda0fdd4ef442e5590a2361f4674685",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-rieslingb_M-STEL_V-m__m-4.3.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4350c2-pcie.apple,rieslingb-STEL-m-4.6.txt",
+      "sha256": "16c70c76c9ecf9b23c5459bf6396e1099eda0fdd4ef442e5590a2361f4674685",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-rieslingb_M-STEL_V-m__m-4.6.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4350c2-pcie.apple,rieslingb-STEL-m-4.7.txt",
+      "sha256": "16c70c76c9ecf9b23c5459bf6396e1099eda0fdd4ef442e5590a2361f4674685",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-rieslingb_M-STEL_V-m__m-4.7.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4350c2-pcie.apple,rieslingb-STEL-m-4.9.txt",
+      "sha256": "16c70c76c9ecf9b23c5459bf6396e1099eda0fdd4ef442e5590a2361f4674685",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-rieslingb_M-STEL_V-m__m-4.9.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4350c2-pcie.apple,rieslingb-STEL-u-2.10.txt",
+      "sha256": "cce2e5bf37c9be098f48dbfb49571b2eedb17c78c3a5994edbef99bd13fce570",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-rieslingb_M-STEL_V-u__m-2.10.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4350c2-pcie.apple,rieslingb-STEL-u-2.11.txt",
+      "sha256": "cce2e5bf37c9be098f48dbfb49571b2eedb17c78c3a5994edbef99bd13fce570",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-rieslingb_M-STEL_V-u__m-2.11.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4350c2-pcie.apple,rieslingb-STEL-u-3.0.txt",
+      "sha256": "cce2e5bf37c9be098f48dbfb49571b2eedb17c78c3a5994edbef99bd13fce570",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-rieslingb_M-STEL_V-u__m-3.0.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4350c2-pcie.apple,rieslingb-STEL-u-3.1.txt",
+      "sha256": "cce2e5bf37c9be098f48dbfb49571b2eedb17c78c3a5994edbef99bd13fce570",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-rieslingb_M-STEL_V-u__m-3.1.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4350c2-pcie.apple,rieslingb-STEL-u-3.4.txt",
+      "sha256": "cce2e5bf37c9be098f48dbfb49571b2eedb17c78c3a5994edbef99bd13fce570",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-rieslingb_M-STEL_V-u__m-3.4.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4350c2-pcie.apple,rieslingb-STEL-u-3.5.txt",
+      "sha256": "cce2e5bf37c9be098f48dbfb49571b2eedb17c78c3a5994edbef99bd13fce570",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-rieslingb_M-STEL_V-u__m-3.5.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4350c2-pcie.apple,rieslingb-STEL-u-3.9.txt",
+      "sha256": "cce2e5bf37c9be098f48dbfb49571b2eedb17c78c3a5994edbef99bd13fce570",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-rieslingb_M-STEL_V-u__m-3.9.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4350c2-pcie.apple,rieslingb.clm_blob",
+      "sha256": "e033a748cb0f309068a9efad7eece247aa69252444bc4dcd0026050793e66039",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "rieslingb.clmb"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4350c2-pcie.apple,rieslingb.bin",
+      "sha256": "fb1c8d1d73c6742226bd12a19d09630190f4cac053792a6bae96aab6bc1e59f8",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "rieslingb.trx"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4350c2-pcie.apple,rieslingb.txcap_blob",
+      "sha256": "00d2b4fc7e294d33bd061c3e57a54d7ffdac41bec08274a5619cf7fee077eafc",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "rieslingb.txcb"
+        }
+      ]
+    }
+  ]
+}

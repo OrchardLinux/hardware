@@ -1,0 +1,31 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <henrik@goat-code.com>
+Date: Fri, 30 Oct 2026 05:22:32 +0800
+Subject: [PATCH] Input: apple_z2: Add the J71b SPI device ID
+
+The SPI core reports an SPI device's modalias as "spi:<compatible
+without vendor>", so module autoloading looks up the driver's
+spi_device_id table, not its OF match table. The J71b touchscreen had no
+entry there: the core warned "SPI driver apple-z2 has no spi_device_id
+for apple,j71b-touchscreen", and a system that loads drivers from
+uevents never loaded apple_z2 for it.
+
+Add the entry next to the other models'.
+
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+---
+ drivers/input/touchscreen/apple_z2.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/input/touchscreen/apple_z2.c b/drivers/input/touchscreen/apple_z2.c
+index 097ef91..8afc6c8 100644
+--- a/drivers/input/touchscreen/apple_z2.c
++++ b/drivers/input/touchscreen/apple_z2.c
+@@ -3016,6 +3016,7 @@ MODULE_DEVICE_TABLE(of, apple_z2_of_match);
+ static struct spi_device_id apple_z2_of_id[] = {
+ 	{ .name = "j293-touchbar", .driver_data = (kernel_ulong_t)&apple_z2_j293_info },
+ 	{ .name = "j493-touchbar", .driver_data = (kernel_ulong_t)&apple_z2_j493_info },
++	{ .name = "j71b-touchscreen", .driver_data = (kernel_ulong_t)&apple_z2_j71b_info },
+ 	{ .name = "j172-touchscreen", .driver_data = (kernel_ulong_t)&apple_z2_j172_info },
+ 	{ .name = "d11-touchscreen", .driver_data = (kernel_ulong_t)&apple_z2_d11_info },
+ 	{ .name = "d111-touchscreen", .driver_data = (kernel_ulong_t)&apple_z2_d111_info },

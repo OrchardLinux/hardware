@@ -35,6 +35,7 @@ reset-gpios, and endpoint power from pwrctrl. No T8010 behaviour
 changes.
 
 [Orchard: from mattonik/ipad-nixos b94d42f kernel/patches/0016-pcie-apple-t7000-compile-only-skeleton.patch, 0040-pcie-apple-t7000-tuning-baseline-test.patch, 0041-pcie-apple-t7000-dbi-ecam-read-test.patch, 0042-pcie-apple-t7000-dbi-tunables-write-test.patch, 0043-pcie-apple-t7000-link-state-probe-test.patch, 0044-pcie-apple-t7000-link-wait-write-test.patch, 0045-pcie-apple-t7000-link-speed-write-test.patch, 0053-pcie-apple-t7000-link-wait-dllla.patch, 0054-pcie-apple-t7000-clean-up.patch, 0056-pcie-apple-t7000-derive-msi-port-values.patch, 0057-pcie-apple-t7000-msi-domain.patch, handed to Orchard by micro23 (ipadair2-omarchy 7ea2b2b); rewritten as a T7000 variant of pcie-apple-h9p.c instead of a separate driver: the port comes from DT instead of a fixed port 1, the per-port window is mapped exclusively by name (the DART node must not cover it), the H9P MSI domain and port interrupts replace the driver's own, Wi-Fi power and device-wake move to pwrctrl (0052, 0067), and the debug dumps, debugfs and test parameters (0066, 0067) are dropped; the 10/100 us delays use usleep_range()]
+Signed-off-by: Martin Puškáč <martin@icebear.sk>
 Co-developed-by: Henrik Klee <henrik@goat-code.com>
 Signed-off-by: Henrik Klee <henrik@goat-code.com>
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

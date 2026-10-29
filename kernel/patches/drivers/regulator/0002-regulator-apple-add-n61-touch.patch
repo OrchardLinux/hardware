@@ -1,0 +1,47 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Shayne Legault <8741557+shaynelegault@users.noreply.github.com>
+Date: Thu, 29 Oct 2026 11:46:46 -0600
+Subject: [PATCH] regulator: apple: Add N61 touch supplies
+
+Add D2186 LDO14 for the N61 touchscreen core supply. The analog supply
+reuses chestnut-touch-hv, which owns register 0x05 bit 4 and supplies its
+existing enable_time and off_on_delay.
+
+The touchscreen changes only its own rails. Chestnut's display supplies
+retain the state established by the framebuffer boot path.
+
+Signed-off-by: Shayne Legault <8741557+shaynelegault@users.noreply.github.com>
+
+---
+diff --git a/drivers/regulator/apple-pmic-touch-regulator.c b/drivers/regulator/apple-pmic-touch-regulator.c
+--- a/drivers/regulator/apple-pmic-touch-regulator.c
++++ b/drivers/regulator/apple-pmic-touch-regulator.c
+@@ -17,6 +17,17 @@
+ 	.enable = regulator_enable_regmap,
+ 	.disable = regulator_disable_regmap,
+ 	.is_enabled = regulator_is_enabled_regmap,
++};
++
++static const struct regulator_desc apple_d2186_touch_core = {
++	.name = "d2186-touch-core",
++	.ops = &apple_pmic_touch_regulator_ops,
++	.type = REGULATOR_VOLTAGE,
++	.owner = THIS_MODULE,
++	.enable_reg = 0x85,
++	.enable_mask = 0x02,
++	.enable_val = 0x02,
++	.disable_val = 0,
+ };
+ 
+ static const struct regulator_desc apple_adelyn_touch_core = {
+@@ -73,6 +84,10 @@
+ 
+ static const struct of_device_id apple_pmic_touch_regulator_of_match[] = {
+ 	{
++		.compatible = "apple,d2186-touch-core-regulator",
++		.data = &apple_d2186_touch_core,
++	},
++	{
+ 		.compatible = "apple,adelyn-touch-core-regulator",
+ 		.data = &apple_adelyn_touch_core,
+ 	},

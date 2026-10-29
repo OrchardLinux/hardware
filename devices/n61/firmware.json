@@ -1,0 +1,39 @@
+{
+  "schema": 2,
+  "device": "iPhone7,2",
+  "ipsw": {
+    "version": "12.5.1",
+    "build": "16H22",
+    "url": "https://updates.cdn-apple.com/2021WinterFCS/fullrestores/001-90777/D1E46A9D-8C08-41DA-AA56-013C1D118A57/iPhone_4.7_12.5.1_16H22_Restore.ipsw",
+    "bytes": 3036811777,
+    "sha256": "ca18b1c4586630d50effe03af9879a7f2aefd0a9ce3d9c4208154e495b2d79f6"
+  },
+  "inputs": {
+    "N61.mtprops": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/multitouch/N61.mtprops"
+      },
+      "device": "/usr/share/firmware/multitouch/N61.mtprops",
+      "sha256": "b33e095df3040ccbcddaecec215d63c08c1f30235e47b8868c33d1bd2fb83f45"
+    }
+  },
+  "outputs": [
+    {
+      "destination": "lib/firmware/apple/n61-fwstart.z2fw",
+      "sha256": "51d2ef7b25c1d7e323fa703b531223312cb76f7183fbeb425f921dd6e5509294",
+      "steps": [
+        {
+          "step": "z2fw-from-mtprops@3",
+          "input": "N61.mtprops",
+          "profile": "C1F59,1",
+          "packet": "Z2",
+          "touch_maximum": 1024,
+          "prox_maximum": 128,
+          "fll_mval": 6099,
+          "ref_clk_div": 2,
+          "clk32_clock_enable": 1
+        }
+      ]
+    }
+  ]
+}

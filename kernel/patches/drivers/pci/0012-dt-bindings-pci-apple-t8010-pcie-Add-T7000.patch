@@ -20,6 +20,7 @@ power-domain layout, and move the T8010-only requirements (PHY and
 NVMMU windows, clocks, NVMMU properties) under a condition.
 
 [Orchard: from mattonik/ipad-nixos b94d42f kernel/patches/0052-pcie-apple-t7000-j81-reg-on.patch, 0057-pcie-apple-t7000-msi-domain.patch, handed to Orchard by micro23 (ipadair2-omarchy 7ea2b2b); folded into the existing H9P binding instead of a separate apple,t7000-pcie.yaml; dropped apple,reg-on-pmic (Wi-Fi power is a vdd-supply on the endpoint), apple,iova-window and apple,iova-rebase (the DMA window is the five-cell iommu-map); added named reg windows, port interrupts and the three power domains]
+Signed-off-by: Martin Puškáč <martin@icebear.sk>
 Co-developed-by: Henrik Klee <henrik@goat-code.com>
 Signed-off-by: Henrik Klee <henrik@goat-code.com>
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
