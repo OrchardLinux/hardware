@@ -1,0 +1,36 @@
+#!/bin/busybox sh
+# This helper executes only RAM tools while inspecting the remote root.
+set -eu
+. /etc/orchard/nfs.conf
+reject() { echo "NFS root rejected: $*" >&2; exit 1; }
+[ "$(uname -m)" = "$NFS_ARCHITECTURE" ] || reject 'CPU ABI differs'
+[ "$(uname -r)" = "$NFS_KERNEL_RELEASE" ] || reject 'kernel release differs'
+matched=false
+for compatible in $NFS_COMPATIBLE; do
+    if tr '\000' '\n' < /proc/device-tree/compatible | grep -Fqx "$compatible"; then matched=true; fi
+done
+[ "$matched" = true ] || reject 'device tree differs'
+[ "${1:-}" != --board ] || exit 0
+root=${1:-/newroot}
+for directory in etc etc/orchard usr usr/lib usr/lib/systemd usr/lib/modules \
+    "usr/lib/modules/$NFS_KERNEL_RELEASE" dev proc sys run; do
+    [ -d "$root/$directory" ] && [ ! -L "$root/$directory" ] || reject "invalid $directory"
+done
+safe_file() {
+    [ -f "$1" ] && [ ! -L "$1" ] || reject 'missing regular root file'
+    [ "$(stat -c %u "$1")" = 0 ] || reject 'root file has another owner'
+    mode=$(stat -c %a "$1")
+    [ $((0$mode & 0022)) -eq 0 ] || reject 'root file permits group/other writes'
+}
+metadata=$root/etc/orchard/nfs-root.json
+safe_file "$metadata"
+set -- $(sha256sum "$metadata")
+[ "$1" = "$NFS_IDENTITY_SHA256" ] || reject 'root receipt differs'
+systemd=$root/usr/lib/systemd/systemd
+safe_file "$systemd"
+[ -x "$systemd" ] || reject 'systemd is not executable'
+# ELF64, little endian, AArch64. Do not invoke a binary from the NFS root here.
+header=$(dd if="$systemd" bs=1 count=6 2>/dev/null | od -An -v -tx1 | tr -d ' \n')
+machine=$(dd if="$systemd" bs=1 skip=18 count=2 2>/dev/null | od -An -v -tx1 | tr -d ' \n')
+[ "$header:$machine" = 7f454c460201:b700 ] || reject 'systemd ELF ABI differs'
+safe_file "$root/usr/lib/modules/$NFS_KERNEL_RELEASE/modules.dep"

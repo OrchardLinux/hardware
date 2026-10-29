@@ -57,6 +57,19 @@ if "$resume"; then
     echo 'No matching source to resume' >&2; exit 1;
   }
   cmp -s "$applied" <(patch_list) || { echo 'm1n1 patch set changed; use a fresh build directory' >&2; exit 1; }
+  # Confirm the source still contains every layer without changing its real
+  # index or discarding unrelated edits. Later patches may overlap earlier
+  # ones, so unwind the series in reverse inside a disposable index.
+  (
+    verification_dir=$(mktemp -d "${TMPDIR:-/tmp}/orchard-m1n1-resume.XXXXXX")
+    trap 'rm -rf "$verification_dir"' EXIT
+    export GIT_INDEX_FILE="$verification_dir/index"
+    git -C "$source" -c core.splitIndex=false read-tree HEAD
+    git -C "$source" -c core.splitIndex=false add --all -- .
+    for ((patch_index=${#patches[@]} - 1; patch_index >= 0; patch_index--)); do
+      git -C "$source" -c core.splitIndex=false apply --cached --reverse "${patches[patch_index]}"
+    done
+  )
 else
   [[ ! -e "$work" ]] || { echo 'Build directory exists; use --resume' >&2; exit 1; }
   mkdir -p "$source"

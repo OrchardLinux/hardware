@@ -13,6 +13,11 @@ on:
       reuse_package_run_id:
         description: Exact prior run supplying the unchanged hardware wheel (sdist is refreshed)
         required: false
+      verify_n61_kernel:
+        description: Build the N61 4 KiB kernel on an ARM64 runner (full compile, up to 6 hours)
+        required: false
+        type: boolean
+        default: false
 permissions:
   contents: read
   actions: read
@@ -54,6 +59,7 @@ jobs:
           fi
           python -m pip install build
           python -m build "${args[@]}"
+          python ci/audit_packages.py dist/*
       - uses: actions/upload-artifact@v4
         with:
           name: hardware-packages
@@ -147,6 +153,45 @@ jobs:
           path: |
             out/kernel-components.tar.gz
             out/kernel-source.tar.gz
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 2
+  kernel-n61-check:
+    if: github.event_name == 'workflow_dispatch' && inputs.verify_n61_kernel == true
+    needs: native-smoke
+    runs-on: ubuntu-24.04-arm
+    container: debian:bookworm
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+    env:
+      ORCHARD_BUILD_NATIVE: '1'
+      ORCHARD_BUILD_ENV_ID: debian-bookworm-arm64-llvm19
+    steps:
+      - run: apt-get update && apt-get install -y git ca-certificates python3 python3-venv
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: hardware-packages
+          path: out/packages
+      - name: Install the kernel toolchain and hardware wheel
+        run: |
+          bash kernel/install-toolchain
+          python3 -m venv .venv
+          .venv/bin/python -m pip install out/packages/*.whl
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+      - name: Build the N61 kernel, modules and device trees
+        run: |
+          bash kernel/build n61 --work-dir "$PWD/out/n61-work" --output "$PWD/out/n61-kernel"
+          dpkg-query -W > out/n61-toolchain-packages.lock
+          tar -C out -czf out/n61-kernel-check.tar.gz n61-kernel n61-toolchain-packages.lock
+      - uses: actions/upload-artifact@v4
+        with:
+          name: n61-kernel-check
+          path: out/n61-kernel-check.tar.gz
           compression-level: 0
           if-no-files-found: error
           retention-days: 2

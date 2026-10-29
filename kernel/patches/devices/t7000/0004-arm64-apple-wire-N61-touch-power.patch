@@ -1,0 +1,266 @@
+Subject: [PATCH] arm64: apple: wire N61 touch clock and PMIC supplies
+
+T7000 TOUCH uses the existing PMGR divider/gate layout at offset 0x1e000
+with a 24 MHz parent and 32768 Hz target. Add the T7000 match without
+changing the T8010 clock operations.
+
+N61 D2186 LDO14 is register 0x0085 bit 1. Chestnut LDO2 is register 0x05
+bit 4 and requires boost/Sage0 dependency bits 0..2. The touch regulator
+preserves those shared display bits when it disables LDO2.
+
+Describe the N61 reset, IRQ and board supplies with its touchscreen child
+enabled after physical power, ROM readiness and touch report qualification.
+Per-unit calibration enters through the native loader's touchscreen alias.
+
+Evidence: N61 16H22 xnu-4903.272.3~3/RELEASE_ARM64_T7000, kernel SHA256
+0145bc0eda01cd55e8b996d24ffc19c25712714326f893ba5085a5016d30a4ad;
+AppleT7000PMGR TOUCH dispatcher/setup, AppleD2186PMU pmuL selector14,
+and AppleChestnutDisplayPMU dpLE output2/options3. No vendor firmware or
+unit calibration bytes are included in this patch.
+
+---
+diff --git a/drivers/clk/clk-apple-t8010-touch.c b/drivers/clk/clk-apple-t8010-touch.c
+--- a/drivers/clk/clk-apple-t8010-touch.c
++++ b/drivers/clk/clk-apple-t8010-touch.c
+@@ -1,6 +1,6 @@
+ // SPDX-License-Identifier: GPL-2.0-only OR MIT
+ /*
+- * Apple T8010 touchscreen clock driver
++ * Apple T7000/T8010 touchscreen clock driver
+  *
+  * Copyright (C) Corellium LLC
+  * Copyright (C) Paul Praschl
+@@ -187,6 +187,7 @@
+ }
+ 
+ static const struct of_device_id apple_t8010_touch_clk_of_match[] = {
++	{ .compatible = "apple,t7000-touch-clock" },
+ 	{ .compatible = "apple,t8010-touch-clock" },
+ 	{ }
+ };
+@@ -201,6 +202,6 @@
+ };
+ module_platform_driver(apple_t8010_touch_clk_driver);
+ 
+-MODULE_DESCRIPTION("Apple T8010 touchscreen clock driver");
++MODULE_DESCRIPTION("Apple T7000/T8010 touchscreen clock driver");
+ MODULE_AUTHOR("Paul Praschl");
+ MODULE_LICENSE("Dual MIT/GPL");
+diff --git a/drivers/clk/Kconfig b/drivers/clk/Kconfig
+--- a/drivers/clk/Kconfig
++++ b/drivers/clk/Kconfig
+@@ -67,12 +67,12 @@
+ 	  generators of audio clocks.
+ 
+ config COMMON_CLK_APPLE_T8010_TOUCH
+-	bool "Clock driver for Apple T8010 touchscreens"
++	bool "Clock driver for Apple T7000/T8010 touchscreens"
+ 	depends on ARCH_APPLE || COMPILE_TEST
+ 	default ARCH_APPLE
+ 	help
+ 	  This driver supports the PMGR clock gate and divider used by
+-	  touchscreen controllers on A10/T8010 Apple devices. The clock
++	  touchscreen controllers on A8/T7000 and A10/T8010 Apple devices. The clock
+ 	  is required for firmware upload and runtime touch reports on
+ 	  iPad models using this controller.
+ 
+diff --git a/drivers/regulator/apple-pmic-touch-regulator.c b/drivers/regulator/apple-pmic-touch-regulator.c
+--- a/drivers/regulator/apple-pmic-touch-regulator.c
++++ b/drivers/regulator/apple-pmic-touch-regulator.c
+@@ -17,6 +17,58 @@
+ 	.enable = regulator_enable_regmap,
+ 	.disable = regulator_disable_regmap,
+ 	.is_enabled = regulator_is_enabled_regmap,
++};
++
++static int apple_chestnut_touch_ldo_enable(struct regulator_dev *rdev)
++{
++	struct regmap *regmap = rdev_get_regmap(rdev);
++	int error;
++
++	/* N61 LDO2 needs the shared boost and Sage0 display rails. */
++	error = regmap_update_bits(regmap, 0x05, 0x07, 0x07);
++	if (error)
++		return error;
++	return regulator_enable_regmap(rdev);
++}
++
++static int apple_chestnut_touch_ldo_is_enabled(struct regulator_dev *rdev)
++{
++	unsigned int value;
++	int error;
++
++	error = regmap_read(rdev_get_regmap(rdev), 0x05, &value);
++	if (error)
++		return error;
++	return (value & 0x17) == 0x17;
++}
++
++static const struct regulator_ops apple_chestnut_touch_ldo_ops = {
++	.enable = apple_chestnut_touch_ldo_enable,
++	/* Disable owns only bit 4. Shared display rails remain enabled. */
++	.disable = regulator_disable_regmap,
++	.is_enabled = apple_chestnut_touch_ldo_is_enabled,
++};
++
++static const struct regulator_desc apple_d2186_touch_core = {
++	.name = "d2186-touch-core",
++	.ops = &apple_pmic_touch_regulator_ops,
++	.type = REGULATOR_VOLTAGE,
++	.owner = THIS_MODULE,
++	.enable_reg = 0x85,
++	.enable_mask = 0x02,
++	.enable_val = 0x02,
++	.disable_val = 0,
++};
++
++static const struct regulator_desc apple_chestnut_touch_ldo = {
++	.name = "chestnut-touch-ldo",
++	.ops = &apple_chestnut_touch_ldo_ops,
++	.type = REGULATOR_VOLTAGE,
++	.owner = THIS_MODULE,
++	.enable_reg = 0x05,
++	.enable_mask = 0x10,
++	.enable_val = 0x10,
++	.disable_val = 0,
+ };
+ 
+ static const struct regulator_desc apple_adelyn_touch_core = {
+@@ -73,6 +125,14 @@
+ 
+ static const struct of_device_id apple_pmic_touch_regulator_of_match[] = {
+ 	{
++		.compatible = "apple,d2186-touch-core-regulator",
++		.data = &apple_d2186_touch_core,
++	},
++	{
++		.compatible = "apple,chestnut-touch-ldo-regulator",
++		.data = &apple_chestnut_touch_ldo,
++	},
++	{
+ 		.compatible = "apple,adelyn-touch-core-regulator",
+ 		.data = &apple_adelyn_touch_core,
+ 	},
+diff --git a/Documentation/devicetree/bindings/clock/apple,t8010-touch-clock.yaml b/Documentation/devicetree/bindings/clock/apple,t8010-touch-clock.yaml
+--- a/Documentation/devicetree/bindings/clock/apple,t8010-touch-clock.yaml
++++ b/Documentation/devicetree/bindings/clock/apple,t8010-touch-clock.yaml
+@@ -4,18 +4,20 @@
+ $id: http://devicetree.org/schemas/clock/apple,t8010-touch-clock.yaml#
+ $schema: http://devicetree.org/meta-schemas/core.yaml#
+ 
+-title: Apple T8010 touchscreen clock controller
++title: Apple T7000/T8010 touchscreen clock controller
+ 
+ maintainers:
+   - Paul Praschl <praschlpaul@g-p.at>
+ 
+ description:
+-  The T8010 PMGR contains a gate and integer divider for the 24 MHz clock
+-  consumed by the touchscreen controller.
++  The T7000 and T8010 PMGR contain a gate and integer divider for the
++  reference clock consumed by the touchscreen controller.
+ 
+ properties:
+   compatible:
+-    const: apple,t8010-touch-clock
++    enum:
++      - apple,t7000-touch-clock
++      - apple,t8010-touch-clock
+ 
+   reg:
+     maxItems: 1
+diff --git a/Documentation/devicetree/bindings/regulator/apple,pmic-touch-regulator.yaml b/Documentation/devicetree/bindings/regulator/apple,pmic-touch-regulator.yaml
+--- a/Documentation/devicetree/bindings/regulator/apple,pmic-touch-regulator.yaml
++++ b/Documentation/devicetree/bindings/regulator/apple,pmic-touch-regulator.yaml
+@@ -10,7 +10,7 @@
+   - Paul Praschl <praschlpaul@g-p.at>
+ 
+ description:
+-  Fixed touchscreen supply switches provided by the Adelyn and Chestnut
++  Fixed touchscreen supply switches provided by the D2186, Adelyn and Chestnut
+   PMICs. The compatible identifies both the PMIC and the physical supply;
+   register layout is an implementation detail of the regulator driver.
+ 
+@@ -22,6 +22,8 @@
+     enum:
+       - apple,adelyn-touch-core-regulator
+       - apple,chestnut-touch-hv-regulator
++      - apple,d2186-touch-core-regulator
++      - apple,chestnut-touch-ldo-regulator
+ 
+ required:
+   - compatible
+diff --git a/arch/arm64/boot/dts/apple/t7000-pmgr.dtsi b/arch/arm64/boot/dts/apple/t7000-pmgr.dtsi
+--- a/arch/arm64/boot/dts/apple/t7000-pmgr.dtsi
++++ b/arch/arm64/boot/dts/apple/t7000-pmgr.dtsi
+@@ -5,6 +5,16 @@
+  * Copyright (c) 2024, Nick Chan <towinchenmi@gmail.com>
+  */
+ &pmgr {
++	touchclk: clock-controller@1e000 {
++		compatible = "apple,t7000-touch-clock";
++		reg = <0x1e000 0x4>;
++		#clock-cells = <0>;
++		clocks = <&clkref>;
++		clock-output-names = "touchclk";
++		clock-frequency = <32768>;
++		status = "disabled";
++	};
++
+ 	ps_cpu0: power-controller@20000 {
+ 		compatible = "apple,t7000-pmgr-pwrstate", "apple,pmgr-pwrstate";
+ 		reg = <0x20000 4>;
+diff --git a/arch/arm64/boot/dts/apple/t7000-n61.dts b/arch/arm64/boot/dts/apple/t7000-n61.dts
+--- a/arch/arm64/boot/dts/apple/t7000-n61.dts
++++ b/arch/arm64/boot/dts/apple/t7000-n61.dts
+@@ -14,10 +14,50 @@
+ 
+ 	aliases {
+ 		spi2 = &spi2;
++		touchscreen0 = &touchscreen;
+ 	};
+ };
+ 
+ &spi2 {
+ 	cs-gpios = <&pinctrl 185 GPIO_ACTIVE_LOW>;
+ 	status = "okay";
++
++	touchscreen: touchscreen@0 {
++		compatible = "apple,n61-touchscreen";
++		reg = <0>;
++		spi-max-frequency = <500000>;
++		interrupts-extended = <&pinctrl 3 IRQ_TYPE_EDGE_FALLING>;
++		reset-gpios = <&pinctrl 2 GPIO_ACTIVE_LOW>;
++		ana-supply = <&touch_ana>;
++		core-supply = <&touch_core>;
++		clocks = <&touchclk>;
++		firmware-name = "apple/n61-fwstart.z2fw";
++		touchscreen-size-x = <750>;
++		touchscreen-size-y = <1334>;
++		/* Physical taps and swipes passed the experimental N61 NFS boot. */
++		status = "okay";
++	};
+ };
++
++&touchclk {
++	status = "okay";
++};
++
++&i2c0 {
++	pmic@74 {
++		touch_core: regulator-touch-core {
++			compatible = "apple,d2186-touch-core-regulator";
++			regulator-name = "n61-touch-core";
++		};
++	};
++
++	display-pmu@27 {
++		compatible = "apple,chestnut-pmic";
++		reg = <0x27>;
++
++		touch_ana: regulator-touch-ana {
++			compatible = "apple,chestnut-touch-ldo-regulator";
++			regulator-name = "n61-touch-ana";
++		};
++	};
++};

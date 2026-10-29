@@ -1,0 +1,136 @@
+Subject: [PATCH] spi: apple: add the T7000 legacy FIFO configuration
+
+T7000 spi-version1 shares the legacy register/FIFO layout. Its config
+uses base0x4000, independent CPHA/CPOL bits1/2 and a word-size index shifted
+by15. N61 mode0/8-bit programs0x4018, then0x4038 with PIO enabled.
+
+Keep the T8010 descriptor path behind its hardware flag. T7000 uses its
+own mode/word config for every transfer size and does not request DMA.
+This preserves the current T8010 config function and transport behavior.
+
+Evidence: exact N61 16H22 kernel AppleSamsungSPI config at
+0xfffffff007e8ba0c-0xfffffff007e8ba98; version1 constants at
+0xfffffff00704c420 are [15,0x4000,0x2000,16]. N61 tuple byte10=1 leaves
+endian bit0x2000 clear. Native startup verifies unshifted ROM words before
+any firmware upload.
+
+---
+diff --git a/Documentation/devicetree/bindings/spi/apple,spi.yaml b/Documentation/devicetree/bindings/spi/apple,spi.yaml
+--- a/Documentation/devicetree/bindings/spi/apple,spi.yaml
++++ b/Documentation/devicetree/bindings/spi/apple,spi.yaml
+@@ -21,6 +21,7 @@
+           - const: apple,t8103-spi
+       - items:
+           - enum:
++              - apple,t7000-spi
+               - apple,t8010-spi
+               - apple,t8103-spi
+               - apple,t8112-spi
+diff --git a/drivers/spi/spi-apple.c b/drivers/spi/spi-apple.c
+--- a/drivers/spi/spi-apple.c
++++ b/drivers/spi/spi-apple.c
+@@ -44,6 +44,7 @@
+ #define APPLE_SPI_CFG_FIFO_THRESH_8B	0
+ 
+ #define APPLE_SPI_CFG_T8010_BASE	0x0010401e
++#define APPLE_SPI_CFG_T7000_BASE	0x00004018
+ #define APPLE_SPI_CFG_T8010_PIOEN	BIT(5)
+ #define APPLE_SPI_CFG_T8010_16BIT	BIT(15)
+ 
+@@ -118,6 +119,7 @@
+ 
+ struct apple_spi_hw {
+ 	bool legacy_status;
++	bool legacy_descriptor;
+ 	unsigned int min_clk_div;
+ 	u32 default_word_delay;
+ };
+@@ -179,7 +181,8 @@
+ 		reg_write(spi, APPLE_SPI_IF_XFER, ~0);
+ 		reg_write(spi, APPLE_SPI_IF_FIFO, ~0);
+ 		reg_write(spi, APPLE_SPI_WORD_DELAY, spi->word_delay);
+-		reg_write(spi, APPLE_SPI_CFG, APPLE_SPI_CFG_T8010_BASE);
++		reg_write(spi, APPLE_SPI_CFG, spi->hw->legacy_descriptor ?
++			  APPLE_SPI_CFG_T8010_BASE : APPLE_SPI_CFG_T7000_BASE);
+ 		return;
+ 	}
+ 
+@@ -326,6 +329,21 @@
+ 	return ret;
+ }
+ 
++/* SPI version 1 uses a word-size index shifted by 15, separate from mode. */
++static u32 apple_spi_t7000_config(struct spi_device *device,
++				  unsigned int bits_per_word)
++{
++	u32 cfg = APPLE_SPI_CFG_T7000_BASE;
++
++	if (device->mode & SPI_CPHA)
++		cfg |= APPLE_SPI_CFG_CPHA;
++	if (device->mode & SPI_CPOL)
++		cfg |= APPLE_SPI_CFG_CPOL;
++	if (bits_per_word == 16)
++		cfg |= BIT(15);
++	return cfg;
++}
++
+ static u32 apple_spi_t8010_config(struct spi_device *device,
+ 				  unsigned int bits_per_word,
+ 				  bool use_descriptor)
+@@ -663,15 +681,23 @@
+ 		return ret;
+ 	speed_hz = clk_get_rate(spi->clk) / div;
+ 
+-	use_descriptor = apple_spi_t8010_uses_descriptor(t, words);
++	use_descriptor = spi->hw->legacy_descriptor &&
++			 apple_spi_t8010_uses_descriptor(t, words);
+ 	reg_write(spi, APPLE_SPI_CLKDIV, div);
+ 	reg_write(spi, APPLE_SPI_WORD_DELAY,
+ 		  apple_spi_t8010_word_delay(spi, device, use_descriptor));
+ 	apple_spi_t8010_prepare_xfer(spi, use_descriptor);
+ 
+-	cfg = apple_spi_t8010_config(device, bits_per_word, use_descriptor);
++	cfg = spi->hw->legacy_descriptor ?
++		apple_spi_t8010_config(device, bits_per_word, use_descriptor) :
++		apple_spi_t7000_config(device, bits_per_word);
+ 	if (use_descriptor)
+ 		cfg &= ~(APPLE_SPI_T8010_DESC_CFG_DEFAULT | BIT(0));
++	if (!spi->hw->legacy_descriptor)
++		dev_dbg(&device->dev,
++			"T7000 PIO cfg=%#x div=%u word-delay=%u words=%u bpw=%u\n",
++			(u32)(cfg | APPLE_SPI_CFG_T8010_PIOEN), div, spi->word_delay,
++			words, bits_per_word);
+ 
+ 	reg_write(spi, APPLE_SPI_RXCNT, words);
+ 	reg_write(spi, APPLE_SPI_TXCNT, words);
+@@ -984,7 +1010,7 @@
+ 	ctlr->flags |= SPI_CONTROLLER_GPIO_SS;
+ 	ctlr->auto_runtime_pm = true;
+ 
+-	if (spi->hw->legacy_status) {
++	if (spi->hw->legacy_descriptor) {
+ 		ctlr->dma_tx = dma_request_chan(&pdev->dev, "tx");
+ 		if (IS_ERR(ctlr->dma_tx)) {
+ 			ret = PTR_ERR(ctlr->dma_tx);
+@@ -1019,7 +1045,13 @@
+ 
+ static const struct apple_spi_hw apple_spi_hw_t8010 = {
+ 	.legacy_status = true,
++	.legacy_descriptor = true,
+ 	.min_clk_div = 2,
++};
++
++static const struct apple_spi_hw apple_spi_hw_t7000 = {
++	.legacy_status = true,
++	.min_clk_div = 1,
+ };
+ 
+ static const struct apple_spi_hw apple_spi_hw_default = {
+@@ -1027,6 +1059,7 @@
+ };
+ 
+ static const struct of_device_id apple_spi_of_match[] = {
++	{ .compatible = "apple,t7000-spi", .data = &apple_spi_hw_t7000, },
+ 	{ .compatible = "apple,t8010-spi", .data = &apple_spi_hw_t8010, },
+ 	{ .compatible = "apple,t8103-spi", .data = &apple_spi_hw_default, },
+ 	{ .compatible = "apple,spi", .data = &apple_spi_hw_default, },

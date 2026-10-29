@@ -12,11 +12,27 @@ while (($#)); do
     *) echo "Unknown argument: $1" >&2; exit 2;;
   esac
 done
-if [[ ! -d "$source" || ! -f "$build/Module.symvers" || ! -d "$modules" ||
+if [[ ! -d "$source" || ! -f "$build/Module.symvers" ||
+      ! -f "$build/include/config/kernel.release" || ! -f "$build/.config" || ! -d "$modules" ||
       -z "$output" || -z "$localversion" || -e "$output" ]]; then
   echo 'Usage: ./kernel/build-modules --source KERNEL_SOURCE --build KERNEL_OUTPUT --modules MODULE_SOURCES --localversion SUFFIX --output DIRECTORY' >&2
   exit 2
 fi
+release=$(cat "$build/include/config/kernel.release")
+if [[ -z "$release" || "$release" != *"$localversion" ]]; then
+  echo 'Kernel module SDK release does not match the requested platform' >&2
+  exit 1
+fi
+case "$localversion" in
+  -orchard-apple-4k)
+    grep -Fxq 'CONFIG_ARM64_4K_PAGES=y' "$build/.config" || {
+      echo 'Kernel module SDK page size does not match apple-4k' >&2; exit 1;
+    } ;;
+  -orchard-apple-16k)
+    grep -Fxq 'CONFIG_ARM64_16K_PAGES=y' "$build/.config" || {
+      echo 'Kernel module SDK page size does not match apple-16k' >&2; exit 1;
+    } ;;
+esac
 source=$(cd "$source" && pwd)
 build=$(cd "$build" && pwd)
 mkdir -p "$output"

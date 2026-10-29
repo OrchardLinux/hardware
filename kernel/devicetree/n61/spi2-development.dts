@@ -1,0 +1,50 @@
+// SPDX-License-Identifier: GPL-2.0-only OR MIT
+/* N61 SPI2 PIO diagnostic. Reset, touch power and touch IRQ stay unchanged. */
+/dts-v1/;
+/plugin/;
+
+/ {
+	compatible = "apple,n61";
+
+	fragment@0 {
+		target-path = "/";
+		__overlay__ {
+			n61_spi2_clk: n61-spi2-clock {
+				compatible = "fixed-clock";
+				#clock-cells = <0>;
+				clock-frequency = <60000000>;
+			};
+		};
+	};
+
+	fragment@1 {
+		target-path = "/soc";
+		__overlay__ {
+			#address-cells = <2>;
+			#size-cells = <2>;
+
+			spi@20a088000 {
+				/* The qualified running kernel knows this legacy backend. */
+				compatible = "apple,t8010-spi", "apple,spi";
+				reg = <0x2 0x0a088000 0 0x4000>;
+				interrupt-parent = <&aic>;
+				interrupts = <0 154 4>;
+				clocks = <&n61_spi2_clk>;
+				power-domains = <&ps_spi2>;
+				#address-cells = <1>;
+				#size-cells = <0>;
+				cs-gpios = <&pinctrl 185 1>;
+				status = "okay";
+
+				touchscreen@0 {
+					compatible = "apple,n61-touchscreen";
+					reg = <0>;
+					spi-max-frequency = <500000>;
+					spi-cs-setup-delay-ns = <1000000>;
+					spi-cs-hold-delay-ns = <1000000>;
+					spi-cs-inactive-delay-ns = <1000000>;
+				};
+			};
+		};
+	};
+};

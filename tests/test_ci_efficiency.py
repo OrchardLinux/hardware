@@ -37,6 +37,17 @@ class CIEfficiency(unittest.TestCase):
         self.assertIn("hashFiles('boot/quiet/build-pongo.py', 'boot/quiet/pongo.patch')", body)
         self.assertIn('xcrun --sdk iphoneos --show-sdk-build-version', body)
 
+    def test_n61_kernel_check_is_opt_in_and_separate_from_release_assets(self):
+        workflow = (ROOT / '.github/workflows/build.yml').read_text()
+        body = job(workflow, 'kernel-n61-check')
+        self.assertIn("github.event_name == 'workflow_dispatch' && inputs.verify_n61_kernel == true", body)
+        self.assertRegex(workflow, r'verify_n61_kernel:\n(?:.*\n){3}\s+default: false')
+        self.assertIn('timeout-minutes: 360', body)
+        self.assertIn('bash kernel/install-toolchain', body)
+        self.assertIn('bash kernel/build n61', body)
+        self.assertIn('name: n61-kernel-check', body)
+        self.assertIn('pattern: hardware-*', job(workflow, 'assets'))
+
     def test_shared_toolchain_package_lists_can_be_queried_without_installing(self):
         recipes = [('kernel/install-toolchain', 'kmod'),
                    ('boot/m1n1/install-toolchain', 'clang-19'),

@@ -1,0 +1,53 @@
+# iPhone 6 (N61AP): experimental A8 RAM-boot recipe.
+schema = 1
+kind = "hardware.device"
+
+[device]
+profile = "n61"
+name = "iPhone 6"
+apple_products = ["iPhone7,2"]
+dt_compatible = ["apple,n61"]
+
+# Observed on N61AP in DFU; T7000 identifies itself as CPID 7000.
+[match.dfu]
+chip = 0x7000
+board = 0x06
+
+[boot]
+methods = ["checkm8-pongo"]
+
+[kernel]
+platform = "apple-4k"
+dtb = "t7000-n61"
+
+# The RAM shell uses public components; touch firmware is extracted privately.
+[firmware]
+recipe = "firmware.json"
+
+[support]
+install = false
+status = "experimental"
+caveats = [
+  "A recorded kernel, loader and private USB/NFS desktop combination reached the desktop twice using PongoOS 2.6.3-e98323f8 bundled with palera1n 2.4; other builds need their own physical checks.",
+  "Physical taps and swipes worked on both recorded boots; the first covered the panel's vertical edges and on-screen keyboard entry.",
+  "Bluetooth, Wi-Fi and internal storage are unqualified; installation remains disabled.",
+]
+wifi = false
+usb_serial = true # The first N61 RAM boot reached the physical USB shell.
+usb_network = true # ECM carried the NFS-rooted Arch desktop and SSH on N61.
+
+[features]
+display = "working" # Linux framebuffer console was visible on the LCD.
+touch = "working" # Physical evdev contacts/releases reached the Arch compositor.
+wifi = "missing"
+bluetooth = "missing"
+storage = "missing"
+battery = "untested"
+charging = "missing"
+backlight = "untested"
+buttons = "untested"
+audio = "missing"
+camera = "missing"
+cellular = "missing"
+suspend = "missing"
+gpu = "missing"

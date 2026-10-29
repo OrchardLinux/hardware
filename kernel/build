@@ -138,6 +138,9 @@ else
   fi
 fi
 mkdir -p "$build_output"
+recipe_snapshot="$work/recipe-snapshot.json"
+python3 "$here/write-receipt.py" --capture --device "$device" --platform "$platform" \
+  --patch-list "$applied" --recipe-file "$recipe_snapshot"
 cp "$config" "$build_output/.config"
 echo 'Preparing kernel build container...'
 python3 -m orchard_hardware.buildenv build --file "$here/Containerfile" \
@@ -176,4 +179,8 @@ fi
 cp "$build_output/arch/arm64/boot/Image.gz" "$dest/Image.gz"
 cp -R "$stage/module-root/lib" "$dest/lib"
 cp "$build_output/include/config/kernel.release" "$dest/kernel.release"
+python3 "$here/write-receipt.py" --directory "$dest" --device "$device" \
+  --platform "$platform" --dtb "$device_dtb" --source-commit "$commit" \
+  --source-tree "$(snapshot)" --prepared-tree "$(cat "$prepared")" \
+  --patch-list "$applied" --config "$config" --recipe-file "$recipe_snapshot"
 echo "Kernel output: $dest"

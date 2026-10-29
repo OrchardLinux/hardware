@@ -21,6 +21,11 @@ A second build of the same tree waits for the first. `--output` must name a new
 directory; it receives `Image.gz`, `<device>.dtb`, `dtbs/`, `kernel.release` and
 `lib/modules/`.
 
+For N61, `receipt.json` binds the output files to the platform, source trees,
+hardware recipe, patches and configuration. The device-specific DTB must
+match its copy under `dtbs/`. Consumers can verify the image, selected DTB and
+complete module tree against this receipt.
+
 The kernel has no device-specific NVMe fences. Protecting Apple's data is
 the installer's job: the recovery runtime keeps every NVMe disk and
 partition read-only and opens only its verified target while writing

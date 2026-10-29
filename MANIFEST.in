@@ -8,4 +8,6 @@ recursive-include docs *.md
 recursive-include .github/workflows *.yml
 prune boot/m1n1/.work
 prune boot/quiet/.work
+prune kernel/.work
+prune .work
 global-exclude __pycache__ *.py[cod] .DS_Store

@@ -1,0 +1,41 @@
+#!/bin/busybox sh
+# Shared NFS RAM PID 1. Internal storage is outside this startup path.
+set -eu
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin HOME=/root TERM=linux
+/bin/busybox --install -s /bin
+startup_failed() {
+    echo 'NFS startup stopped; LCD RAM rescue is available.'
+    while :; do /bin/busybox sh -i || true; /bin/busybox sleep 1; done
+}
+trap startup_failed EXIT
+mount -t proc -o nosuid,nodev,noexec proc /proc
+mount -t sysfs -o nosuid,nodev,noexec sysfs /sys
+mount -t devtmpfs -o nosuid devtmpfs /dev
+mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /run
+mkdir -p /dev/pts /newroot /run/orchard/rescue
+chmod 700 /run/orchard /run/orchard/rescue
+mount -t devpts -o mode=0620,ptmxmode=0666 devpts /dev/pts
+exec </dev/console >/dev/console 2>&1
+echo /bin/false > /proc/sys/kernel/modprobe
+. /etc/orchard/nfs.conf
+cp /bin/busybox /run/orchard/rescue/busybox
+cp /sbin/orchard-acm-rescue /run/orchard/rescue/acm-rescue
+chmod 755 /run/orchard/rescue/busybox /run/orchard/rescue/acm-rescue
+/run/orchard/rescue/busybox --install -s /run/orchard/rescue
+if ! /sbin/orchard-nfs-validate --board; then
+    echo 'NFS runtime identity rejected; leaving the LCD rescue shell.'
+    while :; do sh -i || true; sleep 1; done
+fi
+/sbin/orchard-nfs-usb
+ip link set lo up
+ip address add "$NFS_ADDRESS" dev usb0
+ip link set usb0 up
+/run/orchard/rescue/busybox sh /run/orchard/rescue/acm-rescue &
+echo "$!" > /run/orchard/rescue.pid
+echo "$NFS_PROFILE: USB network ready; NFS root $NFS_ROOT_ID."
+if [ "$NFS_HANDOFF" = auto ]; then
+    touch /run/orchard/nfs-handoff
+fi
+echo 'Create /run/orchard/nfs-handoff to start the configured NFS root.'
+while [ ! -f /run/orchard/nfs-handoff ]; do sleep 1; done
+exec /sbin/orchard-nfs-handoff
