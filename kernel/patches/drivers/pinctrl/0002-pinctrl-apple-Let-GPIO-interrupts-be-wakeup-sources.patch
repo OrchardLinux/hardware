@@ -1,0 +1,46 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Thu, 29 Oct 2026 05:14:47 +0800
+Subject: [PATCH] pinctrl: apple: Let GPIO interrupts be wakeup sources
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The Apple GPIO irqchip has no irq_set_wake(), so enable_irq_wake() on
+one of its interrupts fails. gpio-keys with wakeup-source calls it from
+its suspend callback, and the failure aborts system suspend.
+
+There is nothing to arm: the GPIO bank interrupts are chained to the
+AIC, which stays up in suspend-to-idle, and any of them wakes the CPU.
+Mark the chip IRQCHIP_SKIP_SET_WAKE.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux e846959b (J71t ledger 9.4 context); the
+ flag was never in Hoolock or Paul Praschl's tree, Berkay added it with
+ the Smart Cover buttons. Taken unchanged; it applies to every Apple
+ pinctrl SoC.]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/pinctrl/pinctrl-apple-gpio.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/pinctrl/pinctrl-apple-gpio.c b/drivers/pinctrl/pinctrl-apple-gpio.c
+index f9d444a95..b97023c97 100644
+--- a/drivers/pinctrl/pinctrl-apple-gpio.c
++++ b/drivers/pinctrl/pinctrl-apple-gpio.c
+@@ -392,7 +392,12 @@ static const struct irq_chip apple_gpio_irqchip = {
+ 	.irq_mask		= apple_gpio_irq_mask,
+ 	.irq_unmask		= apple_gpio_irq_unmask,
+ 	.irq_set_type		= apple_gpio_irq_set_type,
+-	.flags			= IRQCHIP_IMMUTABLE,
++	/*
++	 * Nothing to arm: the bank interrupts are chained to the AIC, which
++	 * stays up in suspend-to-idle, and any of them wakes the CPU. Without
++	 * this, enable_irq_wake() fails and so does gpio-keys' suspend.
++	 */
++	.flags			= IRQCHIP_IMMUTABLE | IRQCHIP_SKIP_SET_WAKE,
+ 	GPIOCHIP_IRQ_RESOURCE_HELPERS,
+ };
+ 

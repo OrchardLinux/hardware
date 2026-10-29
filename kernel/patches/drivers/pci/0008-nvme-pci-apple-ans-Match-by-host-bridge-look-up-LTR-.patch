@@ -1,0 +1,230 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 21:40:20 +0800
+Subject: [PATCH] nvme-pci: apple-ans: Match by host bridge, look up LTR and
+ L1SS
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The ANS glue was selected for 106b:2002 only, and wrote fixed
+configuration space offsets: 0x17c, 0x18c and 0x188, which are the LTR
+maximum latencies and the L1 PM substates control 2 and 1 registers
+when the LTR capability sits at 0x178 and L1SS at 0x180, as on T8010.
+
+Select the glue, and its single-vector and shared-tags quirks, for an
+Apple function behind an H8P/H9P host bridge (apple,s8003-pcie or
+apple,t8010-pcie). The bridge is the more reliable key: the A9 storage
+controller reports 106b:2002 too, but the glue depends on the host's
+NVMMU, not on the device ID.
+
+Find the LTR and L1SS capabilities instead of hardcoding their offsets,
+and take L1SS control 1 per SoC from the Apple device tree's
+pci-l1pm-control with its enable bits cleared: 0x40440000 on S8003
+(0x4044000f), 0x40550000 on T8010 (0x4055000f), as before.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux 39b99e01 (J71t ledger 3.2); apple,s8000-pcie
+ left out of the host list (no binding); the HMB part is a separate
+ commit, the DART-mapped HMB fallback is not taken (ledger 3.3)]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/nvme/host/pci-apple-ans.c | 107 +++++++++++++++++++++++-------
+ drivers/nvme/host/pci-internal.h  |   2 +
+ drivers/nvme/host/pci.c           |   6 +-
+ 3 files changed, 88 insertions(+), 27 deletions(-)
+
+diff --git a/drivers/nvme/host/pci-apple-ans.c b/drivers/nvme/host/pci-apple-ans.c
+index b9bd40f22..a949f7e43 100644
+--- a/drivers/nvme/host/pci-apple-ans.c
++++ b/drivers/nvme/host/pci-apple-ans.c
+@@ -15,6 +15,7 @@
+ #include <linux/of.h>
+ #include <linux/of_address.h>
+ #include <linux/pci.h>
++#include <linux/pci_regs.h>
+ 
+ #include "pci-internal.h"
+ 
+@@ -29,11 +30,14 @@
+ #define APPLE_ANS_REG_HMB_SIZE		0x1818
+ #define APPLE_ANS_REG_CORE_MASK		0x1824
+ #define APPLE_ANS_REG_LOG_SIZE		0x1828
+-#define APPLE_ANS_PCI_CFG_17C		0x17c
+-#define APPLE_ANS_PCI_CFG_17C_VALUE	0x10081008
+-#define APPLE_ANS_PCI_CFG_188		0x188
+-#define APPLE_ANS_PCI_CFG_188_VALUE	0x40550000
+-#define APPLE_ANS_PCI_CFG_18C		0x18c
++/*
++ * S3E configuration space: the LTR maximum latencies (Apple device tree
++ * "pci-max-latency") and the L1 PM substates control 1 ("pci-l1pm-control"
++ * with its enable bits cleared), which differs per SoC.
++ */
++#define APPLE_ANS_LTR_MAX_LATENCY	0x10081008
++#define APPLE_ANS_L1SS_CTL1_S8003	0x40440000
++#define APPLE_ANS_L1SS_CTL1_T8010	0x40550000
+ #define APPLE_ANS_NVME_MAX_SECTORS \
+ 	(APPLE_ANS_NVMMU_MAX_PAGES * APPLE_ANS_NVMMU_PAGE_SIZE >> SECTOR_SHIFT)
+ 
+@@ -56,6 +60,47 @@ static struct apple_ans_nvme *nvme_pci_apple_ans(struct nvme_dev *dev)
+ 	return dev->dma_data;
+ }
+ 
++static const struct of_device_id nvme_pci_apple_ans_hosts[] = {
++	{
++		.compatible = "apple,s8003-pcie",
++		.data = (void *)APPLE_ANS_L1SS_CTL1_S8003,
++	},
++	{
++		.compatible = "apple,t8010-pcie",
++		.data = (void *)APPLE_ANS_L1SS_CTL1_T8010,
++	},
++	{ }
++};
++
++static struct device_node *nvme_pci_apple_ans_host_np(struct pci_dev *pdev)
++{
++	struct pci_host_bridge *bridge = pci_find_host_bridge(pdev->bus);
++
++	if (!bridge)
++		return NULL;
++	if (bridge->dev.parent && bridge->dev.parent->of_node)
++		return bridge->dev.parent->of_node;
++	return bridge->dev.of_node;
++}
++
++static const struct of_device_id *
++nvme_pci_apple_ans_host_match(struct pci_dev *pdev)
++{
++	struct device_node *np = nvme_pci_apple_ans_host_np(pdev);
++
++	return np ? of_match_node(nvme_pci_apple_ans_hosts, np) : NULL;
++}
++
++/*
++ * The ANS storage controller behind an H8P/H9P root complex needs this glue.
++ * Select it by the host bridge rather than by the device ID alone.
++ */
++bool nvme_pci_apple_ans_match(struct pci_dev *pdev)
++{
++	return pdev->vendor == PCI_VENDOR_ID_APPLE &&
++	       nvme_pci_apple_ans_host_match(pdev);
++}
++
+ static int nvme_pci_apple_ans_init(struct nvme_dev *dev, int node)
+ {
+ 	struct apple_ans_nvme *ans;
+@@ -80,7 +125,6 @@ static int nvme_pci_apple_ans_find_hmb(struct nvme_dev *dev, u32 size_req,
+ {
+ 	struct apple_ans_nvme *ans = nvme_pci_apple_ans(dev);
+ 	struct pci_dev *pdev = to_pci_dev(dev->dev);
+-	struct pci_host_bridge *bridge;
+ 	struct device_node *pcie_np;
+ 	struct device_node *mem_np;
+ 	struct resource res;
+@@ -88,13 +132,7 @@ static int nvme_pci_apple_ans_find_hmb(struct nvme_dev *dev, u32 size_req,
+ 	u32 iova;
+ 	int ret;
+ 
+-	bridge = pci_find_host_bridge(pdev->bus);
+-	if (!bridge)
+-		return -ENODEV;
+-
+-	pcie_np = bridge->dev.parent ? bridge->dev.parent->of_node : NULL;
+-	if (!pcie_np)
+-		pcie_np = bridge->dev.of_node;
++	pcie_np = nvme_pci_apple_ans_host_np(pdev);
+ 	if (!pcie_np)
+ 		return -ENODEV;
+ 
+@@ -157,10 +195,37 @@ static int nvme_pci_apple_ans_reset_dma(struct nvme_dev *dev)
+ 	return 0;
+ }
+ 
++static int nvme_pci_apple_ans_config(struct nvme_dev *dev)
++{
++	struct pci_dev *pdev = to_pci_dev(dev->dev);
++	const struct of_device_id *match;
++	u16 ltr, l1ss;
++
++	match = nvme_pci_apple_ans_host_match(pdev);
++	if (!match)
++		return -ENODEV;
++
++	if (pci_write_config_byte(pdev, PCI_LATENCY_TIMER, 0x40))
++		return -EIO;
++
++	ltr = pci_find_ext_capability(pdev, PCI_EXT_CAP_ID_LTR);
++	if (ltr && pci_write_config_dword(pdev, ltr + PCI_LTR_MAX_SNOOP_LAT,
++					  APPLE_ANS_LTR_MAX_LATENCY))
++		return -EIO;
++
++	l1ss = pci_find_ext_capability(pdev, PCI_EXT_CAP_ID_L1SS);
++	if (l1ss &&
++	    (pci_write_config_dword(pdev, l1ss + PCI_L1SS_CTL2, 0) ||
++	     pci_write_config_dword(pdev, l1ss + PCI_L1SS_CTL1,
++				    (u32)(uintptr_t)match->data)))
++		return -EIO;
++
++	return 0;
++}
++
+ static int nvme_pci_apple_ans_preinit(struct nvme_dev *dev)
+ {
+ 	struct apple_ans_nvme *ans = nvme_pci_apple_ans(dev);
+-	struct pci_dev *pdev = to_pci_dev(dev->dev);
+ 	u32 csts, core_mask, log_size;
+ 	u32 hmb_size, hmb_align;
+ 	int ret;
+@@ -168,17 +233,9 @@ static int nvme_pci_apple_ans_preinit(struct nvme_dev *dev)
+ 	if (!ans)
+ 		return 0;
+ 
+-	if (pci_write_config_byte(pdev, PCI_LATENCY_TIMER, 0x40) !=
+-	    PCIBIOS_SUCCESSFUL ||
+-	    pci_write_config_dword(pdev, APPLE_ANS_PCI_CFG_17C,
+-				   APPLE_ANS_PCI_CFG_17C_VALUE) !=
+-	    PCIBIOS_SUCCESSFUL ||
+-	    pci_write_config_dword(pdev, APPLE_ANS_PCI_CFG_18C, 0) !=
+-	    PCIBIOS_SUCCESSFUL ||
+-	    pci_write_config_dword(pdev, APPLE_ANS_PCI_CFG_188,
+-				   APPLE_ANS_PCI_CFG_188_VALUE) !=
+-	    PCIBIOS_SUCCESSFUL)
+-		return -EIO;
++	ret = nvme_pci_apple_ans_config(dev);
++	if (ret)
++		return ret;
+ 
+ 	core_mask = readl(dev->bar + APPLE_ANS_REG_CORE_MASK);
+ 	log_size = readl(dev->bar + APPLE_ANS_REG_LOG_SIZE);
+diff --git a/drivers/nvme/host/pci-internal.h b/drivers/nvme/host/pci-internal.h
+index d963d903d..2bef3cd57 100644
+--- a/drivers/nvme/host/pci-internal.h
++++ b/drivers/nvme/host/pci-internal.h
+@@ -190,4 +190,6 @@ struct nvme_iod {
+ 
+ extern const struct nvme_pci_dma_ops nvme_pci_apple_ans_ops;
+ 
++bool nvme_pci_apple_ans_match(struct pci_dev *pdev);
++
+ #endif /* _NVME_PCI_INTERNAL_H */
+diff --git a/drivers/nvme/host/pci.c b/drivers/nvme/host/pci.c
+index db29c7064..ba98c3b0d 100644
+--- a/drivers/nvme/host/pci.c
++++ b/drivers/nvme/host/pci.c
+@@ -3611,9 +3611,11 @@ static struct nvme_dev *nvme_pci_alloc_dev(struct pci_dev *pdev,
+ 		quirks |= qentry->enabled_quirks;
+ 		quirks &= ~qentry->disabled_quirks;
+ 	}
+-	if (pdev->vendor == PCI_VENDOR_ID_APPLE &&
+-	    pdev->device == PCI_DEVICE_ID_APPLE_ANS_NVME)
++	if (nvme_pci_apple_ans_match(pdev)) {
+ 		dev->dma_ops = &nvme_pci_apple_ans_ops;
++		/* One MSI and shared tags, as for 106b:2002 */
++		quirks |= NVME_QUIRK_SINGLE_VECTOR | NVME_QUIRK_SHARED_TAGS;
++	}
+ 	if (dev->dma_ops) {
+ 		ret = dev->dma_ops->init(dev, node);
+ 		if (ret)

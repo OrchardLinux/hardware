@@ -1,0 +1,95 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 21:28:44 +0800
+Subject: [PATCH] dt-bindings: iommu: apple,dart: Add S5L8960X error reflector
+ and configs
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+iOS programs three more global registers of S5L8960X-style DARTs every
+time it initializes one, from Apple device tree properties of the same
+DART: the error reflector, the table fetch configuration and the
+diagnostic configuration (AppleS5L8960XDART hardware init at
+0xfffffff005fb5b58 in the iPad6,11 iOS 16.7.10 kernelcache).
+
+Describe them as optional properties. They are per-DART hardware
+configuration that the boot loader's device tree carries; the iPad 5
+(A9) and iPad 6 (A10) PCIe DARTs use the same values.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux 50e9494d (J71t ledger 1.6); the
+ apple,dma-range property is left out (superseded by the five-cell
+ DMA window specifier, ledger 1.5); the properties are restricted to
+ S5L8960X DARTs and an example is added]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../devicetree/bindings/iommu/apple,dart.yaml | 43 +++++++++++++++++++
+ 1 file changed, 43 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/iommu/apple,dart.yaml b/Documentation/devicetree/bindings/iommu/apple,dart.yaml
+index de2ce3dd4..95f4843cc 100644
+--- a/Documentation/devicetree/bindings/iommu/apple,dart.yaml
++++ b/Documentation/devicetree/bindings/iommu/apple,dart.yaml
+@@ -61,12 +61,44 @@ properties:
+   power-domains:
+     maxItems: 1
+ 
++  apple,error-reflector:
++    $ref: /schemas/types.yaml#/definitions/uint64
++    description:
++      Physical address of the page that faulting transactions are redirected
++      to, so that they complete instead of stalling the master. From the
++      Apple device tree property "error-reflector" of the same DART.
++
++  apple,fetch-config:
++    $ref: /schemas/types.yaml#/definitions/uint32
++    description:
++      Value of the table fetch configuration register, from the Apple device
++      tree property "fetch-config" of the same DART.
++
++  apple,diag-config:
++    $ref: /schemas/types.yaml#/definitions/uint32
++    description:
++      Value of the diagnostic configuration register, from the Apple device
++      tree property "diag-config" of the same DART.
++
+ required:
+   - compatible
+   - reg
+   - '#iommu-cells'
+   - interrupts
+ 
++allOf:
++  - if:
++      properties:
++        compatible:
++          not:
++            contains:
++              const: apple,s5l8960x-dart
++    then:
++      properties:
++        apple,error-reflector: false
++        apple,fetch-config: false
++        apple,diag-config: false
++
+ additionalProperties: false
+ 
+ examples:
+@@ -99,3 +131,14 @@ examples:
+     master2 {
+       iommus = <&dart2a 0>, <&dart2b 1>;
+     };
++
++  - |+
++    dart3: iommu@1008000 {
++      compatible = "apple,s8000-dart", "apple,s5l8960x-dart";
++      reg = <0x1008000 0x4000>;
++      interrupts = <1 245 4>;
++      #iommu-cells = <5>;
++      apple,error-reflector = /bits/ 64 <0x20fffc000>;
++      apple,fetch-config = <0x000e0303>;
++      apple,diag-config = <0x00000100>;
++    };

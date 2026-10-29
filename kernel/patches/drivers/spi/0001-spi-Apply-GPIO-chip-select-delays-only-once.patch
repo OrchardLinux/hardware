@@ -1,0 +1,59 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <henrik@goat-code.com>
+Date: Wed, 28 Oct 2026 21:33:20 +0800
+Subject: [PATCH] spi: Apply GPIO chip-select delays only once
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+For a GPIO chip select, spi_set_cs() runs the cs_setup delay (on
+assertion) or the cs_inactive delay (on deassertion) twice: once in
+spi_toggle_csgpiod() for every GPIO it toggles, and once more at its own
+end, where the same delays are handled for GPIO chip selects and for
+controllers without programmable chip-select timing.
+
+A device that asks for a 10 us setup time therefore gets 20 us, and one
+with several GPIO chip selects gets the delay once per chip select plus
+once more. Drop the delays from spi_toggle_csgpiod() so that they run
+once, after every chip select has changed.
+
+Boards that set these delays and use GPIO chip selects see their
+effective delays halve.
+
+Found while matching the iPad 5 (J71t) N1 touchscreen's chip-select
+timing to iOS (J71t ledger 8.6).
+
+Reported-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/spi/spi.c | 9 ++++-----
+ 1 file changed, 4 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/spi/spi.c b/drivers/spi/spi.c
+index 5b5b3bc5f..782cb74cf 100644
+--- a/drivers/spi/spi.c
++++ b/drivers/spi/spi.c
+@@ -1252,11 +1252,6 @@ static void spi_toggle_csgpiod(struct spi_device *spi, u8 idx, bool enable, bool
+ 	else
+ 		/* Polarity handled by GPIO library */
+ 		gpiod_set_value_cansleep(spi_get_csgpiod(spi, idx), activate);
+-
+-	if (activate)
+-		spi_delay_exec(&spi->cs_setup, NULL);
+-	else
+-		spi_delay_exec(&spi->cs_inactive, NULL);
+ }
+ 
+ static void spi_set_cs(struct spi_device *spi, bool enable, bool force)
+@@ -1309,6 +1304,10 @@ static void spi_set_cs(struct spi_device *spi, bool enable, bool force)
+ 		spi->controller->set_cs(spi, !enable);
+ 	}
+ 
++	/*
++	 * The delays run once, after every chip select has changed, including
++	 * when the chip select is a GPIO.
++	 */
+ 	if (spi_is_csgpiod(spi) || !spi->controller->set_cs_timing) {
+ 		if (activate)
+ 			spi_delay_exec(&spi->cs_setup, NULL);

@@ -32,9 +32,12 @@ notes = "117 kernel commits replayed onto hoolock (README/photo commits skipped)
 
 [[source]]
 name = "brkosebay-j71t"
-url = "https://github.com/OrchardLinux/hardware/pull/6"
+url = "https://github.com/brkosebay/linux.git"
+branch = "a9/orchard-j71t"
+commit = "0dd7ae0ce28ac531913ec71284663d0eb9e19537"
 contributors = ["Berkay Kösebay"]
-devices = ["j71t (iPad 5)"]
+devices = ["j71t (iPad 5)", "j72t", "j71s", "j72s"]
 license = "GPL-2.0"
-status = "found"
-notes = "Unverified. Review hunk by hunk before adopting anything. Its CBTL1610 driver is reference only."
+patches = "patches/drivers, patches/devices/s8000"
+status = "integrated"
+notes = "Integrated topic by topic with the granular a9/pcie, a9/periph, a9/touch and a9/audio branches and OrchardLinux/hardware#6; docs/integration/j71t.md maps every original commit. Not yet run on an iPad 5 on this stack."

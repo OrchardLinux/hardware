@@ -1,0 +1,75 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 21:42:27 +0800
+Subject: [PATCH] nvme-pci: Bring Apple ANS controllers up from reset_work
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+nvme_probe() enables the controller synchronously, and nvme-pci probes
+in the async domain that kernel_init() waits for before it runs /init.
+On the A9 iPad an ANS bring-up that hung, or waited out CAP.TO (minutes),
+therefore kept the initramfs from ever starting, and nothing in
+userspace could report the storage failure.
+
+For Apple ANS, queue the first enable on nvme_reset_wq instead, as
+nvme-pci did before it became synchronous: probe returns once the BAR is
+mapped, reset_work allocates the admin tag set on its first run and does
+the rest. A failure leaves the controller dead instead of blocking boot.
+Other controllers are unchanged.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux 1e342d43 (J71t ledger 3.7); the
+ "continues in the background" message dropped, otherwise as is]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/nvme/host/pci.c | 27 +++++++++++++++++++++++++++
+ 1 file changed, 27 insertions(+)
+
+diff --git a/drivers/nvme/host/pci.c b/drivers/nvme/host/pci.c
+index ff463ccbb..257174534 100644
+--- a/drivers/nvme/host/pci.c
++++ b/drivers/nvme/host/pci.c
+@@ -3395,6 +3395,15 @@ static void nvme_reset_work(struct work_struct *work)
+ 	result = nvme_pci_enable(dev);
+ 	if (result)
+ 		goto out_unlock;
++	if (!dev->ctrl.admin_q) {
++		/* First enable, deferred from nvme_probe() (Apple ANS) */
++		result = nvme_alloc_admin_tag_set(&dev->ctrl,
++						  &dev->admin_tagset,
++						  &nvme_mq_admin_ops,
++						  sizeof(struct nvme_iod));
++		if (result)
++			goto out_unlock;
++	}
+ 	nvme_unquiesce_admin_queue(&dev->ctrl);
+ 	mutex_unlock(&dev->shutdown_lock);
+ 
+@@ -3770,6 +3779,24 @@ static int nvme_probe(struct pci_dev *pdev, const struct pci_device_id *id)
+ 
+ 	dev_info(dev->ctrl.device, "pci function %s\n", dev_name(&pdev->dev));
+ 
++	/*
++	 * Apple ANS: do the first enable from reset_work, as nvme-pci did before
++	 * it became synchronous. The probe runs in the async domain that
++	 * kernel_init() waits for before it starts /init, and an ANS bring-up
++	 * that hangs or waits out CAP.TO (minutes) would otherwise keep
++	 * userspace from starting and reporting the failure.
++	 */
++	if (dev->dma_ops == &nvme_pci_apple_ans_ops) {
++		if (!nvme_change_ctrl_state(&dev->ctrl, NVME_CTRL_RESETTING)) {
++			result = -EBUSY;
++			goto out_release_iod_mempool;
++		}
++		pci_set_drvdata(pdev, dev);
++		queue_work(nvme_reset_wq, &dev->ctrl.reset_work);
++		nvme_put_ctrl(&dev->ctrl);
++		return 0;
++	}
++
+ 	result = nvme_pci_enable(dev);
+ 	if (result)
+ 		goto out_release_iod_mempool;

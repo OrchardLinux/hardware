@@ -1,0 +1,184 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 21:34:21 +0800
+Subject: [PATCH] PCI: apple-h9p: Program NVMMU TCBs with one direction, page
+ count last
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The NVMMU translation control blocks (TCBs) carry a direction and a
+page count. The driver set both directions in every TCB and wrote the
+page count before the rest of the TCB.
+
+iOS (AppleNVMeMMU in the iPad6,11 iOS 16.7.10 kernelcache, see
+omarchy-ipad5 docs/pcie/a9-vs-a10.md §5) does neither:
+- every TCB carries exactly one direction: 0x200 when the controller
+  writes memory (NVMe read), 0x100 when it reads memory (NVMe write).
+  iOS rejects in-out transfers outright.
+- the page count makes the TCB valid, so it is written last when
+  mapping, behind a barrier, and cleared first when retiring, before the
+  rest of the TCB is cleared and the tag is invalidated.
+
+Pass the transfer direction from the ANS glue and program the TCB in
+that order. This is iOS's shared NVMMU code, so it applies to T8010 as
+well as to S8003.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux 9c088fd8 (J71t ledger 3.4); ported onto
+ Paul Praschl's current NVMMU code for every SoC; the 128-TCB allocation,
+ the iOS register order at init and the used-tag tracking are left out]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/nvme/host/pci-apple-ans.c       |  7 ++--
+ drivers/pci/controller/pcie-apple-h9p.c | 51 +++++++++++++++++--------
+ include/linux/apple-ans.h               |  8 +++-
+ 3 files changed, 45 insertions(+), 21 deletions(-)
+
+diff --git a/drivers/nvme/host/pci-apple-ans.c b/drivers/nvme/host/pci-apple-ans.c
+index 624bcb944..b9bd40f22 100644
+--- a/drivers/nvme/host/pci-apple-ans.c
++++ b/drivers/nvme/host/pci-apple-ans.c
+@@ -145,7 +145,7 @@ static int nvme_pci_apple_ans_reset_dma(struct nvme_dev *dev)
+ 	int ret;
+ 
+ 	for (tag = 0; tag < APPLE_ANS_NVMMU_MAX_REQS; tag++) {
+-		ret = apple_ans_nvmmu_map(dev->dev, tag, NULL, 0, NULL);
++		ret = apple_ans_nvmmu_map(dev->dev, tag, NULL, 0, false, NULL);
+ 		if (ret)
+ 			return ret;
+ 	}
+@@ -276,7 +276,7 @@ static int nvme_pci_apple_ans_free_req(struct nvme_dev *dev,
+ 	if (tag >= APPLE_ANS_NVMMU_MAX_REQS)
+ 		return -EINVAL;
+ 
+-	ret = apple_ans_nvmmu_map(dev->dev, tag, NULL, 0, NULL);
++	ret = apple_ans_nvmmu_map(dev->dev, tag, NULL, 0, false, NULL);
+ 	if (ret) {
+ 		/* The controller may still hold this slot: never reuse it. */
+ 		dev_err_ratelimited(dev->dev,
+@@ -436,7 +436,8 @@ static blk_status_t nvme_pci_apple_ans_map_data(struct request *req)
+ 		goto out_unmap;
+ 	}
+ 
+-	ret = apple_ans_nvmmu_map(dev->dev, tag, areq->pages, npages, &flatdma);
++	ret = apple_ans_nvmmu_map(dev->dev, tag, areq->pages, npages,
++				  rq_dma_dir(req) == DMA_FROM_DEVICE, &flatdma);
+ 	if (ret) {
+ 		status = errno_to_blk_status(ret);
+ 		if (status == BLK_STS_NOTSUPP)
+diff --git a/drivers/pci/controller/pcie-apple-h9p.c b/drivers/pci/controller/pcie-apple-h9p.c
+index e95b45421..e28622a06 100644
+--- a/drivers/pci/controller/pcie-apple-h9p.c
++++ b/drivers/pci/controller/pcie-apple-h9p.c
+@@ -157,6 +157,15 @@
+ #define H9P_NVMMU_FLATDMA_BASE		0x40000000ULL
+ #define H9P_NVMMU_FLATDMA_STRIDE	SZ_8M
+ #define H9P_NVMMU_SART_ALIGNMENT	SZ_1M
++/*
++ * TCB layout: dword 0 direction, 1 page count, 2 first page, 4-5 page list.
++ * The direction is the controller's view: READ when it reads memory (an NVMe
++ * write), WRITE when it writes memory (an NVMe read).
++ */
++#define H9P_NVMMU_TCB_FLAGS		0
++#define H9P_NVMMU_TCB_NPAGES		1
++#define H9P_NVMMU_TCB_PAGE0		2
++#define H9P_NVMMU_TCB_SGL		4
+ #define H9P_NVMMU_TCB_READ		0x100
+ #define H9P_NVMMU_TCB_WRITE		0x200
+ 
+@@ -1257,9 +1266,15 @@ out_put_node:
+ 	return ret;
+ }
+ 
++/*
++ * Program TCBs the way iOS (AppleNVMeMMU) does: exactly one direction per
++ * TCB, since iOS rejects in-out transfers, and the page count written last
++ * when mapping and first when retiring, because a non-zero count is what
++ * makes the TCB valid to the NVMMU.
++ */
+ int apple_ans_nvmmu_map(struct device *dev, unsigned int tag,
+ 			const u64 *pages, unsigned int npages,
+-			dma_addr_t *iova)
++			bool to_memory, dma_addr_t *iova)
+ {
+ 	struct apple_h9p_nvmmu *nvmmu;
+ 	struct apple_h9p_pcie *pcie;
+@@ -1299,23 +1314,12 @@ int apple_ans_nvmmu_map(struct device *dev, unsigned int tag,
+ 
+ 	tcb = (u32 *)nvmmu->tcb + tag * H9P_NVMMU_TCB_DWORDS;
+ 	sgl = (u32 *)nvmmu->tcb_sgl + tag * H9P_NVMMU_SGL_WORDS;
+-	memset(tcb, 0, H9P_NVMMU_TCB_BYTES);
+-	memset(sgl, 0, H9P_NVMMU_SGL_WORDS * sizeof(*sgl));
+ 
+-	if (npages) {
+-		tcb[0] = H9P_NVMMU_TCB_READ | H9P_NVMMU_TCB_WRITE;
+-		tcb[1] = npages;
+-		tcb[2] = pages[0] >> ilog2(APPLE_ANS_NVMMU_PAGE_SIZE);
+-		for (i = 0; i < npages; i++)
+-			sgl[i] = pages[i] >> ilog2(APPLE_ANS_NVMMU_PAGE_SIZE);
++	WRITE_ONCE(tcb[H9P_NVMMU_TCB_NPAGES], 0);
++	dma_wmb();
++	memset(tcb, 0, H9P_NVMMU_TCB_BYTES);
+ 
+-		sgl_dma = nvmmu->tcb_sgl_dma +
+-			  tag * H9P_NVMMU_SGL_WORDS * sizeof(*sgl);
+-		memcpy(&tcb[4], &sgl_dma, sizeof(sgl_dma));
+-		if (iova)
+-			*iova = H9P_NVMMU_FLATDMA_BASE +
+-				tag * H9P_NVMMU_FLATDMA_STRIDE;
+-	} else {
++	if (!npages) {
+ 		dma_wmb();
+ 		h9p_writel_flush(tag, nvmmu->base + H9P_NVMMU_TCB_CTRL);
+ 		if (iova)
+@@ -1323,7 +1327,22 @@ int apple_ans_nvmmu_map(struct device *dev, unsigned int tag,
+ 		return 0;
+ 	}
+ 
++	memset(sgl, 0, H9P_NVMMU_SGL_WORDS * sizeof(*sgl));
++	for (i = 0; i < npages; i++)
++		sgl[i] = pages[i] >> ilog2(APPLE_ANS_NVMMU_PAGE_SIZE);
++
++	tcb[H9P_NVMMU_TCB_FLAGS] = to_memory ? H9P_NVMMU_TCB_WRITE :
++					       H9P_NVMMU_TCB_READ;
++	tcb[H9P_NVMMU_TCB_PAGE0] = pages[0] >> ilog2(APPLE_ANS_NVMMU_PAGE_SIZE);
++	sgl_dma = nvmmu->tcb_sgl_dma + tag * H9P_NVMMU_SGL_WORDS * sizeof(*sgl);
++	memcpy(&tcb[H9P_NVMMU_TCB_SGL], &sgl_dma, sizeof(sgl_dma));
++
++	dma_wmb();
++	WRITE_ONCE(tcb[H9P_NVMMU_TCB_NPAGES], npages);
+ 	dma_wmb();
++
++	if (iova)
++		*iova = H9P_NVMMU_FLATDMA_BASE + tag * H9P_NVMMU_FLATDMA_STRIDE;
+ 	return 0;
+ }
+ EXPORT_SYMBOL_GPL(apple_ans_nvmmu_map);
+diff --git a/include/linux/apple-ans.h b/include/linux/apple-ans.h
+index c53c46040..a59861010 100644
+--- a/include/linux/apple-ans.h
++++ b/include/linux/apple-ans.h
+@@ -13,14 +13,18 @@ struct device;
+ #define APPLE_ANS_NVMMU_MAX_PAGES	256
+ #define APPLE_ANS_NVMMU_PAGE_SIZE	4096
+ 
++/*
++ * Map @npages pages for FlatDMA request @tag, or retire the tag if @npages is
++ * zero. @to_memory: the controller writes the pages (an NVMe read).
++ */
+ #if IS_REACHABLE(CONFIG_PCIE_APPLE_H9P)
+ int apple_ans_nvmmu_map(struct device *dev, unsigned int tag,
+ 			const u64 *pages, unsigned int npages,
+-			dma_addr_t *iova);
++			bool to_memory, dma_addr_t *iova);
+ #else
+ static inline int apple_ans_nvmmu_map(struct device *dev, unsigned int tag,
+ 				      const u64 *pages, unsigned int npages,
+-				      dma_addr_t *iova)
++				      bool to_memory, dma_addr_t *iova)
+ {
+ 	return -EOPNOTSUPP;
+ }

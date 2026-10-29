@@ -1,0 +1,46 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 21:48:24 +0800
+Subject: [PATCH] power: supply: bq27xxx: Report discharging at full charge too
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The gauge keeps its full-charge flag set after the input goes away or no
+longer covers the load, so a pack at 100 % that is supplying the system
+reports Full while its current is negative. User space then shows the
+device as on external power.
+
+Check the current first: a negative current is Discharging whatever the
+flags say. Full is reported only when the pack is not discharging.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux 0dd7ae0c (J71t ledger 6.14); made generic in bq27xxx_battery_current_and_status() instead of a J71t compatible check with a lookup of the "usb" supply]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/power/supply/bq27xxx_battery.c | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/power/supply/bq27xxx_battery.c b/drivers/power/supply/bq27xxx_battery.c
+index e212572e2..766fa3e20 100644
+--- a/drivers/power/supply/bq27xxx_battery.c
++++ b/drivers/power/supply/bq27xxx_battery.c
+@@ -1976,12 +1976,13 @@ static int bq27xxx_battery_current_and_status(
+ 		val_curr->intval = curr;
+ 
+ 	if (val_status) {
+-		if (bq27xxx_battery_is_full(di, flags))
++		/* A full flag describes capacity, not whether the pack supplies power. */
++		if (curr < 0)
++			val_status->intval = POWER_SUPPLY_STATUS_DISCHARGING;
++		else if (bq27xxx_battery_is_full(di, flags))
+ 			val_status->intval = POWER_SUPPLY_STATUS_FULL;
+ 		else if (curr > 0)
+ 			val_status->intval = POWER_SUPPLY_STATUS_CHARGING;
+-		else if (curr < 0)
+-			val_status->intval = POWER_SUPPLY_STATUS_DISCHARGING;
+ 		else
+ 			val_status->intval = POWER_SUPPLY_STATUS_NOT_CHARGING;
+ 	}

@@ -1,0 +1,509 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <henrik@goat-code.com>
+Date: Wed, 28 Oct 2026 21:47:23 +0800
+Subject: [PATCH] power: supply: apple_tristar_charger: Detect BC1.2 charging
+ ports
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Computers, hubs and generic chargers carry no Apple divider, so they were
+held at 500 mA even when they are BC1.2 charging ports. iOS runs BC1.2
+primary and secondary detection for such a source on the oriented USB
+pair: with the measured line routed to the ADC, the Tristar excites the
+pair for 40 ms through register 0x03 (9 while D- is measured, 10 while D+
+is, plus 2 on the high bank). A primary D- of 326 to 899 mV means a
+charging port, and the secondary D+ tells a CDP (below 326 mV) from a DCP.
+Both allow 1.5 A.
+
+Run it after BrickID finds no Apple charger, and on a USB-C cable when CC
+advertises only default USB power. Report the result as the CDP or DCP USB
+type. The excitation register is the one the mux restore already checks
+for zero, so a failed restore still holds the fallback.
+
+A host enumerates the device well before the one-second settle time, and
+identification does not sample during a USB session. Look at the source
+once while settling, from 300 ms after attach and before the session
+begins, and keep a host's own advertisement (CDP, or USB-C current) from
+that look for its session. Everything else is measured again after
+settling, and a PMU source event discards the early result.
+
+J71t ledger 6.4 (iOS 5de33e4/5de35dc, Berkay's apple_tristar_classify()).
+
+Reported-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/power/supply/Kconfig                 |   3 +-
+ drivers/power/supply/apple_tristar_charger.c | 265 ++++++++++++++-----
+ 2 files changed, 202 insertions(+), 66 deletions(-)
+
+diff --git a/drivers/power/supply/Kconfig b/drivers/power/supply/Kconfig
+index ab0e87fce..6afca3ebe 100644
+--- a/drivers/power/supply/Kconfig
++++ b/drivers/power/supply/Kconfig
+@@ -381,7 +381,8 @@ config APPLE_TRISTAR_CHARGER
+ 	  (CBTL1610) Lightning port controller, such as the iPad 5 and iPad 6.
+ 
+ 	  The driver identifies the attached source (Apple USB-A chargers by
+-	  their BrickID, USB-C sources by their CC advertisement, USB hosts by
++	  their BrickID, USB-C sources by their CC advertisement, BC1.2
++	  charging ports by primary and secondary detection, USB hosts by
+ 	  what the USB device controller reports) and raises the PMIC
+ 	  input-current limit to what the source supports, up to the board
+ 	  maximum. Unidentified sources get 500 mA. Every source change drops
+diff --git a/drivers/power/supply/apple_tristar_charger.c b/drivers/power/supply/apple_tristar_charger.c
+index 558948041..9fe299a96 100644
+--- a/drivers/power/supply/apple_tristar_charger.c
++++ b/drivers/power/supply/apple_tristar_charger.c
+@@ -8,11 +8,13 @@
+  * board maximum:
+  *   USB-C cable: CC level on the orientation-selected lane (1.5 A / 3 A)
+  *   USB-A cable: Apple D+/D- divider (BrickID) on both Tristar mux banks
++ *   BC1.2 charging port (CDP or DCP) on the oriented USB pair: 1.5 A
+  *   USB host: what the USB device controller reports through vbus_draw
+  *             above 500 mA (an Apple host's current grant)
+  * Anything unidentified gets the fallback, the 500 mA of a USB 2.0 port.
+  * The mux is not sampled while a USB session is active: mux changes have
+- * stalled USB data.
++ * stalled USB data. A host's own advertisement (CDP, USB-C current) measured
++ * after attach but before its session began is kept for that session.
+  *
+  * A source change does not reset the limit in hardware. The PMIC's event
+  * controller runs the handler of its PMU line before it reads the event
+@@ -63,13 +65,15 @@
+ 
+ /* Tristar (CBTL1610) registers */
+ #define CBTL_MUX_ROUTE			0x01
+-#define CBTL_MUX_STATE			0x03
++#define CBTL_MUX_STATE			0x03	/* also the BC1.2 excitation */
+ #define CBTL_CAP_STATUS			0x0c
+ #define CBTL_CAP_RESPONSE		0x20
+ #define CBTL_CAP_LEN			8
+ 
+ #define TRISTAR_POLL_MS			100
+ #define TRISTAR_SETTLE_MS		1000
++/* First look at the source, before a host has started its USB session. */
++#define TRISTAR_EARLY_MS		300
+ #define TRISTAR_RAMP_STEP_MS		500
+ #define TRISTAR_RAMP_STEP_MA		500
+ #define TRISTAR_MAX_REDETECT		3
+@@ -139,6 +143,11 @@ struct tristar_charger {
+ 	/* What the USB host allows (vbus_draw), valid for usb_epoch only. */
+ 	unsigned int usb_ma;
+ 	unsigned int usb_epoch;
++	/* A host's advertisement measured before its USB session began. */
++	bool early_done;
++	unsigned int early_epoch;
++	unsigned int early_ma;
++	enum power_supply_usb_type early_type;
+ 	enum power_supply_usb_type usb_type;
+ 	char source[96];
+ 	u64 attach_ns;
+@@ -244,10 +253,10 @@ static int cbtl_read(struct tristar_charger *chg, u8 reg, u8 *buf, u16 len)
+ 	return ret == 2 ? 0 : ret < 0 ? ret : -EIO;
+ }
+ 
+-static int cbtl_route(struct tristar_charger *chg, u8 value)
++static int cbtl_write(struct tristar_charger *chg, u8 reg, u8 value)
+ {
+ 	struct i2c_client *client = chg->tristar;
+-	u8 bytes[2] = { CBTL_MUX_ROUTE, value };
++	u8 bytes[2] = { reg, value };
+ 	struct i2c_msg msg = { .addr = client->addr, .len = 2, .buf = bytes };
+ 	u8 readback;
+ 	int ret;
+@@ -255,10 +264,15 @@ static int cbtl_route(struct tristar_charger *chg, u8 value)
+ 	ret = i2c_transfer(client->adapter, &msg, 1);
+ 	if (ret != 1)
+ 		return ret < 0 ? ret : -EIO;
+-	ret = cbtl_read(chg, CBTL_MUX_ROUTE, &readback, 1);
++	ret = cbtl_read(chg, reg, &readback, 1);
+ 	return ret ?: readback == value ? 0 : -EIO;
+ }
+ 
++static int cbtl_route(struct tristar_charger *chg, u8 value)
++{
++	return cbtl_write(chg, CBTL_MUX_ROUTE, value);
++}
++
+ /* Forward CRC-8: seed 0xff, reflected polynomial 0x8c. */
+ static u8 cbtl_crc(const u8 *data, unsigned int len)
+ {
+@@ -398,22 +412,34 @@ static int tristar_adc_mv(struct tristar_charger *chg, unsigned int epoch,
+ 	return 0;
+ }
+ 
+-/* Route the Tristar mux, convert, and always restore the mux. */
++/*
++ * Route the Tristar mux, optionally excite the other line of the pair for
++ * BC1.2 detection, convert, and always restore the mux and the excitation.
++ */
+ static int tristar_mux_sample(struct tristar_charger *chg, const u8 *routes,
+-			      unsigned int count, unsigned int epoch,
++			      unsigned int count, u8 excite, unsigned int epoch,
+ 			      unsigned int *mv)
+ {
+ 	unsigned int i;
+-	int ret = 0, restore;
++	int ret = 0, restore = 0;
+ 	u8 state;
+ 
+ 	for (i = 0; i < count && !ret; i++)
+ 		ret = cbtl_route(chg, routes[i]);
+ 	if (!ret) {
+ 		usleep_range(5000, 6000);
+-		ret = tristar_adc_mv(chg, epoch, mv);
++		if (excite) {
++			ret = cbtl_write(chg, CBTL_MUX_STATE, excite);
++			if (!ret)
++				msleep(40);
++		}
++		if (!ret)
++			ret = tristar_adc_mv(chg, epoch, mv);
+ 	}
+-	restore = cbtl_route(chg, 0);
++	if (excite)
++		restore = cbtl_write(chg, CBTL_MUX_STATE, 0);
++	if (!restore)
++		restore = cbtl_route(chg, 0);
+ 	if (!restore)
+ 		restore = cbtl_read(chg, CBTL_MUX_STATE, &state, 1);
+ 	if (!restore && state)
+@@ -444,13 +470,55 @@ static unsigned int tristar_brick_ma(unsigned int dp, unsigned int dm,
+ 
+ /* ---- Identification ---- */
+ 
++struct tristar_ident {
++	unsigned int ma;		/* the source's advertisement, 0: none */
++	enum power_supply_usb_type type;
++	bool sampled;			/* the mux was used */
++	char what[96];
++};
++
++/* Mux routes per bank: D- and D+ through the USB-selected bank. */
++static const u8 tristar_dminus[2][2] = { { 0x11, 0x1d }, { 0x10, 0xd0 } };
++static const u8 tristar_dplus[2][2] = { { 0x11, 0x1c }, { 0x10, 0xc0 } };
++
++/*
++ * BC1.2 primary and secondary detection on the oriented USB pair, as iOS
++ * does for an ordinary USB source (5de33e4, 5de35dc): with the measured line
++ * routed to the ADC, the Tristar excites the pair for 40 ms (register 0x03:
++ * 9 while D- is measured, 10 while D+ is, plus 2 on the high bank; 5ff5a08).
++ * A primary D- of 326-899 mV means a charging port; the secondary D+ then
++ * tells a CDP (below 326 mV) from a DCP. Both may draw 1.5 A.
++ */
++static int tristar_identify_bc12(struct tristar_charger *chg, unsigned int bank,
++				 unsigned int epoch, struct tristar_ident *id)
++{
++	unsigned int dm, dp;
++	int ret;
++
++	ret = tristar_mux_sample(chg, tristar_dminus[bank], 2, 9 + 2 * bank,
++				 epoch, &dm);
++	if (ret)
++		return ret;
++	if (dm < 326 || dm > 899)
++		return 0;
++	ret = tristar_mux_sample(chg, tristar_dplus[bank], 2, 10 + 2 * bank,
++				 epoch, &dp);
++	if (ret)
++		return ret;
++	id->ma = 1500;
++	id->type = dp < 326 ? POWER_SUPPLY_USB_TYPE_CDP : POWER_SUPPLY_USB_TYPE_DCP;
++	snprintf(id->what, sizeof(id->what),
++		 "USB charging port (%s, BC1.2 D- %u mV, D+ %u mV)",
++		 id->type == POWER_SUPPLY_USB_TYPE_CDP ? "CDP" : "DCP", dm, dp);
++	return 0;
++}
++
+ static int tristar_identify_usbc(struct tristar_charger *chg, unsigned int orientation,
+-				 unsigned int epoch, unsigned int *ma,
+-				 char *what, size_t len)
++				 unsigned int epoch, struct tristar_ident *id)
+ {
+ 	/* Lane 0 is sampled through route 0xc0, lane 1 through 0x0c. */
+ 	static const u8 lanes[2] = { 0xc0, 0x0c };
+-	unsigned int mv[2], sel = orientation == 2 ? 1 : 0;
++	unsigned int mv[2], sel = orientation == 2 ? 1 : 0, cc_ma;
+ 	int ret, lane;
+ 
+ 	/*
+@@ -458,85 +526,99 @@ static int tristar_identify_usbc(struct tristar_charger *chg, unsigned int orien
+ 	 * logged as evidence; it is not a CC advertisement.
+ 	 */
+ 	for (lane = 0; lane < 2; lane++) {
+-		ret = tristar_mux_sample(chg, &lanes[lane], 1, epoch, &mv[lane]);
++		ret = tristar_mux_sample(chg, &lanes[lane], 1, 0, epoch, &mv[lane]);
+ 		if (ret)
+ 			return ret;
+ 	}
+-	*ma = mv[sel] >= 1230 ? 3000 : mv[sel] >= 660 ? 1500 : 0;
+-	chg->usb_type = POWER_SUPPLY_USB_TYPE_C;
+-	if (*ma)
+-		snprintf(what, len, "USB-C power source advertising %u.%u A (CC %u mV, other lane %u mV)",
+-			 *ma / 1000, *ma % 1000 / 100, mv[sel], mv[!sel]);
++	cc_ma = mv[sel] >= 1230 ? 3000 : mv[sel] >= 660 ? 1500 : 0;
++	if (cc_ma < 1500) {
++		/* Default USB power: a charging port may still allow 1.5 A. */
++		ret = tristar_identify_bc12(chg, orientation - 1, epoch, id);
++		if (ret)
++			return ret;
++		if (id->ma > cc_ma)
++			return 0;
++	}
++	id->ma = cc_ma;
++	id->type = POWER_SUPPLY_USB_TYPE_C;
++	if (cc_ma)
++		snprintf(id->what, sizeof(id->what),
++			 "USB-C power source advertising %u.%u A (CC %u mV, other lane %u mV)",
++			 cc_ma / 1000, cc_ma % 1000 / 100, mv[sel], mv[!sel]);
+ 	else
+-		snprintf(what, len, "USB-C source with default USB power (CC %u mV, other lane %u mV)",
++		snprintf(id->what, sizeof(id->what),
++			 "USB-C source with default USB power (CC %u mV, other lane %u mV)",
+ 			 mv[sel], mv[!sel]);
+ 	return 0;
+ }
+ 
+-static int tristar_identify_usba(struct tristar_charger *chg, unsigned int epoch,
+-				 unsigned int *ma, char *what, size_t len)
++static int tristar_identify_usba(struct tristar_charger *chg, unsigned int orientation,
++				 unsigned int epoch, struct tristar_ident *id)
+ {
+-	static const u8 dminus[2][2] = { { 0x11, 0x1d }, { 0x10, 0xd0 } };
+-	static const u8 dplus[2][2] = { { 0x11, 0x1c }, { 0x10, 0xc0 } };
+-	unsigned int bank_ma[2], bank_id[2] = { 0, 0 }, dp, dm, id;
++	unsigned int bank_ma[2], bank_id[2] = { 0, 0 }, dp, dm, brick;
+ 	int ret, bank;
+ 
+ 	for (bank = 0; bank < 2; bank++) {
+-		ret = tristar_mux_sample(chg, dminus[bank], 2, epoch, &dm);
++		ret = tristar_mux_sample(chg, tristar_dminus[bank], 2, 0, epoch, &dm);
+ 		if (!ret)
+-			ret = tristar_mux_sample(chg, dplus[bank], 2, epoch, &dp);
++			ret = tristar_mux_sample(chg, tristar_dplus[bank], 2, 0, epoch, &dp);
+ 		if (ret)
+ 			return ret;
+ 		bank_ma[bank] = tristar_brick_ma(dp, dm, &bank_id[bank]);
+ 	}
+ 	if (bank_ma[0] && bank_ma[1] && bank_id[0] != bank_id[1]) {
+ 		/* Disagreeing banks: trust the lower advertisement. */
+-		*ma = min(bank_ma[0], bank_ma[1]);
+-		id = bank_ma[0] < bank_ma[1] ? bank_id[0] : bank_id[1];
++		id->ma = min(bank_ma[0], bank_ma[1]);
++		brick = bank_ma[0] < bank_ma[1] ? bank_id[0] : bank_id[1];
+ 	} else {
+ 		bank = bank_ma[0] ? 0 : 1;
+-		*ma = bank_ma[bank];
+-		id = bank_id[bank];
++		id->ma = bank_ma[bank];
++		brick = bank_id[bank];
+ 	}
+-	if (*ma) {
+-		chg->usb_type = POWER_SUPPLY_USB_TYPE_APPLE_BRICK_ID;
+-		snprintf(what, len, "Apple USB-A charger, BrickID %u (%u.%u A)", id,
+-			 *ma / 1000, *ma % 1000 / 100);
+-	} else {
+-		chg->usb_type = POWER_SUPPLY_USB_TYPE_UNKNOWN;
+-		snprintf(what, len, "USB-A source without Apple charger signature (computer, hub or generic charger)");
++	if (id->ma) {
++		id->type = POWER_SUPPLY_USB_TYPE_APPLE_BRICK_ID;
++		snprintf(id->what, sizeof(id->what), "Apple USB-A charger, BrickID %u (%u.%u A)",
++			 brick, id->ma / 1000, id->ma % 1000 / 100);
++		return 0;
+ 	}
+-	return 0;
++	ret = tristar_identify_bc12(chg, orientation - 1, epoch, id);
++	if (!ret && !id->ma)
++		snprintf(id->what, sizeof(id->what),
++			 "USB-A source without charger signature (computer, hub or generic charger)");
++	return ret;
+ }
+ 
+-/* Caller holds lock. Sets the source's current in mA (0: unidentified). */
+-static int tristar_identify(struct tristar_charger *chg, unsigned int *ma,
+-			    char *what, size_t len)
++/* Caller holds lock. */
++static int tristar_identify(struct tristar_charger *chg, struct tristar_ident *id)
+ {
+ 	unsigned int epoch = READ_ONCE(chg->epoch), orientation;
+ 	bool usbc;
+ 	u8 route, state;
+ 	int ret;
+ 
+-	*ma = 0;
+-	chg->usb_type = POWER_SUPPLY_USB_TYPE_UNKNOWN;
++	id->ma = 0;
++	id->type = POWER_SUPPLY_USB_TYPE_UNKNOWN;
++	id->sampled = false;
+ 	ret = cbtl_read(chg, CBTL_MUX_ROUTE, &route, 1);
+ 	if (!ret)
+ 		ret = cbtl_read(chg, CBTL_MUX_STATE, &state, 1);
+ 	if (ret)
+ 		return ret;
+ 	if (route || state) {
+-		snprintf(what, len, "unknown source (mux busy %02x/%02x)", route, state);
++		snprintf(id->what, sizeof(id->what), "unknown source (mux busy %02x/%02x)",
++			 route, state);
+ 		return 0;
+ 	}
+ 	ret = cbtl_capability(chg, &usbc, &orientation);
+ 	if (ret) {
+-		snprintf(what, len, "unidentified cable (capability frame %d)", ret);
++		snprintf(id->what, sizeof(id->what), "unidentified cable (capability frame %d)",
++			 ret);
+ 		return 0;
+ 	}
++	id->sampled = true;
+ 	if (usbc)
+-		return tristar_identify_usbc(chg, orientation, epoch, ma, what, len);
+-	return tristar_identify_usba(chg, epoch, ma, what, len);
++		return tristar_identify_usbc(chg, orientation, epoch, id);
++	return tristar_identify_usba(chg, orientation, epoch, id);
+ }
+ 
+ /* ---- Policy ---- */
+@@ -593,6 +675,7 @@ static void tristar_new_attachment(struct tristar_charger *chg, u64 now)
+ 	chg->source[0] = '\0';
+ 	chg->source_ma = 0;
+ 	chg->usb_type = POWER_SUPPLY_USB_TYPE_UNKNOWN;
++	chg->early_done = false;
+ 	chg->redetects = 0;
+ 	chg->retries = 0;
+ 	chg->epoch_seen = READ_ONCE(chg->epoch);
+@@ -601,26 +684,72 @@ static void tristar_new_attachment(struct tristar_charger *chg, u64 now)
+ 	dev_dbg(chg->dev, "power connected, identifying source\n");
+ }
+ 
++/* The early look happened in this epoch. Caller holds lock. */
++static bool tristar_early_done(struct tristar_charger *chg)
++{
++	return chg->early_done && chg->early_epoch == READ_ONCE(chg->epoch);
++}
++
++static void tristar_mux_fault(struct tristar_charger *chg)
++{
++	chg->phase = TRISTAR_FAULT;
++	strscpy(chg->source, "Tristar mux restore failed", sizeof(chg->source));
++	tristar_withdraw(chg, TRISTAR_CHG_FALLBACK_CODE);
++	dev_err(chg->dev, "Tristar mux restore unverified; holding the fallback until reboot\n");
++}
++
++/*
++ * Look at the source once while settling, before a host starts its USB
++ * session. The identification after the settle time must not sample during
++ * that session, so a host's own advertisement (CDP, USB-C current) is kept
++ * from here for it; everything else is measured again after settling.
++ */
++static void tristar_early_identification(struct tristar_charger *chg)
++{
++	unsigned int epoch = READ_ONCE(chg->epoch);
++	struct tristar_ident id;
++	int ret;
++
++	ret = tristar_identify(chg, &id);
++	if (ret == -EUCLEAN) {
++		tristar_mux_fault(chg);
++		return;
++	}
++	if (!id.sampled)
++		return;		/* cable not ready yet: try again next poll */
++	chg->early_done = true;
++	chg->early_epoch = epoch;
++	chg->early_ma = 0;
++	chg->early_type = POWER_SUPPLY_USB_TYPE_UNKNOWN;
++	if (ret || READ_ONCE(chg->epoch) != epoch || tristar_usb_session(chg))
++		return;
++	if (id.type == POWER_SUPPLY_USB_TYPE_CDP ||
++	    (id.type == POWER_SUPPLY_USB_TYPE_C && id.ma)) {
++		chg->early_ma = id.ma;
++		chg->early_type = id.type;
++		dev_dbg(chg->dev, "before USB: %s\n", id.what);
++	}
++}
++
+ static void tristar_run_identification(struct tristar_charger *chg, u64 now)
+ {
+-	unsigned int ma, fallback_ma = tristar_code_ma(TRISTAR_CHG_FALLBACK_CODE);
+-	char what[sizeof(chg->source)];
++	unsigned int fallback_ma = tristar_code_ma(TRISTAR_CHG_FALLBACK_CODE);
++	struct tristar_ident id;
+ 	bool usb = tristar_usb_session(chg);
+-	int ret;
++	int ret = 0;
+ 
+ 	if (usb) {
+ 		/* A USB session is active: do not disturb its data lines. */
+-		ma = 0;
+-		strscpy(what, "USB host", sizeof(what));
+-		ret = 0;
++		id.ma = tristar_early_done(chg) ? chg->early_ma : 0;
++		id.type = id.ma ? chg->early_type : POWER_SUPPLY_USB_TYPE_UNKNOWN;
++		snprintf(id.what, sizeof(id.what), "USB host%s",
++			 id.type == POWER_SUPPLY_USB_TYPE_CDP ? ", charging downstream port" :
++			 id.type == POWER_SUPPLY_USB_TYPE_C ? ", USB-C current advertised" : "");
+ 	} else {
+-		ret = tristar_identify(chg, &ma, what, sizeof(what));
++		ret = tristar_identify(chg, &id);
+ 	}
+ 	if (ret == -EUCLEAN) {
+-		chg->phase = TRISTAR_FAULT;
+-		strscpy(chg->source, "Tristar mux restore failed", sizeof(chg->source));
+-		tristar_withdraw(chg, TRISTAR_CHG_FALLBACK_CODE);
+-		dev_err(chg->dev, "Tristar mux restore unverified; holding the fallback until reboot\n");
++		tristar_mux_fault(chg);
+ 		return;
+ 	}
+ 	if (ret || READ_ONCE(chg->epoch) != chg->epoch_seen) {
+@@ -635,24 +764,25 @@ static void tristar_run_identification(struct tristar_charger *chg, u64 now)
+ 		}
+ 		return;
+ 	}
+-	if (!ma && !usb && chg->retries < TRISTAR_UNIDENTIFIED_RETRIES) {
++	if (!id.ma && !usb && chg->retries < TRISTAR_UNIDENTIFIED_RETRIES) {
+ 		chg->retries++;
+ 		/* The settle check fires SETTLE_MS after attach_ns. */
+ 		chg->attach_ns = now + (TRISTAR_RETRY_MS - TRISTAR_SETTLE_MS) * NSEC_PER_MSEC;
+ 		dev_dbg(chg->dev, "no charger signature yet (%s), retry %u/%u\n",
+-			what, chg->retries, TRISTAR_UNIDENTIFIED_RETRIES);
++			id.what, chg->retries, TRISTAR_UNIDENTIFIED_RETRIES);
+ 		return;
+ 	}
+-	strscpy(chg->source, what, sizeof(chg->source));
+-	chg->source_ma = ma;
++	strscpy(chg->source, id.what, sizeof(chg->source));
++	chg->source_ma = id.ma;
++	chg->usb_type = id.type;
+ 	chg->target_code = tristar_target_code(chg);
+ 	if (chg->target_code <= TRISTAR_CHG_FALLBACK_CODE) {
+ 		chg->phase = TRISTAR_CHARGING;
+-		dev_dbg(chg->dev, "%s: %u mA\n", what, fallback_ma);
++		dev_dbg(chg->dev, "%s: %u mA\n", id.what, fallback_ma);
+ 	} else {
+ 		chg->phase = TRISTAR_RAMPING;
+ 		chg->step_ns = 0;
+-		dev_dbg(chg->dev, "%s: up to %u mA\n", what,
++		dev_dbg(chg->dev, "%s: up to %u mA\n", id.what,
+ 			tristar_code_ma(chg->target_code));
+ 	}
+ }
+@@ -771,6 +901,9 @@ static void tristar_poll(struct work_struct *work)
+ 	case TRISTAR_SETTLING:
+ 		if ((s64)(now - chg->attach_ns) >= (s64)TRISTAR_SETTLE_MS * NSEC_PER_MSEC)
+ 			tristar_run_identification(chg, now);
++		else if (!tristar_early_done(chg) && !tristar_usb_session(chg) &&
++			 (s64)(now - chg->attach_ns) >= (s64)TRISTAR_EARLY_MS * NSEC_PER_MSEC)
++			tristar_early_identification(chg);
+ 		break;
+ 	case TRISTAR_RAMPING:
+ 		tristar_ramp_step(chg, now);
+@@ -961,6 +1094,8 @@ static const struct power_supply_desc tristar_desc = {
+ 	.type = POWER_SUPPLY_TYPE_USB,
+ 	.usb_types = BIT(POWER_SUPPLY_USB_TYPE_UNKNOWN) |
+ 		     BIT(POWER_SUPPLY_USB_TYPE_SDP) |
++		     BIT(POWER_SUPPLY_USB_TYPE_DCP) |
++		     BIT(POWER_SUPPLY_USB_TYPE_CDP) |
+ 		     BIT(POWER_SUPPLY_USB_TYPE_APPLE_BRICK_ID) |
+ 		     BIT(POWER_SUPPLY_USB_TYPE_C),
+ 	.properties = tristar_properties,
