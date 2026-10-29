@@ -1,4 +1,4 @@
-# Ordered patch layers for the apple platform (all Orchard devices),
+# Ordered patch layers for the apple-16k platform (A9 and later: 16 KiB pages),
 # relative to kernel/. Every *.patch below each directory is applied in
 # path order.
 patches/hoolock

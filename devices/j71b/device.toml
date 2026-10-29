@@ -24,7 +24,7 @@ legacy_launch_manifest = "https://github.com/OrchardLinux/hardware/releases/down
 legacy_launch_manifest_sha256 = "59b0c9dbbaceb27a08ec38b4113463827b985fe4b21b2ea1d556d719746250ae"
 
 [kernel]
-platform = "apple"     # kernel/series/apple, kernel/configs/apple
+platform = "apple-16k" # kernel/series/apple-16k, kernel/configs/apple-16k
 dtb = "t8010-j71b"     # arch/arm64/boot/dts/apple/<dtb>.dtb
 
 [firmware]
