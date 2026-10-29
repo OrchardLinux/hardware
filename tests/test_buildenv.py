@@ -19,7 +19,7 @@ class BuildEnvironment(unittest.TestCase):
             argv = run.call_args.args[0]
             self.assertIn('keep-id:uid=0,gid=0', argv)
             self.assertIn('none', argv)
-            self.assertIn(str(Path('.').resolve()) + ':/src:ro', argv)
+            self.assertIn(str(Path('.').resolve()) + ':/src:ro,z', argv)
             self.assertIn('FLAG=value', argv)
             self.assertIn('ORCHARD_SRC=/src', argv)
             self.assertEqual(argv[-3:], ['builder', 'make', '-j2'])

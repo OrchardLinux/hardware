@@ -74,7 +74,9 @@ def run(image, command, mounts=(), *, env=None, cwd=None, root=False, network=Fa
             argv += ['--network', 'none']
         paths = {'ORCHARD_WORK': '/work', 'ORCHARD_TMP': '/tmp'}
         for source, target, readonly in mounts:
-            argv += ['-v', str(Path(source).resolve()) + ':' + target + (':ro' if readonly else ':rw')]
+            # Shared labels allow concurrent recipe containers to read the same
+            # sources on SELinux hosts such as Fedora.
+            argv += ['-v', str(Path(source).resolve()) + ':' + target + (':ro,z' if readonly else ':rw,z')]
             paths[path_variable(target)] = target
         for key, value in {**paths, **(env or {})}.items():
             argv += ['-e', key + '=' + value]

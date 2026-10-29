@@ -46,7 +46,7 @@ def main():
         if podman is None:
             parser.error('Podman is required')
         subprocess.run([podman, 'run', '--rm', '--network', 'none', '--userns', 'keep-id',
-                        '-v', f'{args.output.resolve()}:/stage:rw',
+                        '-v', f'{args.output.resolve()}:/stage:rw,z',
                         'localhost/orchard-hardware-kernel-toolchain:bookworm',
                         'depmod', '-b', '/stage', release], check=True)
     print(f'Staged {len(rows)} modules for {release} in {args.output}')
