@@ -1,0 +1,213 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Sat, 11 Jul 2026 21:42:17 +0800
+Subject: [PATCH 35/47] chainload: Switch to generic main storage functions
+
+Support for non-nvme storages has been added, so switch chainload to use
+the generic functions
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+
+---
+
+I don't know rust, I hope I did this correctly.
+---
+ rust/src/apfs.rs                 |  8 ++++----
+ rust/src/chainload.rs            | 18 +++++++++---------
+ rust/src/lib.rs                  |  4 ++--
+ rust/src/{nvme.rs => storage.rs} | 24 +++++++++++-------------
+ 4 files changed, 26 insertions(+), 28 deletions(-)
+ rename rust/src/{nvme.rs => storage.rs} (77%)
+
+diff --git a/rust/src/apfs.rs b/rust/src/apfs.rs
+index 8658e35b..a0042917 100644
+--- a/rust/src/apfs.rs
++++ b/rust/src/apfs.rs
+@@ -3,8 +3,8 @@
+ use crate::{
+     c_size_t,
+     gpt::GPT,
+-    nvme::{alloc_sector_buf, nvme_read, NVMEStorage, SectorBuffer},
+     println,
++    storage::{alloc_sector_buf, main_storage_read, MainStorage, SectorBuffer},
+ };
+ use alloc::{boxed::Box, slice, string::String, vec::Vec};
+ use core::{cmp, ffi::c_void, mem, ptr};
+@@ -174,8 +174,8 @@ fn pread(disk: &mut Partition, pos: u64, target: &mut [u8]) -> Result<(), ()> {
+     unsafe {
+         for i in 0..target.len().next_multiple_of(4096) / 4096 {
+             let lba = disk.offset + i as u64 + pos;
+-            if !nvme_read(1, lba, disk.buf.0.as_mut_ptr() as *mut _) {
+-                println!("nvme_read({}, {}) failed", 1, lba);
++            if !main_storage_read(lba, disk.buf.0.as_mut_ptr() as *mut _) {
++                println!("main_storage_read({}) failed", lba);
+                 return Err(());
+             }
+             let off = i * 4096;
+@@ -358,7 +358,7 @@ fn scan_volume(disk: &mut Partition) -> Result<Vec<u8>, ()> {
+ }
+ 
+ fn scan_disks() -> Result<Vec<u8>, ()> {
+-    let storage = NVMEStorage::new(1, 0);
++    let storage = MainStorage::new(0);
+     let mut pt = GPT::new(storage).map_err(|_| ())?;
+     for i in 0..pt.count() {
+         let v = pt.index(i).map_err(|_| ())?;
+diff --git a/rust/src/chainload.rs b/rust/src/chainload.rs
+index 22b7315f..fb420ec4 100644
+--- a/rust/src/chainload.rs
++++ b/rust/src/chainload.rs
+@@ -3,8 +3,8 @@
+ 
+ use crate::c_size_t;
+ use crate::gpt;
+-use crate::nvme;
+ use crate::println;
++use crate::storage;
+ use alloc::vec::Vec;
+ use core::ffi::{c_char, c_int, c_void, CStr};
+ use fatfs::{FileSystem, FsOptions, Read, Seek, SeekFrom};
+@@ -12,21 +12,21 @@ use uuid::Uuid;
+ 
+ #[derive(Debug)]
+ pub enum Error {
+-    FATError(fatfs::Error<nvme::Error>),
+-    GPTError(gpt::Error<nvme::Error>),
++    FATError(fatfs::Error<storage::Error>),
++    GPTError(gpt::Error<storage::Error>),
+     BadArgs,
+     PartitionNotFound,
+     Unknown,
+ }
+ 
+-impl From<fatfs::Error<nvme::Error>> for Error {
+-    fn from(err: fatfs::Error<nvme::Error>) -> Error {
++impl From<fatfs::Error<storage::Error>> for Error {
++    fn from(err: fatfs::Error<storage::Error>) -> Error {
+         Error::FATError(err)
+     }
+ }
+ 
+-impl From<gpt::Error<nvme::Error>> for Error {
+-    fn from(err: gpt::Error<nvme::Error>) -> Error {
++impl From<gpt::Error<storage::Error>> for Error {
++    fn from(err: gpt::Error<storage::Error>) -> Error {
+         Error::GPTError(err)
+     }
+ }
+@@ -40,7 +40,7 @@ fn load_image(spec: &str) -> Result<Vec<u8>, Error> {
+     let path = args.next().ok_or(Error::BadArgs)?;
+ 
+     let part = {
+-        let storage = nvme::NVMEStorage::new(1, 0);
++        let storage = storage::MainStorage::new(0);
+         let mut pt = gpt::GPT::new(storage)?;
+ 
+         //println!("Partitions:");
+@@ -54,7 +54,7 @@ fn load_image(spec: &str) -> Result<Vec<u8>, Error> {
+ 
+     println!("Partition offset: {}", offset);
+ 
+-    let storage = nvme::NVMEStorage::new(1, offset);
++    let storage = storage::MainStorage::new(offset);
+     let opts = FsOptions::new().update_accessed_date(false);
+ 
+     let fs = FileSystem::new(storage, opts)?;
+diff --git a/rust/src/lib.rs b/rust/src/lib.rs
+index 1a8d8648..af4eb0ce 100644
+--- a/rust/src/lib.rs
++++ b/rust/src/lib.rs
+@@ -21,9 +21,9 @@ pub mod float;
+ #[cfg(feature = "chainload")]
+ pub mod gpt;
+ pub mod gpu;
+-#[cfg(feature = "chainload")]
+-pub mod nvme;
+ pub mod print;
++#[cfg(feature = "chainload")]
++pub mod storage;
+ pub mod usb4;
+ 
+ #[cfg(not(test))]
+diff --git a/rust/src/nvme.rs b/rust/src/storage.rs
+similarity index 77%
+rename from rust/src/nvme.rs
+rename to rust/src/storage.rs
+index a7178605..56008d0a 100644
+--- a/rust/src/nvme.rs
++++ b/rust/src/storage.rs
+@@ -6,7 +6,7 @@ use core::ffi::c_void;
+ use fatfs::SeekFrom;
+ 
+ extern "C" {
+-    pub(crate) fn nvme_read(nsid: u32, lba: u64, buffer: *mut c_void) -> bool;
++    pub(crate) fn main_storage_read(lba: u64, buffer: *mut c_void) -> bool;
+ }
+ 
+ const SECTOR_SIZE: usize = 4096;
+@@ -22,18 +22,16 @@ pub(crate) fn alloc_sector_buf() -> Box<SectorBuffer> {
+     p
+ }
+ 
+-pub struct NVMEStorage {
+-    nsid: u32,
++pub struct MainStorage {
+     offset: u64,
+     lba: Option<u64>,
+     buf: Box<SectorBuffer>,
+     pos: u64,
+ }
+ 
+-impl NVMEStorage {
+-    pub fn new(nsid: u32, offset: u64) -> NVMEStorage {
+-        NVMEStorage {
+-            nsid: nsid,
++impl MainStorage {
++    pub fn new(offset: u64) -> MainStorage {
++        MainStorage {
+             offset: offset,
+             lba: None,
+             buf: alloc_sector_buf(),
+@@ -42,11 +40,11 @@ impl NVMEStorage {
+     }
+ }
+ 
+-impl fatfs::IoBase for NVMEStorage {
++impl fatfs::IoBase for MainStorage {
+     type Error = Error;
+ }
+ 
+-impl fatfs::Read for NVMEStorage {
++impl fatfs::Read for MainStorage {
+     fn read(&mut self, mut buf: &mut [u8]) -> Result<usize, Self::Error> {
+         let mut read = 0;
+ 
+@@ -57,8 +55,8 @@ impl fatfs::Read for NVMEStorage {
+             if Some(lba) != self.lba {
+                 self.lba = Some(lba);
+                 let lba = lba + self.offset;
+-                if !unsafe { nvme_read(self.nsid, lba, self.buf.0.as_mut_ptr() as *mut c_void) } {
+-                    println!("nvme_read({}, {}) failed", self.nsid, lba);
++                if !unsafe { main_storage_read(lba, self.buf.0.as_mut_ptr() as *mut c_void) } {
++                    println!("main_storage_read({}) failed", lba);
+                     return Err(());
+                 }
+             }
+@@ -72,7 +70,7 @@ impl fatfs::Read for NVMEStorage {
+     }
+ }
+ 
+-impl fatfs::Write for NVMEStorage {
++impl fatfs::Write for MainStorage {
+     fn write(&mut self, _buf: &[u8]) -> Result<usize, Self::Error> {
+         Err(())
+     }
+@@ -81,7 +79,7 @@ impl fatfs::Write for NVMEStorage {
+     }
+ }
+ 
+-impl fatfs::Seek for NVMEStorage {
++impl fatfs::Seek for MainStorage {
+     fn seek(&mut self, from: SeekFrom) -> Result<u64, Self::Error> {
+         self.pos = match from {
+             SeekFrom::Start(n) => n,

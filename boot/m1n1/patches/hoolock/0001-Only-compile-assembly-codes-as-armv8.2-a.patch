@@ -1,0 +1,57 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Mon, 4 Aug 2025 00:39:26 +0800
+Subject: [PATCH 01/47] Only compile assembly codes as armv8.2-a
+
+Compile C code as base armv8-a, and compile assembly codes as armv8.2-a
+to allow m1n1 to be properly compiled for older SoCs.
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ Makefile    | 4 +++-
+ src/utils.h | 4 ++--
+ 2 files changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 1ee603e5..ce7b57b4 100644
+--- a/Makefile
++++ b/Makefile
+@@ -56,13 +56,15 @@ QUIET :=
+ endif
+ endif
+ 
++ASM_ARCH := armv8.2-a
++
+ BASE_CFLAGS := -O2 -Wall -g -Wundef -Werror=strict-prototypes -fno-common -fno-PIE \
+ 	-Werror=implicit-function-declaration -Werror=implicit-int \
+ 	-Wsign-compare -Wunused-parameter -Wno-multichar \
+ 	-ffreestanding -fpic -ffunction-sections -fdata-sections \
+ 	-nostdinc -isystem $(shell $(CC) -print-file-name=include) -isystem sysinc \
+ 	-Isrc \
+-	-fno-stack-protector -mstrict-align -march=armv8.2-a \
++	-fno-stack-protector -mstrict-align -Wa,-march=$(ASM_ARCH) -DASM_ARCH=\"$(ASM_ARCH)\" \
+ 	$(EXTRA_CFLAGS)
+ 
+ CFLAGS := $(BASE_CFLAGS) -mgeneral-regs-only
+diff --git a/src/utils.h b/src/utils.h
+index a7bf86aa..070cb29a 100644
+--- a/src/utils.h
++++ b/src/utils.h
+@@ -267,7 +267,7 @@ static inline void write64_lo_hi(u64 addr, u64 val)
+ #define __mrs(reg)                                                                                 \
+     ({                                                                                             \
+         u64 val;                                                                                   \
+-        __asm__ volatile("mrs\t%0, " #reg : "=r"(val));                                            \
++        __asm__ volatile(".arch " ASM_ARCH "\nmrs\t%0, " #reg : "=r"(val));                        \
+         val;                                                                                       \
+     })
+ #define _mrs(reg) __mrs(reg)
+@@ -275,7 +275,7 @@ static inline void write64_lo_hi(u64 addr, u64 val)
+ #define __msr(reg, val)                                                                            \
+     ({                                                                                             \
+         u64 __val = (u64)val;                                                                      \
+-        __asm__ volatile("msr\t" #reg ", %0" : : "r"(__val));                                      \
++        __asm__ volatile(".arch " ASM_ARCH "\nmsr\t" #reg ", %0" : : "r"(__val));                  \
+     })
+ #define _msr(reg, val) __msr(reg, val)
+ 

@@ -1,0 +1,232 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Thu, 18 Dec 2025 20:44:27 +0800
+Subject: [PATCH 18/47] Add support for 64-bit AKF mailboxes
+
+AKF (ARM KingFisher, i.e. Cortex-A7) are a class of mailboxes
+used for Cortex-A7 coprocessors in Apple SoCs.
+
+The filename is actually a bit of a misnomer: The added files deal with
+the 64-bit variant of AKF mailbox, which are present on Apple A7-A10 SoCs.
+
+Apple A11, T2 also have AKF mailboxes, but they are of a 96-bit interface
+that is compatible with the existing ASC mailbox interface, so it is
+handled there instead.
+
+Since the message size of this mailbox is 64-bit instead of 96-bit,
+support for this type of mailbox in its own file as all clients will need
+to be modified to support the smaller message size.
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ Makefile  |   1 +
+ src/akf.c | 154 ++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ src/akf.h |  26 +++++++++
+ 3 files changed, 181 insertions(+)
+ create mode 100644 src/akf.c
+ create mode 100644 src/akf.h
+
+diff --git a/Makefile b/Makefile
+index 51aa7eb4..5f1954d3 100644
+--- a/Makefile
++++ b/Makefile
+@@ -127,6 +127,7 @@ OBJECTS := \
+ 	adt.o \
+ 	afk.o \
+ 	aic.o \
++	akf.o \
+ 	asc.o \
+ 	bootlogo_48.o bootlogo_128.o bootlogo_256.o \
+ 	chainload.o \
+diff --git a/src/akf.c b/src/akf.c
+new file mode 100644
+index 00000000..4dbe2a82
+--- /dev/null
++++ b/src/akf.c
+@@ -0,0 +1,154 @@
++/* SPDX-License-Identifier: MIT */
++
++#include "adt.h"
++#include "akf.h"
++#include "malloc.h"
++#include "string.h"
++#include "utils.h"
++
++#define AKF_REMAP_PHYS_LO 0x8
++#define AKF_REMAP_PHYS_HI 0xc
++#define AKF_REMAP_IOVA_LO 0x10
++#define AKF_REMAP_IOVA_HI 0x14
++#define AKF_REMAP_SIZE_LO 0x18
++#define AKF_REMAP_SIZE_HI 0x1c
++#define AKF_REMAP_ENABLE  0x28
++
++#define AKF_CPU_CONTROL       0x28
++#define AKF_CPU_CONTROL_START BIT(4)
++
++#define AKF_UNK_80C 0x80c
++
++#define AKF_V1_OFF 0x1000
++#define AKF_V2_OFF 0x4000
++
++#define AKF_MBOX_CONTROL_ENABLE BIT(0)
++#define AKF_MBOX_CONTROL_FULL   BIT(16)
++#define AKF_MBOX_CONTROL_EMPTY  BIT(17)
++
++#define AKF_MBOX_A2I_CONTROL 0x8
++#define AKF_MBOX_A2I_SEND0   0x10
++#define AKF_MBOX_A2I_SEND1   0x14
++#define AKF_MBOX_A2I_RECV0   0x18
++#define AKF_MBOX_A2I_RECV1   0x1c
++#define AKF_MBOX_I2A_CONTROL 0x20
++
++#define AKF_MBOX_I2A_SEND0 0x30
++#define AKF_MBOX_I2A_SEND1 0x34
++#define AKF_MBOX_I2A_RECV0 0x38
++#define AKF_MBOX_I2A_RECV1 0x3c
++
++struct akf_dev {
++    uintptr_t base;
++    uintptr_t cpu_base;
++    int iop_node;
++};
++
++akf_dev_t *akf_init(const char *path)
++{
++    int akf_path[8];
++    int node = adt_path_offset_trace(adt, path, akf_path);
++    if (node < 0) {
++        printf("akf: Error getting akf node %s\n", path);
++        return NULL;
++    }
++
++    u64 base;
++    if (adt_get_reg(adt, akf_path, "reg", 0, &base, NULL) < 0) {
++        printf("akf: Error getting akf %s base address.\n", path);
++        return NULL;
++    }
++
++    akf_dev_t *akf = calloc(1, sizeof(*akf));
++    if (!akf)
++        return NULL;
++
++    akf->cpu_base = base;
++    if (adt_is_compatible(adt, node, "iop,s5l8960x")) {
++        akf->base = base + AKF_V1_OFF;
++    } else if (adt_is_compatible(adt, node, "iop,s8000")) {
++        akf->base = base + AKF_V2_OFF;
++    } else {
++        printf("akf: Unsupported compatible\n");
++        return NULL;
++    }
++
++    akf->iop_node = node;
++
++    /* Enable mailbox (required on A7) */
++    set32(akf->base + AKF_MBOX_A2I_CONTROL, AKF_MBOX_CONTROL_ENABLE);
++    set32(akf->base + AKF_MBOX_I2A_CONTROL, AKF_MBOX_CONTROL_ENABLE);
++
++    return akf;
++}
++
++void akf_cpu_start(akf_dev_t *akf)
++{
++    set32(akf->cpu_base + AKF_CPU_CONTROL, AKF_CPU_CONTROL_START);
++}
++
++void akf_cpu_stop(akf_dev_t *akf)
++{
++    clear32(akf->cpu_base + AKF_CPU_CONTROL, AKF_CPU_CONTROL_START);
++}
++
++bool akf_cpu_running(akf_dev_t *akf)
++{
++    return !!(read32(akf->cpu_base + AKF_CPU_CONTROL) & AKF_CPU_CONTROL_START);
++}
++
++void akf_free(akf_dev_t *akf)
++{
++    free(akf);
++}
++
++int akf_get_iop_node(akf_dev_t *akf)
++{
++    return akf->iop_node;
++}
++
++bool akf_can_recv(akf_dev_t *akf)
++{
++    return !(read32(akf->base + AKF_MBOX_I2A_CONTROL) & AKF_MBOX_CONTROL_EMPTY);
++}
++
++bool akf_can_send(akf_dev_t *akf)
++{
++    return !(read32(akf->base + AKF_MBOX_A2I_CONTROL) & AKF_MBOX_CONTROL_FULL);
++}
++
++bool akf_send(akf_dev_t *akf, u64 msg)
++{
++    if (poll32(akf->base + AKF_MBOX_A2I_CONTROL, AKF_MBOX_CONTROL_FULL, 0, 200000)) {
++        printf("akf: A2I mailbox full for 200ms. Is the akf stuck?");
++        return false;
++    }
++
++    dma_wmb();
++    write64(akf->base + AKF_MBOX_A2I_SEND0, msg);
++
++    // printf("sent msg: 0x%lx\n", msg);
++    return true;
++}
++
++bool akf_recv(akf_dev_t *akf, u64 *msg)
++{
++    if (!akf_can_recv(akf))
++        return false;
++
++    *msg = read64(akf->base + AKF_MBOX_I2A_RECV0);
++    dma_rmb();
++
++    // printf("received msg: 0x%lx\n", *msg);
++    return true;
++}
++
++bool akf_recv_timeout(akf_dev_t *akf, u64 *msg, u32 delay_usec)
++{
++    u64 timeout = timeout_calculate(delay_usec);
++    while (!timeout_expired(timeout)) {
++        if (akf_recv(akf, msg))
++            return true;
++    }
++    return false;
++}
+diff --git a/src/akf.h b/src/akf.h
+new file mode 100644
+index 00000000..95372ae7
+--- /dev/null
++++ b/src/akf.h
+@@ -0,0 +1,26 @@
++/* SPDX-License-Identifier: MIT */
++
++#ifndef AKF_H
++#define AKF_H
++
++#include "types.h"
++
++typedef struct akf_dev akf_dev_t;
++
++akf_dev_t *akf_init(const char *path);
++void akf_free(akf_dev_t *akf);
++
++int akf_get_iop_node(akf_dev_t *akf);
++
++void akf_cpu_start(akf_dev_t *akf);
++void akf_cpu_stop(akf_dev_t *akf);
++bool akf_cpu_running(akf_dev_t *akf);
++
++bool akf_can_recv(akf_dev_t *akf);
++bool akf_can_send(akf_dev_t *akf);
++
++bool akf_send(akf_dev_t *akf, u64 msg);
++bool akf_recv(akf_dev_t *akf, u64 *msg);
++bool akf_recv_timeout(akf_dev_t *akf, u64 *msg, u32 delay_usec);
++
++#endif

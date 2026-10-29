@@ -1,0 +1,19 @@
+# Every repository whose m1n1 work Orchard carries. Authorship lives in each
+# patch; this file records where it came from and what state the import is in.
+# status: found | imported | reviewed | integrated | upstreamed
+
+[base]
+url = "https://github.com/AsahiLinux/m1n1.git"
+commit = "c9ef56f7356e93e6f6cac116c529d31c277ef6a6" # Hoolock's merge base
+
+[[source]]
+name = "hoolock"
+url = "https://github.com/HoolockLinux/m1n1.git"
+branch = "idevice"
+commit = "d5a10ac52a6468484854419a6c5130f1d62073eb"
+contributors = ["Nick Chan"]
+devices = ["Apple A7-A11 platform support"]
+license = "MIT"
+patches = "patches/hoolock"
+status = "integrated"
+notes = "Staging tree for upstream. The 47 commits after the base, exported verbatim with git format-patch; the CI-only [DOWNSTREAM] commit d5a10ac is left out. Tree hash-verified: base + patches == d5a10ac^ (0efc898b)."

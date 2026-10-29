@@ -1,0 +1,215 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Sat, 11 Jul 2026 01:51:11 +0800
+Subject: [PATCH 19/47] akf: Add function to map firmware loaded by iBoot
+
+In the case of AKF IOPs, iBoot may have pre-loaded the firmware, but reset
+the hardware state before executing m1n1. Add a function to map the
+firmware again with information from the ADT.
+
+Since this function is not strictly mailbox-related and will also be used
+by kboot in the future, put it in its own file.
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ Makefile     |  2 +-
+ src/akf.c    | 34 +++++++++++++++++++-
+ src/akf.h    |  2 ++
+ src/akf_fw.c | 89 ++++++++++++++++++++++++++++++++++++++++++++++++++++
+ src/akf_fw.h |  8 +++++
+ 5 files changed, 133 insertions(+), 2 deletions(-)
+ create mode 100644 src/akf_fw.c
+ create mode 100644 src/akf_fw.h
+
+diff --git a/Makefile b/Makefile
+index 5f1954d3..dca48806 100644
+--- a/Makefile
++++ b/Makefile
+@@ -127,7 +127,7 @@ OBJECTS := \
+ 	adt.o \
+ 	afk.o \
+ 	aic.o \
+-	akf.o \
++	akf.o akf_fw.o \
+ 	asc.o \
+ 	bootlogo_48.o bootlogo_128.o bootlogo_256.o \
+ 	chainload.o \
+diff --git a/src/akf.c b/src/akf.c
+index 4dbe2a82..9a2cea94 100644
+--- a/src/akf.c
++++ b/src/akf.c
+@@ -2,6 +2,7 @@
+ 
+ #include "adt.h"
+ #include "akf.h"
++#include "akf_fw.h"
+ #include "malloc.h"
+ #include "string.h"
+ #include "utils.h"
+@@ -12,7 +13,7 @@
+ #define AKF_REMAP_IOVA_HI 0x14
+ #define AKF_REMAP_SIZE_LO 0x18
+ #define AKF_REMAP_SIZE_HI 0x1c
+-#define AKF_REMAP_ENABLE  0x28
++#define AKF_ENDIANNESS    0x20
+ 
+ #define AKF_CPU_CONTROL       0x28
+ #define AKF_CPU_CONTROL_START BIT(4)
+@@ -82,6 +83,37 @@ akf_dev_t *akf_init(const char *path)
+     return akf;
+ }
+ 
++bool akf_map_preloaded_fw(akf_dev_t *akf)
++{
++    int fw_node = adt_first_child_offset(adt, akf->iop_node);
++    if (!fw_node) {
++        printf("akf: IOP Firmware node not found\n");
++        return false;
++    }
++
++    /*
++     * Always check the new one first, because in ADTs of certain versions
++     * it will be segment-ranges, but the unfilled region-base and region-size
++     * still exists
++     */
++    u64 phys, iova, size;
++
++    if (!akf_fw_get_region(fw_node, &phys, &iova, &size))
++        return false;
++
++    write32(akf->cpu_base + AKF_REMAP_IOVA_LO, iova & 0xffffffff);
++    write32(akf->cpu_base + AKF_REMAP_IOVA_HI, iova >> 32);
++    write32(akf->cpu_base + AKF_REMAP_PHYS_LO, phys & 0xffffffff);
++    write32(akf->cpu_base + AKF_REMAP_PHYS_HI, phys >> 32);
++    write32(akf->cpu_base + AKF_REMAP_SIZE_LO, size & 0xffffffff);
++    write32(akf->cpu_base + AKF_REMAP_SIZE_HI, size >> 32);
++    /* 0 = BE, 1 = LE */
++    write32(akf->cpu_base + AKF_ENDIANNESS, 1);
++    write32(akf->cpu_base + AKF_UNK_80C, 0);
++
++    return true;
++}
++
+ void akf_cpu_start(akf_dev_t *akf)
+ {
+     set32(akf->cpu_base + AKF_CPU_CONTROL, AKF_CPU_CONTROL_START);
+diff --git a/src/akf.h b/src/akf.h
+index 95372ae7..05338b9a 100644
+--- a/src/akf.h
++++ b/src/akf.h
+@@ -23,4 +23,6 @@ bool akf_send(akf_dev_t *akf, u64 msg);
+ bool akf_recv(akf_dev_t *akf, u64 *msg);
+ bool akf_recv_timeout(akf_dev_t *akf, u64 *msg, u32 delay_usec);
+ 
++bool akf_map_preloaded_fw(akf_dev_t *akf);
++
+ #endif
+diff --git a/src/akf_fw.c b/src/akf_fw.c
+new file mode 100644
+index 00000000..182115d9
+--- /dev/null
++++ b/src/akf_fw.c
+@@ -0,0 +1,89 @@
++#include "adt.h"
++#include "types.h"
++#include "utils.h"
++
++/* New style with segment-ranges; iOS 12 */
++static bool akf_fw_get_region_new(int fw_node, u64 *phys, u64 *iova, u64 *size)
++{
++    const struct adt_segment_ranges *seg;
++    u32 segments_len;
++
++    seg = adt_getprop(adt, fw_node, "segment-ranges", &segments_len);
++    if (!seg) {
++        printf("akf: No segment-ranges property\n");
++        return false;
++    }
++
++    unsigned int count = segments_len / sizeof(*seg);
++    if (!count) {
++        printf("akf: segment-ranges too short\n");
++        return false;
++    }
++
++    u64 region_phys = seg->phys;
++    u64 region_iova = seg->iova;
++    u64 region_phys_end = seg->phys + seg->size;
++
++    for (unsigned int i = 0; i < count; i++) {
++        if (seg[i].iova < region_iova)
++            region_iova = seg[i].iova;
++
++        if (seg[i].phys < region_phys)
++            region_phys = seg[i].phys;
++
++        if ((seg[i].phys + seg[i].size) > region_phys_end)
++            region_phys_end = seg[i].phys + seg[i].size;
++    }
++
++    *phys = region_phys;
++    *iova = region_iova;
++    *size = region_phys_end - region_phys;
++
++    return true;
++}
++
++/* Old style with region-base and region-size; iOS 10 */
++static bool akf_fw_get_region_old(int fw_node, u64 *phys, u64 *iova, u64 *size)
++{
++    if (ADT_GETPROP(adt, fw_node, "region-base", phys) < 0) {
++        printf("akf: Could not get region-base property\n");
++        return false;
++    }
++
++    if (ADT_GETPROP(adt, fw_node, "region-size", size) < 0) {
++        printf("akf: Could not get region-size property\n");
++        return false;
++    }
++
++    *iova = 0;
++
++    if (*size == 0)
++        return false;
++
++    return true;
++}
++
++bool akf_fw_get_region(int fw_node, u64 *phys, u64 *iova, u64 *size)
++{
++    int pre_loaded;
++    if (ADT_GETPROP(adt, fw_node, "pre-loaded", &pre_loaded) < 0) {
++        printf("akf: Could not get pre-loaded property\n");
++        return false;
++    }
++
++    if (!pre_loaded) {
++        printf("akf: IOP firmware not pre-loaded.\n");
++        return false;
++    }
++
++    /*
++     * Always check the new one first, because in ADTs of certain versions
++     * it will be segment-ranges, but the unfilled region-base and region-size
++     * still exists
++     */
++    if (!akf_fw_get_region_new(fw_node, phys, iova, size))
++        if (!akf_fw_get_region_old(fw_node, phys, iova, size))
++            return false;
++
++    return true;
++}
+diff --git a/src/akf_fw.h b/src/akf_fw.h
+new file mode 100644
+index 00000000..650eb775
+--- /dev/null
++++ b/src/akf_fw.h
+@@ -0,0 +1,8 @@
++#ifndef AKF_FW_H
++#define AKF_FW_H
++
++#include "types.h"
++
++bool akf_fw_get_region(int fw_node, u64 *phys, u64 *iova, u64 *size);
++
++#endif

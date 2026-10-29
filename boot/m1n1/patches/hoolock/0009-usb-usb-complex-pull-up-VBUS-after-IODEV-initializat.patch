@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Mon, 6 Jul 2026 23:03:48 +0800
+Subject: [PATCH 09/47] usb: usb-complex: pull up VBUS after IODEV
+ initialization
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ src/usb.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/usb.c b/src/usb.c
+index eb80d5b0..fce0d5d0 100644
+--- a/src/usb.c
++++ b/src/usb.c
+@@ -382,7 +382,7 @@ int usb_complex_init(struct usb_complex_config *config)
+     usb_iodev = memalign(SPINLOCK_ALIGN, sizeof(*usb_iodev));
+     if (!usb_iodev)
+         return -1;
+-    set32(config->USB2Phy_Base + USBX_OTG_SIG, USBX_OTG_SIG_VBUSDET_FORCE_EN);
++
+     usb_iodev->ops = &iodev_usb_dwc2_ops;
+     usb_iodev->opaque = opaque;
+     usb_iodev->usage = USAGE_CONSOLE | USAGE_UARTPROXY;
+@@ -392,6 +392,7 @@ int usb_complex_init(struct usb_complex_config *config)
+     printf("USB0: initialized at %p\n", opaque);
+ 
+     usb_is_initialized = true;
++    set32(config->USB2Phy_Base + USBX_OTG_SIG, USBX_OTG_SIG_VBUSDET_FORCE_EN);
+ 
+     return 0;
+ }

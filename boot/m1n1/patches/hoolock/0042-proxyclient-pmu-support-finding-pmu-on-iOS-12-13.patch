@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Sun, 21 Dec 2025 23:34:47 +0800
+Subject: [PATCH 42/47] proxyclient: pmu: support finding pmu on iOS 12-13
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ proxyclient/m1n1/hw/pmu.py | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/proxyclient/m1n1/hw/pmu.py b/proxyclient/m1n1/hw/pmu.py
+index c642f75d..85c41b14 100644
+--- a/proxyclient/m1n1/hw/pmu.py
++++ b/proxyclient/m1n1/hw/pmu.py
+@@ -18,7 +18,7 @@ class PMU:
+         self.bus_type = bus_type
+         if bus_type == "spmi":
+             self.spmi = SPMI(u, adt_path.rpartition('/')[0])
+-            self.primary = u.adt[adt_path].is_primary == 1
++            self.primary = u.adt[adt_path].compatible[0] in ("pmu,d2422", "pmu,d2449") or u.adt[adt_path].is_primary == 1
+         elif bus_type == "i2c":
+             self.i2c = I2C(u, adt_path.rpartition('/')[0])
+             self.primary = u.adt[adt_path].name == "pmu"
+@@ -48,7 +48,7 @@ class PMU:
+                 for pmu in child:
+                     compat = getattr(pmu, "compatible")[0] if hasattr(pmu, "compatible") else "unset"
+                     primary = (getattr(pmu, "is-primary") == 1) if hasattr(pmu, "is-primary")  else False
+-                    if compat in ("pmu,spmi", "pmu,d2422", "pmu,d2449") and primary:
++                    if compat == "pmu,spmi" and primary or compat in ("pmu,d2422", "pmu,d2449"):
+                         return (pmu._path.removeprefix('/device-tree'), "spmi")
+             elif child.name.startswith("i2c"):
+                 for dev in child:

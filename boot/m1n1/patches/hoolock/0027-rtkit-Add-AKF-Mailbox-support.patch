@@ -1,0 +1,131 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Sat, 11 Jul 2026 01:08:46 +0800
+Subject: [PATCH 27/47] rtkit: Add AKF Mailbox support
+
+RTKit IOPs are behind AKF mailboxes on A7-A10.
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ src/rtkit.c | 71 +++++++++++++++++++++++++++++++++++++++++++++++++++++
+ src/rtkit.h |  4 +++
+ 2 files changed, 75 insertions(+)
+
+diff --git a/src/rtkit.c b/src/rtkit.c
+index 5d88bd5f..14ad5b81 100644
+--- a/src/rtkit.c
++++ b/src/rtkit.c
+@@ -4,6 +4,7 @@
+ 
+ #include "rtkit.h"
+ #include "adt.h"
++#include "akf.h"
+ #include "asc.h"
+ #include "dart.h"
+ #include "iova.h"
+@@ -70,6 +71,9 @@
+ #define RTKIT_MIN_VERSION 11
+ #define RTKIT_MAX_VERSION 12
+ 
++#define RTKIT_AKF_MSG_EP  GENMASK(63, 56)
++#define RTKIT_AKF_MSG_MSG GENMASK(55, 0)
++
+ #define IOVA_MASK GENMASK(35, 0)
+ 
+ enum rtkit_power_state {
+@@ -213,6 +217,73 @@ static const struct rtkit_iop_ops __rtkit_asc_iop_ops = {
+ 
+ const struct rtkit_iop_ops *const rtkit_asc_iop_ops = &__rtkit_asc_iop_ops;
+ 
++static void rtkit_akf_cpu_start(struct rtkit_dev *rtk)
++{
++    akf_cpu_start((akf_dev_t *)rtk->mbox);
++}
++
++static void rtkit_akf_cpu_stop(struct rtkit_dev *rtk)
++{
++    akf_cpu_stop((akf_dev_t *)rtk->mbox);
++}
++
++static bool rtkit_akf_can_recv(struct rtkit_dev *rtk)
++{
++    return akf_can_recv((akf_dev_t *)rtk->mbox);
++}
++
++static bool rtkit_akf_send(struct rtkit_dev *rtk, const struct rtkit_message *rtk_msg)
++{
++    u64 akf_msg = 0;
++
++    akf_msg |= FIELD_PREP(RTKIT_AKF_MSG_EP, rtk_msg->ep);
++    akf_msg |= FIELD_PREP(RTKIT_AKF_MSG_MSG, rtk_msg->msg);
++
++    return akf_send((akf_dev_t *)rtk->mbox, akf_msg);
++}
++
++static bool rtkit_akf_recv(struct rtkit_dev *rtk, struct rtkit_message *rtk_msg)
++{
++    u64 akf_msg;
++    bool recv;
++
++    recv = akf_recv((akf_dev_t *)rtk->mbox, &akf_msg);
++    if (!recv)
++        return false;
++
++    rtk_msg->msg = FIELD_GET(RTKIT_AKF_MSG_MSG, akf_msg);
++    rtk_msg->ep = FIELD_GET(RTKIT_AKF_MSG_EP, akf_msg);
++
++    return true;
++}
++
++static bool rtkit_akf_recv_timeout(struct rtkit_dev *rtk, struct rtkit_message *rtk_msg,
++                                   u32 delay_usec)
++{
++    u64 akf_msg;
++    bool recv;
++
++    recv = akf_recv_timeout((akf_dev_t *)rtk->mbox, &akf_msg, delay_usec);
++    if (!recv)
++        return false;
++
++    rtk_msg->msg = FIELD_GET(RTKIT_AKF_MSG_MSG, akf_msg);
++    rtk_msg->ep = FIELD_GET(RTKIT_AKF_MSG_EP, akf_msg);
++
++    return true;
++}
++
++static const struct rtkit_iop_ops __rtkit_akf_iop_ops = {
++    .cpu_start = rtkit_akf_cpu_start,
++    .cpu_stop = rtkit_akf_cpu_stop,
++    .can_recv = rtkit_akf_can_recv,
++    .recv_timeout = rtkit_akf_recv_timeout,
++    .send = rtkit_akf_send,
++    .recv = rtkit_akf_recv,
++};
++
++const struct rtkit_iop_ops *const rtkit_akf_iop_ops = &__rtkit_akf_iop_ops;
++
+ rtkit_dev_t *rtkit_init(const char *name, const struct rtkit_iop_ops *iop_ops, void *mbox,
+                         dart_dev_t *dart, iova_domain_t *dart_iovad, sart_dev_t *sart, bool sram)
+ {
+diff --git a/src/rtkit.h b/src/rtkit.h
+index 934feb37..4c57c924 100644
+--- a/src/rtkit.h
++++ b/src/rtkit.h
+@@ -12,6 +12,9 @@
+ #define rtkit_init_asc(name, asc, dart, dart_iovad, sart, sram)                                    \
+     rtkit_init(name, rtkit_asc_iop_ops, asc, dart, dart_iovad, sart, sram)
+ 
++#define rtkit_init_akf(name, akf, dart, dart_iovad, sart, sram)                                    \
++    rtkit_init(name, rtkit_akf_iop_ops, asc, dart, dart_iovad, sart, sram)
++
+ typedef struct rtkit_dev rtkit_dev_t;
+ 
+ struct rtkit_message {
+@@ -26,6 +29,7 @@ struct rtkit_buffer {
+ };
+ 
+ extern const struct rtkit_iop_ops *const rtkit_asc_iop_ops;
++extern const struct rtkit_iop_ops *const rtkit_akf_iop_ops;
+ 
+ rtkit_dev_t *rtkit_init(const char *name, const struct rtkit_iop_ops *iop_ops, void *mbox,
+                         dart_dev_t *dart, iova_domain_t *dart_iovad, sart_dev_t *sart, bool sram);

@@ -1,0 +1,51 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Tue, 28 Jul 2026 02:28:47 +0800
+Subject: [PATCH 02/47] uart: Support baudrate 3000000 by decrasing
+ oversampling rate
+
+bit [19:16] of UBRDIV controls the oversampling rate. By decreasing the
+oversampling rate, it is possible to support baud rates higher than 1500000.
+
+However, not every device could use it:
+
+- T8010/T8011 does not work at 3000000, even after adjusting CPU frequencies.
+- iPhone 5s/iPod touch 6 is too slow at their default maxmium clock speed and
+will not work at 3000000 baud without overclocking. (Need at least 1392 MHz
+from testing)
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ src/uart.c      | 6 +++++-
+ src/uart_regs.h | 3 +++
+ 2 files changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/src/uart.c b/src/uart.c
+index 6bd2dab6..5649cb3b 100644
+--- a/src/uart.c
++++ b/src/uart.c
+@@ -108,8 +108,12 @@ void uart_setbaud(int baudrate)
+     if (!uart_base)
+         return;
+ 
++    u8 oversample = min(16, UART_CLOCK / baudrate);
++
+     uart_flush();
+-    write32(uart_base + UBRDIV, ((UART_CLOCK / baudrate + 7) / 16) - 1);
++    write32(uart_base + UBRDIV,
++            FIELD_PREP(UBRDIV_DIV, ((UART_CLOCK / baudrate + 7) / oversample) - 1) |
++                FIELD_PREP(UBRDIV_OVERSAMPLE, 0x10 - oversample));
+ }
+ 
+ void uart_flush(void)
+diff --git a/src/uart_regs.h b/src/uart_regs.h
+index bca1fe42..5be0ff4e 100644
+--- a/src/uart_regs.h
++++ b/src/uart_regs.h
+@@ -30,3 +30,6 @@
+ #define UFSTAT_RXFULL BIT(8)
+ #define UFSTAT_TXCNT  GENMASK(7, 4)
+ #define UFSTAT_RXCNT  GENMASK(3, 0)
++
++#define UBRDIV_OVERSAMPLE GENMASK(19, 16)
++#define UBRDIV_DIV        GENMASK(15, 0)

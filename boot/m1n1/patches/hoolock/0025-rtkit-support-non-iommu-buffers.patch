@@ -1,0 +1,35 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Nick Chan <towinchenmi@gmail.com>
+Date: Sat, 11 Jul 2026 18:13:13 +0800
+Subject: [PATCH 25/47] rtkit: support non iommu buffers
+
+Signed-off-by: Nick Chan <towinchenmi@gmail.com>
+---
+ src/rtkit.c | 7 +++----
+ 1 file changed, 3 insertions(+), 4 deletions(-)
+
+diff --git a/src/rtkit.c b/src/rtkit.c
+index ef148d49..ab65e1c1 100644
+--- a/src/rtkit.c
++++ b/src/rtkit.c
+@@ -219,8 +219,8 @@ bool rtkit_map(rtkit_dev_t *rtk, void *phys, size_t sz, u64 *dva)
+         *dva = iova | rtk->dva_base;
+         return true;
+     } else {
+-        rtkit_printf("TODO: implement no IOMMU buffers\n");
+-        return false;
++        *dva = (u64)phys;
++        return true;
+     }
+ }
+ 
+@@ -236,8 +236,7 @@ bool rtkit_unmap(rtkit_dev_t *rtk, u64 dva, size_t sz)
+         iova_free(rtk->dart_iovad, dva & IOVA_MASK, sz);
+         return true;
+     } else {
+-        rtkit_printf("TODO: implement no IOMMU buffers\n");
+-        return false;
++        return true;
+     }
+ }
+ 
