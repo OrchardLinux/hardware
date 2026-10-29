@@ -1,0 +1,93 @@
+#!/bin/busybox sh
+# Only PID 1 can retire the initial RAM filesystem and enter systemd.
+set -eu
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+[ "$$" -eq 1 ] || { echo 'NFS handoff requires PID 1' >&2; exit 1; }
+. /etc/orchard/nfs.conf
+rescue_retired=false
+is_mounted() {
+    # Debian's static BusyBox omits mountpoint. /proc itself can be moved
+    # during handoff, so inspect whichever proc mount is still reachable.
+    if [ -r /proc/self/mountinfo ]; then
+        table=/proc/self/mountinfo
+    elif [ -r /newroot/proc/self/mountinfo ]; then
+        table=/newroot/proc/self/mountinfo
+    else
+        return 1
+    fi
+    awk -v target="$1" '$5 == target { found = 1 } END { exit !found }' "$table"
+}
+failed() {
+    echo 'NFS handoff stopped; physical RAM rescue remains available.'
+    for name in run sys proc dev; do
+        if is_mounted "/newroot/$name" && ! is_mounted "/$name"; then
+            mount --move "/newroot/$name" "/$name" || true
+        fi
+    done
+    echo failed > /run/orchard/nfs-handoff-state
+    if [ "$rescue_retired" = true ] || ! kill -0 "$(cat /run/orchard/rescue.pid)" 2>/dev/null; then
+        # A retired child may still answer kill -0 while exiting or as a
+        # zombie. Its replacement must start even while that PID exists.
+        if [ "$rescue_retired" = true ]; then
+            kill -KILL "$(cat /run/orchard/rescue.pid)" 2>/dev/null || true
+        fi
+        /run/orchard/rescue/busybox sh /run/orchard/rescue/acm-rescue &
+        echo "$!" > /run/orchard/rescue.pid
+    fi
+    while :; do sleep 60; done
+}
+trap failed EXIT
+[ ! -e /run/orchard/nfs-handoff-attempted ]
+touch /run/orchard/nfs-handoff-attempted
+/sbin/orchard-nfs-validate --board
+options="vers=4.0,proto=tcp,port=$NFS_PORT,addr=$NFS_SERVER,hard,timeo=50,retrans=2"
+timeout -s KILL 60 mount -t nfs4 -o "$options" "$NFS_SERVER:$NFS_EXPORT" /newroot
+/sbin/orchard-nfs-validate /newroot
+if [ "${NFS_KEEP_RESCUE:-no}" = yes ]; then
+    mkdir -p /run/systemd/system/sysinit.target.wants
+    cat > /run/systemd/system/orchard-acm-rescue.service <<'UNIT'
+[Unit]
+Description=Orchard physical USB RAM rescue
+DefaultDependencies=no
+Before=basic.target
+IgnoreOnIsolate=yes
+
+[Service]
+Type=simple
+ExecStart=/run/orchard/rescue/busybox sh /run/orchard/rescue/acm-rescue
+Restart=always
+RestartSec=1
+TimeoutStopSec=2
+KillMode=control-group
+UNIT
+    ln -s ../orchard-acm-rescue.service /run/systemd/system/sysinit.target.wants/orchard-acm-rescue.service
+fi
+# Keep an NFS-rooted interface outside NetworkManager's DHCP/reconnection policy.
+mkdir -p /run/NetworkManager/conf.d
+cat > /run/NetworkManager/conf.d/90-orchard-nfs.conf <<'NETWORK'
+[keyfile]
+unmanaged-devices=interface-name:usb0
+NETWORK
+cat > /run/orchard/rescue/systemd-init <<'INIT'
+#!/run/orchard/rescue/busybox sh
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+export HOME=/root USER=root LOGNAME=root TERM=linux
+[ "$$" -eq 1 ] || exit 1
+echo /sbin/modprobe > /proc/sys/kernel/modprobe
+exec /usr/lib/systemd/systemd
+INIT
+chmod 755 /run/orchard/rescue/systemd-init
+echo ready > /run/orchard/nfs-handoff-state
+# Stop the pre-handoff shell; systemd starts a replacement only if requested.
+if [ -f /run/orchard/rescue.pid ]; then
+    rescue_retired=true
+    rescue=$(cat /run/orchard/rescue.pid)
+    kill "$rescue" 2>/dev/null || true
+    # The foreground shell was spawned in its own session.
+    if [ -f /run/orchard/rescue/shell.pid ]; then
+        shell=$(cat /run/orchard/rescue/shell.pid)
+        /bin/busybox kill -KILL "-$shell" 2>/dev/null || true
+    fi
+fi
+for name in dev proc sys run; do mount --move "/$name" "/newroot/$name"; done
+exec /bin/busybox switch_root /newroot /run/orchard/rescue/systemd-init
