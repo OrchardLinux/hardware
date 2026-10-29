@@ -1,10 +1,11 @@
 #!/usr/bin/python3
 """The recovery's device operations, as /usr/bin/orchard-device OPERATION [BASE64-JSON].
 
-Two operations: `bootstrap` (over USB serial: authorize the host's SSH key,
-start SSH, return the pinned host key) and `status`. Installing runs the
-host's install_device.py over that SSH session; this file knows nothing
-about storage. Output is JSON lines: progress events, then one result or
+Three operations: `bootstrap` (over USB serial: authorize the host's SSH key,
+start SSH, return the pinned host key), `status`, and `start` (ask PID 1 to
+switch into an installed root, see start.py). Installing runs the host's
+install_device.py over that SSH session; this file knows nothing about
+storage. Output is JSON lines: progress events, then one result or
 error.
 """
 import base64
@@ -15,6 +16,7 @@ import re
 import subprocess
 import sys
 import time
+import uuid
 
 import identity
 
@@ -80,7 +82,19 @@ def bootstrap(request):
         time.sleep(0.05)
 
 
-OPERATIONS = {'status': status, 'bootstrap': bootstrap}
+def start(request):
+    """Ask PID 1 to start an installed root in this boot; it checks and switches within a second."""
+    target = {key: str(uuid.UUID(request[key])) for key in ('root', 'boot')}
+    path = Path('/run/orchard/start.json')
+    if path.exists():
+        raise ValueError('A start was already requested in this boot')
+    temporary = path.with_suffix('.part')
+    temporary.write_text(json.dumps(target))
+    temporary.replace(path)
+    return {'starting': target['root']}
+
+
+OPERATIONS = {'status': status, 'bootstrap': bootstrap, 'start': start}
 
 
 def main():

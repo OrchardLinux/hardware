@@ -39,11 +39,11 @@ def files(modules_dir: Path):
 
 
 def recovery_files():
-    """The recovery's device runtime (runtime/recovery): orchard-device, identity, storage fence."""
+    """The recovery's device runtime (runtime/recovery): orchard-device, identity, storage fence, start."""
     prefix = 'usr/libexec/orchard/'
     source = PROJECT / 'runtime/recovery'
     result = {prefix + name: ((source / name).read_bytes(), 0o755)
-              for name in ('device.py', 'identity.py', 'storage-fence')}
+              for name in ('device.py', 'identity.py', 'storage-fence', 'start.py')}
     result[prefix + 'adt.py'] = ((PROJECT / 'apple/adt.py').read_bytes(), 0o644)
     result['usr/bin/orchard-device'] = (b'#!/bin/sh\nexec /usr/bin/python3 /usr/libexec/orchard/device.py "$@"\n', 0o755)
     return result

@@ -28,7 +28,21 @@ echo "${board#apple,} recovery: USB serial ready; provision an SSH key before SS
     while true; do getty -n -l /bin/sh ttyGS0 115200 vt100; sleep 1; done
 ) &
 # Internal storage comes up read-only in the background (storage-fence); the
-# host installs over SSH once /run/orchard/storage-ready exists. The recovery
-# never hands over: an installed system starts from its boot entry.
+# host installs over SSH once /run/orchard/storage-ready exists.
 /usr/libexec/orchard/storage-fence > /run/orchard/storage.log 2>&1 &
-while :; do sleep 3600; done
+# After an install, `orchard-device start` asks for the new root: if its boot
+# entry boots this same kernel, PID 1 switches into it, so the first start
+# needs no second DFU boot. Later starts go through the entry (orchard launch).
+while :; do
+    if [ -e /run/orchard/start.json ]; then
+        if /usr/bin/python3 /usr/libexec/orchard/start.py > /run/orchard/start.log 2>&1; then
+            kill -TERM -- -1 2>/dev/null || true
+            sleep 1
+            kill -KILL -- -1 2>/dev/null || true
+            for name in dev proc sys run; do mount --move "/$name" "/newroot/$name"; done
+            exec switch_root /newroot /sbin/init
+        fi
+        mv /run/orchard/start.json /run/orchard/start.failed
+    fi
+    sleep 1
+done

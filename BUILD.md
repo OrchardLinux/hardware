@@ -35,7 +35,7 @@ The m1n1 backend is unbranded by default. A distro can pass `--extra-patch FILE`
 - `image/runtime.py`: modules, public firmware data and integrity lists for both roots; the recovery's runtime.
 - `image/prepare_runtime.py`: Python/ELF dependency staging and recovery root-stream receipt.
 - `image/recovery.py`: recovery assembly, newc packing and m1n1 framing.
-- `runtime/recovery`: the recovery's `orchard-device` (`bootstrap`, `status`), boot identity and the read-only storage fence. Installing is the host's install script over SSH; the recovery never hands over to an installed root.
+- `runtime/recovery`: the recovery's `orchard-device` (`bootstrap`, `status`, `start`), boot identity and the read-only storage fence. Installing is the host's install script over SSH. Right after an install, `start` lets PID 1 switch into the new root when its boot entry boots the running kernel, so the first start needs no second DFU boot; later starts go through the entry.
 
 Both roots get the same modules, public firmware data and integrity list. Only the recovery gets the runtime, at `/usr/libexec/orchard` with `/usr/bin/orchard-device`; its state is in `/run/orchard`.
 
