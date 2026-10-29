@@ -1,9 +1,6 @@
 #!/bin/sh
 # Run from the physically connected USB serial shell, with one public key on stdin.
 set -eu
-[ ! -e /run/orchard/ssh-revoking.json ] && [ ! -e /run/orchard/ssh-revoked.json ] || {
-    echo 'SSH access has been retired for this boot' >&2; exit 1;
-}
 set -f
 IFS= read -r line || { echo 'Missing public key' >&2; exit 1; }
 set -- $line

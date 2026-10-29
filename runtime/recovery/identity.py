@@ -12,6 +12,15 @@ RUN = Path('/run/orchard')
 BOOT_ID = Path('/proc/sys/kernel/random/boot_id')
 MTD = Path('/proc/mtd')
 DEV = Path('/dev')
+COMPATIBLE = Path('/proc/device-tree/compatible')
+
+
+def profile():
+    """The board's profile from its first devicetree compatible: \"apple,j71b\" -> \"j71b\"."""
+    board = COMPATIBLE.read_bytes().split(b'\0')[0].decode()
+    if not re.fullmatch(r'apple,[a-z0-9]+', board):
+        raise ValueError('Not an Apple board: ' + board)
+    return board.split(',', 1)[1]
 
 
 def cached():
@@ -22,7 +31,7 @@ def cached():
     if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o077:
         raise ValueError('Device identity record is not protected')
     result = json.loads(path.read_text())
-    if (result.get('profile') != 'j71b' or type(result.get('ecid')) is not int or
+    if (result.get('profile') != profile() or type(result.get('ecid')) is not int or
             not 0 < result['ecid'] < 2**64 or
             result.get('boot_id') != str(uuid.UUID(BOOT_ID.read_text().strip()))):
         raise ValueError('Device identity record differs from this boot')
@@ -45,7 +54,7 @@ def initialize():
         blob = stream.read(size)
     if len(blob) != size:
         raise ValueError('Live ADT read was truncated')
-    result = {'profile': 'j71b', 'ecid': validate(blob),
+    result = {'profile': profile(), 'ecid': validate(blob),
               'boot_id': str(uuid.UUID(BOOT_ID.read_text().strip()))}
     RUN.mkdir(mode=0o700, parents=True, exist_ok=True)
     if RUN.is_symlink():

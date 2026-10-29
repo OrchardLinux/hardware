@@ -14,13 +14,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('loader', 'kernel', 'dtb', 'busybox', 'dropbear', 'dropbearkey',
                  'wpa-supplicant', 'wpa-cli', 'iw',
-                 'base', 'base-receipt', 'modules-dir', 'policy-dir', 'output'):
+                 'base', 'base-receipt', 'modules-dir', 'root-receipt', 'output'):
         parser.add_argument('--' + name, type=Path, required=True)
-    purpose = parser.add_mutually_exclusive_group(required=True)
-    purpose.add_argument('--root-receipt', type=Path)
-    purpose.add_argument('--launcher-catalogue', type=Path)
-    parser.add_argument('--launcher-release')
-    parser.add_argument('--cleanup-receipt', type=Path, action='append', default=[])
     diagnostics = parser.add_mutually_exclusive_group()
     diagnostics.add_argument('--verbose', action='store_true',
                              help='enable visible Linux framebuffer console and kernel diagnostics')
@@ -34,20 +29,14 @@ def main():
     with tempfile.TemporaryDirectory(prefix='recovery-stage-', dir=work) as temporary:
         stage = Path(temporary)
         initramfs = stage / 'initramfs.gz'
-        purpose_args = (['--launcher-catalogue', str(args.launcher_catalogue), '--launcher-release', args.launcher_release]
-                        if args.launcher_catalogue and args.launcher_release else
-                        ['--root-receipt', str(args.root_receipt)])
-        if args.launcher_catalogue and not args.launcher_release:
-            parser.error('--launcher-catalogue requires --launcher-release')
-        cleanup_args = [value for receipt in args.cleanup_receipt for value in ('--cleanup-receipt', str(receipt))]
         subprocess.run([sys.executable, '-m', 'orchard_hardware.image.prepare_runtime',
                         '--busybox', str(args.busybox), '--dropbear', str(args.dropbear),
                         '--dropbearkey', str(args.dropbearkey),
                         '--wpa-supplicant', str(args.wpa_supplicant),
                         '--wpa-cli', str(args.wpa_cli), '--iw', str(args.iw),
                         '--base', str(args.base), '--base-receipt', str(args.base_receipt),
-                        '--modules-dir', str(args.modules_dir), *purpose_args,
-                        '--policy-dir', str(args.policy_dir), '--output', str(stage / 'root'), *cleanup_args], check=True)
+                        '--modules-dir', str(args.modules_dir), '--root-receipt', str(args.root_receipt),
+                        '--output', str(stage / 'root')], check=True)
         subprocess.run([sys.executable, '-m', 'orchard_hardware.boot.initramfs.pack',
                         '--root', str(stage / 'root'),
                         '--output', str(initramfs)], check=True)

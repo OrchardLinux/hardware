@@ -13,7 +13,7 @@ from unittest.mock import patch
 from orchard_hardware.apple import adt
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location('orchard_identity_test', ROOT/'runtime/j71b/identity.py')
+spec = importlib.util.spec_from_file_location('orchard_identity_test', ROOT/'runtime/recovery/identity.py')
 identity = importlib.util.module_from_spec(spec)
 with patch.dict(sys.modules, {'adt':adt}):
     spec.loader.exec_module(identity)
@@ -34,11 +34,12 @@ class Identity(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         for name,value in (('RUN',self.root/'run'),('DEV',self.root),('MTD',self.root/'mtd'),
-                           ('BOOT_ID',self.root/'boot-id')):
+                           ('BOOT_ID',self.root/'boot-id'),('COMPATIBLE',self.root/'compatible')):
             patched=patch.object(identity,name,value)
             patched.start()
             self.addCleanup(patched.stop)
         identity.BOOT_ID.write_text(BOOT)
+        identity.COMPATIBLE.write_bytes(b'apple,j71b\0apple,t8010\0apple,arm-platform\0')
         blob=node('device-tree',children=[node('chosen',[('unique-chip-id',(123).to_bytes(8,'little'))])])
         identity.MTD.write_text(f'dev: size erasesize name\nmtd0: {len(blob):08x} 00001000 "adt"\n')
         (self.root/'mtd0').write_bytes(blob)
@@ -92,6 +93,13 @@ class Identity(unittest.TestCase):
         path.symlink_to(self.root/'missing')
         with self.assertRaisesRegex(ValueError,'not protected'):
             identity.cached()
+
+    def test_profile_comes_from_the_board_compatible(self):
+        identity.COMPATIBLE.write_bytes(b'apple,j81\0apple,t7001\0')
+        self.assertEqual(identity.profile(),'j81')
+        identity.COMPATIBLE.write_bytes(b'raspberrypi,4-model-b\0')
+        with self.assertRaisesRegex(ValueError,'Not an Apple board'):
+            identity.profile()
 
     def test_gadget_publishes_identity_before_binding_usb(self):
         source=(ROOT/'boot/initramfs/recovery/usb-gadget').read_text()

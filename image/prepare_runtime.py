@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
 """Stage finished public recovery, including Python, modules and device runtime."""
 import argparse
-import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import shutil
-import sys
 import tarfile
 
-from orchard_hardware import firmware_path
-from .runtime import files as runtime_files
+from .runtime import files as runtime_files, recovery_files
 from .integrity import sha
 from .elf import needed
 
@@ -118,22 +115,9 @@ def stage_runtime(base, receipt, root):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('busybox', 'dropbear', 'dropbearkey', 'wpa-supplicant', 'wpa-cli', 'iw',
-                 'base', 'base-receipt', 'modules-dir', 'policy-dir', 'output'):
+                 'base', 'base-receipt', 'modules-dir', 'root-receipt', 'output'):
         parser.add_argument('--' + name, type=Path, required=True)
-    purpose = parser.add_mutually_exclusive_group(required=True)
-    purpose.add_argument('--root-receipt', type=Path)
-    purpose.add_argument('--launcher-catalogue', type=Path)
-    parser.add_argument('--launcher-release')
-    parser.add_argument('--cleanup-receipt', type=Path, action='append', default=[])
     args = parser.parse_args()
-    cleanup_receipts = []
-    for receipt in args.cleanup_receipt:
-        previous = json.loads(receipt.read_text())
-        if (previous.get('kind') != 'rootfs' or previous.get('profile') != 'j71b' or
-                previous.get('schema') != 1 or not previous.get('release') or
-                not re.fullmatch('[0-9a-f]{64}', previous.get('sha256', ''))):
-            raise ValueError('Invalid compatible cleanup receipt')
-        cleanup_receipts.append({'release': previous['release'], 'sha256': previous['sha256']})
     root = args.output
     if root.exists():
         parser.error('Choose a new staging directory')
@@ -146,30 +130,18 @@ def main():
                          (args.wpa_cli, 'usr/bin/wpa_cli'), (args.iw, 'usr/sbin/iw')):
         copy(source, root / name, 0o755)
     stage_runtime(args.base, args.base_receipt, root)
-    kernel_release, public = runtime_files(args.modules_dir, args.policy_dir)
-    for name, (data, mode) in public.items():
+    kernel_release, public = runtime_files(args.modules_dir)
+    for name, (data, mode) in {**public, **recovery_files()}.items():
         path = root / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
         path.chmod(mode)
-    if args.launcher_catalogue:
-        catalogue = json.loads(args.launcher_catalogue.read_text())
-        if (not args.launcher_release or catalogue.get('schema') != 1 or
-                catalogue.get('profile') != 'j71b' or not catalogue.get('installations') or
-                any(r['kernel_release'] != kernel_release for r in catalogue['installations'])):
-            raise ValueError('Invalid launcher catalogue/kernel identity')
-        copy(args.launcher_catalogue, root / 'etc/orchard/launch.json', 0o644)
-        configuration = {'protocol':1, 'release':args.launcher_release, 'profile':'j71b',
-                         'kernel_release':kernel_release, 'mode':'launcher'}
-    else:
-        spec = json.loads(args.root_receipt.read_text())
-        if spec['kernel_release'] != kernel_release:
-            raise ValueError('Root/recovery kernel releases differ')
-        configuration = {'protocol': 1, 'release': spec['release'], 'profile': 'j71b',
-                         'kernel_release': kernel_release, 'cleanup_receipts': cleanup_receipts,
-                         'root': {k: spec[k] for k in ('sha256', 'bytes', 'expanded_bytes', 'members', 'compression')}}
-    (root / 'etc/orchard/release.json').write_text(json.dumps(configuration))
-    copy(firmware_path('j71b'), root / 'etc/orchard/firmware.json', 0o644)
+    # The release this recovery belongs to; `orchard-device status` reports it.
+    spec = json.loads(args.root_receipt.read_text())
+    if spec['kernel_release'] != kernel_release:
+        raise ValueError('Root/recovery kernel releases differ')
+    (root / 'etc/orchard/release.json').write_text(json.dumps(
+        {'protocol': 1, 'release': spec['release'], 'kernel_release': kernel_release}))
     for source, name in (('init', 'init'), ('usb-gadget', 'sbin/recovery-usb'),
                          ('authorize-key', 'sbin/authorize-key'), ('start-ssh', 'sbin/recovery-start-ssh'),
                          ('capture-adt', 'sbin/capture-adt')):

@@ -32,18 +32,14 @@ The m1n1 backend is unbranded by default. A distro can pass `--extra-patch FILE`
 
 ## Runtime and image assembly
 
-- `image/runtime.py`: modules, hardware/touch scripts, device API and integrity lists.
+- `image/runtime.py`: modules, public firmware data and integrity lists for both roots; the recovery's runtime.
 - `image/prepare_runtime.py`: Python/ELF dependency staging and recovery root-stream receipt.
 - `image/recovery.py`: recovery assembly, newc packing and m1n1 framing.
-- `runtime/j71b`: archive containment, staging cleanup, storage fencing and PID-1 handoff.
+- `runtime/recovery`: the recovery's `orchard-device` (`bootstrap`, `status`), boot identity and the read-only storage fence. Installing is the host's install script over SSH; the recovery never hands over to an installed root.
 
-Image builders pass a `--policy-dir` containing `image_policy.py` and supporting modules. The policy is staged into the image, not imported on the host. It supplies `ready`, `validate_root`, `validate_handoff`, `verify_privileges`, `verify_session_access`, `diagnostics`, and `INIT`; diagnostic retirement also uses `stop_diagnostics` and `DIAGNOSTICS_EXECUTABLE`. Desktop and init policy belong to the image, not the shared hardware runtime.
+Both roots get the same modules, public firmware data and integrity list. Only the recovery gets the runtime, at `/usr/libexec/orchard` with `/usr/bin/orchard-device`; its state is in `/run/orchard`.
 
-Recovery and installed roots receive identical public runtime files and integrity lists. Runtime paths are `/run/orchard`, `/etc/orchard`, and `/usr/libexec/orchard-j71b`; the command endpoint is `/usr/bin/orchard-device`.
-
-## Shared launcher and publication
-
-See [black-screen shared launch](boot/quiet/README.md) for building and publishing the launcher manifest, recovery and Pongo assets. These are required for the default `orchard launch` flow; publishing a wheel alone is insufficient.
+## Publication
 
 Upload the hardware wheel to its immutable `vVERSION` GitHub release. Publish the compatible CLI pair using the [CLI release instructions](https://github.com/OrchardLinux/cli/blob/main/docs/releases.md). Retain upstream licenses and corresponding source/build inputs when distributing compiled components.
 

@@ -2,10 +2,10 @@
 
 Public recovery includes all modules, indexes, device scripts, a Python runtime from the verified public Arch base, and static BusyBox, Dropbear and Wi-Fi tools (`wpa_supplicant`, `wpa_cli` and `iw`; WPA2, libnl, internal crypto). RAM images get the same tools. Private firmware is transferred only after fresh ADT retrieval.
 
-- `python -m orchard_hardware.image.prepare_runtime`: stage public files using explicit base/module/root-receipt and image policy inputs.
+- `python -m orchard_hardware.image.prepare_runtime`: stage public files using explicit base, module and root-receipt inputs.
 - `python -m orchard_hardware.image.recovery`: pack the runtime and assemble loader, bootargs, DTB, kernel and initramfs.
 - `init`: early pseudo-filesystems, USB key provisioning and PID 1 handoff coordination.
-- Device operations: hardware `runtime/j71b/`; shared payload generation: `orchard_hardware.image.runtime`.
+- Device operations (`bootstrap`, `status`) and the storage fence: hardware `runtime/recovery/`; shared payload generation: `orchard_hardware.image.runtime`.
 - Distro assembly is owned by its consumer, not this package; see [BUILD.md](../../../../BUILD.md).
 
 The default keeps framebuffer console output hidden with `fbcon=map:9`, while retaining normal UART logging for hardware timing compatibility. `--verbose` explicitly enables visible diagnostics. Logo preservation remains mandatory; a later modeset still needs hardware verification.

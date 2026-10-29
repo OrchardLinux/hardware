@@ -25,7 +25,7 @@ package-dir = {orchard_hardware = "."}
 [tool.setuptools.package-data]
 orchard_hardware = [
   "features.toml", "devices/*/device.toml", "devices/*/firmware.json", "devices/*/public-firmware/*", "schemas/v1/*.json",
-  "launcher/*.py", "runtime/j71b/*.py", "runtime/j71b/phase2-hardware",
+  "runtime/recovery/*.py", "runtime/recovery/storage-fence",
   "boot/initramfs/recovery/*.json", "boot/initramfs/recovery/Containerfile",
   "boot/initramfs/recovery/init", "boot/initramfs/recovery/usb-gadget",
   "boot/initramfs/recovery/authorize-key", "boot/initramfs/recovery/start-ssh",

@@ -4,7 +4,7 @@ import re
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-CASES = [["build.yml","assets","hardware-build.sigstore.jsonl","hardware-release-assets","draft"],["launcher.yml","build","hardware-launcher.sigstore.jsonl","shared-launcher-assets","attach"]]
+CASES = [["build.yml","assets","hardware-build.sigstore.jsonl","hardware-release-assets","draft"]]
 GUARD = "if: toJSON(github.event.repository.private) == 'false'"
 ACTION = 'actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6'
 

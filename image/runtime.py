@@ -1,4 +1,4 @@
-"""Public runtime producer shared by recovery and the installed root."""
+"""Public files shared by the recovery and an installed root, and the recovery's own runtime."""
 import hashlib
 import json
 from pathlib import Path
@@ -6,7 +6,8 @@ from pathlib import Path
 PROJECT = Path(__file__).resolve().parents[1]
 
 
-def files(modules_dir: Path, policy_dir: Path):
+def files(modules_dir: Path):
+    """Kernel modules and public firmware data, with their SHA256SUMS."""
     releases = [p for p in modules_dir.iterdir() if p.is_dir() and not p.is_symlink()]
     if len(releases) != 1:
         raise ValueError('Expected one kernel module release')
@@ -19,21 +20,6 @@ def files(modules_dir: Path, policy_dir: Path):
             raise ValueError('Public module tree contains a symlink')
         if path.is_file():
             result['usr/lib/modules/' + release + '/' + path.relative_to(releases[0]).as_posix()] = (path.read_bytes(), 0o644)
-    prefix = 'usr/libexec/orchard-j71b/'
-    for source, target in (('phase2-hardware', 'hardware'), ('device.py', 'device.py'),
-                           ('archive.py', 'archive.py'), ('handoff.py', 'handoff.py'),
-                           ('staging.py', 'staging.py'), ('ssh_access.py', 'ssh_access.py'),
-                           ('storage.py', 'storage.py'), ('identity.py', 'identity.py'),
-                           ('launch.py', 'launch.py')):
-        result[prefix + target] = ((PROJECT / 'runtime/j71b' / source).read_bytes(), 0o755)
-    result[prefix + 'adt.py'] = ((PROJECT / 'apple/adt.py').read_bytes(), 0o644)
-    result['usr/bin/orchard-device'] = (b'#!/bin/sh\nexec /usr/bin/python3 /usr/libexec/orchard-j71b/device.py "$@"\n', 0o755)
-    if not (policy_dir / 'image_policy.py').is_file():
-        raise ValueError('Image must supply its own image_policy.py')
-    for path in sorted(policy_dir.glob('*.py')):
-        if path.is_symlink() or prefix + path.name in result:
-            raise ValueError('Unsafe/colliding image policy file')
-        result[prefix + path.name] = (path.read_bytes(), 0o644)
     # cfg80211 needs the public database AND its upstream detached signature
     # in recovery, before Wi-Fi probing. This is not private device firmware.
     regulatory = PROJECT / 'devices/j71b/public-firmware'
@@ -50,3 +36,14 @@ def files(modules_dir: Path, policy_dir: Path):
                    for name, (data, _) in sorted(result.items()))
     result['etc/orchard/public.SHA256SUMS'] = (sums.encode(), 0o644)
     return release, result
+
+
+def recovery_files():
+    """The recovery's device runtime (runtime/recovery): orchard-device, identity, storage fence."""
+    prefix = 'usr/libexec/orchard/'
+    source = PROJECT / 'runtime/recovery'
+    result = {prefix + name: ((source / name).read_bytes(), 0o755)
+              for name in ('device.py', 'identity.py', 'storage-fence')}
+    result[prefix + 'adt.py'] = ((PROJECT / 'apple/adt.py').read_bytes(), 0o644)
+    result['usr/bin/orchard-device'] = (b'#!/bin/sh\nexec /usr/bin/python3 /usr/libexec/orchard/device.py "$@"\n', 0o755)
+    return result
