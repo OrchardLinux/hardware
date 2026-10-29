@@ -77,6 +77,19 @@ snapshot() {
   rm -f "$index"
 }
 
+# Tree the patch series produces, built in a temporary index without
+# touching any file.
+desired_tree() {
+  local index="$work/desired-index.$$"
+  rm -f "$index"
+  GIT_INDEX_FILE=$index git -C "$source" read-tree HEAD
+  for patch in "${patches[@]}"; do
+    GIT_INDEX_FILE=$index git -C "$source" apply --cached "$patch"
+  done
+  GIT_INDEX_FILE=$index git -C "$source" write-tree
+  rm -f "$index"
+}
+
 apply_patches() {
   echo 'Applying kernel patches...'
   for patch in "${patches[@]}"; do
@@ -113,10 +126,15 @@ else
            'turn them into patches or remove the tree' >&2
       exit 1
     fi
-    echo 'Kernel patches changed; updating the tree (only affected files recompile)...'
-    git -C "$source" checkout -q -- .
-    git -C "$source" clean -fdq
-    apply_patches
+    echo 'Kernel patches changed; applying only the difference to the tree...'
+    # Only files whose content changes are written, so the others keep their
+    # timestamps and make recompiles just what the new series changes.
+    desired=$(desired_tree)
+    git -C "$source" diff --binary "$(cat "$prepared")" "$desired" |
+      git -C "$source" apply --whitespace=nowarn -
+    [[ $(snapshot) == "$desired" ]] || { echo 'Kernel tree update did not produce the patch series' >&2; exit 1; }
+    patch_list > "$applied"
+    printf '%s\n' "$desired" > "$prepared"
   fi
 fi
 mkdir -p "$build_output"
