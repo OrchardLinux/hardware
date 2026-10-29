@@ -5,7 +5,7 @@ mkdir -p /sys/kernel/config
 mount -t configfs -o nodev,noexec,nosuid configfs /sys/kernel/config
 g=/sys/kernel/config/usb_gadget/linux-recovery
 [ ! -e "$g" ]
-identity=$(/usr/bin/python3 /usr/libexec/orchard-j71b/identity.py)
+identity=$(/usr/bin/python3 /usr/libexec/orchard/identity.py)
 # "apple,j71b" -> "J71b": hardware's device.toml matches "<Board> Recovery".
 board=$(tr '\000' '\n' < /proc/device-tree/compatible | head -1)
 board=${board#apple,}

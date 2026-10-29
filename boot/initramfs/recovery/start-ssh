@@ -1,9 +1,6 @@
 #!/bin/sh
 # SSH starts only after the host has provisioned its key over USB serial.
 set -eu
-[ ! -e /run/orchard/ssh-revoking.json ] && [ ! -e /run/orchard/ssh-revoked.json ] || {
-    echo 'SSH access has been retired for this boot' >&2; exit 1;
-}
 dir=${RECOVERY_SSH_DIR:-/root/.ssh}
 [ -s "$dir/authorized_keys" ] && [ ! -L "$dir/authorized_keys" ] || {
     echo 'Provision a public key over USB serial first' >&2; exit 1;

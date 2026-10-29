@@ -29,14 +29,13 @@ Publish in this order:
 1. Hardware wheel, component bundle, checksums and corresponding source.
 2. A compatible CLI release, selecting that hardware tag.
 3. Minimal Linux and/or Omarchy A images, selecting the explicit hardware/CLI tags.
-4. Shared launcher, using the exact published roots and their build receipts.
-5. Qualify the complete installation/cold-restart flow before announcing the app.
+4. Qualify the complete installation/cold-restart flow before announcing the app.
 
 Cross-repository inputs must be published public releases, not drafts. The default repository token cannot read another repository's drafts. No broad personal access token is required for public dependencies.
 
 ## Artifact attestations
 
-Public tag and manual builds attest every final asset, including the checksum manifest, with GitHub build provenance. The hardware and shared-launcher bundles are retained as `hardware-build.sigstore.jsonl` and `hardware-launcher.sigstore.jsonl` alongside workflow artifacts and draft/attached release assets.
+Public tag and manual builds attest every final asset, including the checksum manifest, with GitHub build provenance. The hardware bundle is retained as `hardware-build.sigstore.jsonl` alongside workflow artifacts and draft/attached release assets.
 
 Attestation and bundle-copy steps require repository visibility to be explicitly public. Private (or unknown-visibility) builds skip both steps; no signing token is requested and no attestation is sent to Sigstore. This follows the same public/private policy as Resize APFS. Signing permissions are scoped to the final assembly job, not tests or release-upload jobs. A public signing failure prevents the release upload.
 
@@ -47,17 +46,3 @@ gh attestation verify j71b-components.tar.gz --repo OrchardLinux/hardware
 ```
 
 Use the expected repository identity, not just a matching hash. Attestation identifies the workflow/commit and bytes; it does not establish reproducibility or physical-device qualification. See [GitHub's attestation documentation](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations).
-
-## Shared launcher
-
-Run `.github/workflows/launcher.yml` manually after the image releases exist. Select:
-
-- The hardware and compatible CLI tags.
-- A Minimal Linux tag (supplies its signed Alpine base and compatible root).
-- Optionally an Omarchy A tag, built with the same kernel/modules/runtime.
-
-The producer validates component inventories, quiet-patch receipts, root streams and kernel/runtime compatibility. It refuses incompatible roots rather than advertising unsupported installations. For the J71b update, rebuild both Minimal Linux and Omarchy A with hardware/CLI v0.1.10 and include both new roots. Before checksumming and attesting, the workflow sets both launcher manifests' `min_orchard` to the selected CLI tag so older host firmware recipes are rejected before preparation.
-
-By default the workflow only uploads `shared-launcher-assets`. Explicitly enable `attach_assets` to attach new assets to the selected hardware release. This never overwrites existing assets, changes the latest-release selection, or publishes a draft. The wheel/component checksums stay immutable; launcher assets have a separate `launcher.SHA256SUMS`.
-
-Keep the completed hardware release selected as latest so the device descriptor's `latest/download/j71b-apple-launcher.boot.toml` URL works, and older CLIs still find the legacy `j71b-launcher.boot.toml`, which every release republishes unchanged. A future wheel-only release must not displace it until its own matching launcher is complete.

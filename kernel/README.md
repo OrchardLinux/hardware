@@ -22,6 +22,6 @@ directory; it receives `Image.gz`, `<device>.dtb`, `dtbs/`, `kernel.release` and
 `lib/modules/`.
 
 The kernel has no device-specific NVMe fences. Protecting Apple's data is
-the installer's job: the recovery runtime keeps every NVMe disk and
-partition read-only and opens only its verified target while writing
-(`runtime/j71b/storage.py`).
+the installer's job: the recovery keeps every NVMe partition and every
+namespace but the main one read-only (`runtime/recovery/storage-fence`), and
+the install script makes writable only what its plan creates, while writing.

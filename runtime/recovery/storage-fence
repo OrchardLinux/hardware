@@ -1,0 +1,34 @@
+#!/bin/sh
+# Bring up internal storage read-only at recovery boot. Every NVMe partition
+# and every namespace but nvme0n1 (Apple system data) is set read-only; the
+# installer makes writable only what its plan creates, while writing. The
+# whole nvme0n1 stays writable: a read-only disk would keep its partitions
+# read-only after blockdev --setrw. Writes /run/orchard/storage-ready, or
+# /run/orchard/storage-failed with the step that failed.
+set -eu
+step=load
+failed() {
+    rc=$?
+    [ "$rc" = 0 ] || echo "$step (exit $rc)" > /run/orchard/storage-failed
+}
+trap failed EXIT
+[ "$(grep -c '/dev/nvme' /proc/mounts || true)" = 0 ]
+modprobe nvme
+step=wait
+n=0
+while [ "$(cat /sys/class/nvme/nvme0/state 2>/dev/null)" != live ]; do n=$((n+1)); [ "$n" -le 30 ]; sleep 1; done
+step=partitions
+n=0
+while ! ls /sys/class/block/nvme0n1p* >/dev/null 2>&1; do n=$((n+1)); [ "$n" -le 10 ]; sleep 1; done
+for block in /sys/class/block/nvme*n*p*; do
+    blockdev --setro "/dev/${block##*/}"
+    [ "$(cat "$block/ro")" = 1 ]
+done
+step=namespaces
+for block in /sys/class/block/nvme*n*; do
+    [ ! -e "$block/partition" ] && [ "${block##*/}" != nvme0n1 ] || continue
+    blockdev --setro "/dev/${block##*/}"
+    [ "$(cat "$block/ro")" = 1 ]
+done
+step=done
+echo ready > /run/orchard/storage-ready

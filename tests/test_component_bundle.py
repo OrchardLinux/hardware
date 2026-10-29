@@ -1,6 +1,5 @@
 """Public component archives retain integrity and reject changed inputs."""
 import importlib.util
-import json
 from pathlib import Path
 import tarfile
 import tempfile
@@ -17,7 +16,6 @@ def load(name):
 
 
 package_components = load('package_components')
-launcher_inputs = load('launcher_inputs')
 
 
 class ComponentBundle(unittest.TestCase):
@@ -31,7 +29,7 @@ class ComponentBundle(unittest.TestCase):
             path.write_bytes(name.encode())
             path.chmod(0o755)
 
-    def test_package_and_launcher_inputs_bind_files_and_quiet_patches(self):
+    def test_package_keeps_executable_modes(self):
         with tempfile.TemporaryDirectory() as directory:
             parent = Path(directory)
             root = parent / 'components'
@@ -40,14 +38,6 @@ class ComponentBundle(unittest.TestCase):
             with tarfile.open(parent / 'bundle.tar.gz') as archive:
                 member = archive.getmember('components/boot/dropbear')
                 self.assertEqual(member.mode & 0o777, 0o755)
-            launcher_inputs.prepare(root, parent / 'inputs.json')
-            inputs = json.loads((parent / 'inputs.json').read_text())
-            self.assertEqual(Path(inputs['files']['loader']['path']), (root / 'quiet/m1n1.bin').resolve())
-            from orchard_hardware.image.launcher import verify_quiet_boot
-            verify_quiet_boot(root / 'quiet/quiet-boot.json', inputs)
-            (root / 'kernel/Image.gz').write_bytes(b'changed')
-            with self.assertRaisesRegex(ValueError, 'Component differs'):
-                launcher_inputs.prepare(root, parent / 'changed.json')
 
     def test_missing_modules_or_links_are_not_packaged(self):
         with tempfile.TemporaryDirectory() as directory:

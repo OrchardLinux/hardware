@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Combine loader, boot arguments, DTB, kernel and initramfs into an m1n1 image."""
+"""Combine loader, boot arguments, DTBs, kernel and initramfs into an m1n1 image.
+
+m1n1 boots with the DTB whose root compatible names the device it runs on, so
+one image carries the DTB of every device it supports.
+"""
 import argparse
 import hashlib
 import json
@@ -22,15 +26,16 @@ def initramfs_header(path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--manifest', type=Path, required=True, help='device boot profile')
-    for name in ('loader', 'dtb', 'kernel', 'initramfs', 'output'):
+    for name in ('loader', 'kernel', 'initramfs', 'output'):
         parser.add_argument('--' + name, type=Path, required=True)
+    parser.add_argument('--dtb', type=Path, action='append', required=True, help='repeat once per device')
     args = parser.parse_args()
     bootargs = json.loads(args.manifest.read_text())['bootargs'].encode()
     if not bootargs.startswith(b'chosen.bootargs=') or not bootargs.endswith(b'\n'):
         parser.error('invalid device boot arguments')
     if args.output.exists():
         parser.error('output already exists; choose a new artifact name')
-    inputs = [('loader', args.loader), ('bootargs', bootargs), ('dtb', args.dtb),
+    inputs = [('loader', args.loader), ('bootargs', bootargs), *(('dtb', dtb) for dtb in args.dtb),
               ('kernel', args.kernel), ('initramfs', args.initramfs)]
     for name, source in inputs:
         if not isinstance(source, bytes) and not source.is_file():

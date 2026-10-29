@@ -314,6 +314,10 @@ jobs:
           python ci/package_components.py --device j71b --directory "$bundle" \
             --output out/publication/j71b-components.tar.gz
           cp out/downloads/*.whl out/downloads/*.tar.gz out/publication/
+          # orchard launch starts any device with only Pongo and the storage-capable
+          # m1n1 (orchard_hardware.loader): add the ones built above to the wheel.
+          python ci/add_loaders.py out/publication/*.whl \
+            out/components/quiet/m1n1.bin out/components/quiet/pongo.bin
           rm out/publication/kernel-components.tar.gz out/publication/tool-components.tar.gz out/publication/quiet-pongo.tar.gz
           git archive --format=tar.gz -o out/publication/hardware-source.tar.gz HEAD
           (cd out/publication && sha256sum ./*.whl ./*.tar.gz > SHA256SUMS)

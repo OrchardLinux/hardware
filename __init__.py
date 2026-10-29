@@ -45,3 +45,21 @@ def firmware_path(profile):
     if not path.is_file():
         raise ValueError('Firmware recipe resource is missing')
     return path
+
+
+def loader(profile):
+    """The prebuilt Pongo and storage-capable m1n1 that start this device, if packaged.
+
+    `orchard launch` needs only these two: m1n1 then reads the device's boot
+    partition (docs/boot-contract.md), so launching depends on no distro and
+    on nothing an install left on the host. Both are built once for every
+    Apple device (boot/m1n1/build apple, boot/quiet/build-pongo.py); the
+    published wheel carries them in loaders/, a source checkout has none and
+    the CLI builds them instead. Returns {'pongo': Path, 'm1n1': Path} or None.
+    """
+    device_path(profile)
+    root = Path(__file__).parent / 'loaders'
+    files = {'pongo': root / 'pongo.bin', 'm1n1': root / 'm1n1.bin'}
+    if all(path.is_file() and not path.is_symlink() for path in files.values()):
+        return files
+    return None
