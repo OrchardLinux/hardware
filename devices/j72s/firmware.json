@@ -1,0 +1,80 @@
+{
+  "schema": 2,
+  "device": "iPad6,12",
+  "ipsw": {
+    "version": "16.7.10",
+    "build": "20H350",
+    "url": "https://updates.cdn-apple.com/2024SpringFCS/fullrestores/062-47889/FBBD9227-79D6-4FAA-91B9-D20E087BE0E7/iPad_64bit_TouchID_ASTC_16.7.10_20H350_Restore.ipsw",
+    "bytes": 5586431671,
+    "sha256": "1709e8e27b1c0c98dc7c64ae27b4e208b49835c24a95074d1aebe135342b3112"
+  },
+  "inputs": {
+    "BlueTool": {
+      "ipsw": {
+        "rootfs": "usr/sbin/BlueTool"
+      },
+      "device": "/usr/sbin/BlueTool"
+    },
+    "kernelcache": {
+      "ipsw": {
+        "kernelcache": true
+      },
+      "device": {
+        "kernelcache": "active"
+      }
+    },
+    "J72s.mtprops": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/multitouch/J72s.mtprops"
+      },
+      "device": "/usr/share/firmware/multitouch/J72s.mtprops",
+      "sha256": "69f27fe207cc5810a748dac3dfe640b1c5a755709f49513b4b5125660784f0fc"
+    }
+  },
+  "outputs": [
+    {
+      "destination": "lib/firmware/brcm/BCM.apple,j72s.hcd",
+      "sha256": "85db6624fe5e9fe63a5dc0a5244be8326e2e861e974d519e79b8c34b8e7dc822",
+      "steps": [
+        {
+          "step": "bluetool-hcd@1",
+          "input": "BlueTool"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/apple/s8000-smartio.bin",
+      "sha256": "da53095ed3364689ffd56f6576f036e4741a98836147a181c335626389ef5a36",
+      "steps": [
+        {
+          "step": "smartio-from-kernelcache@2",
+          "input": "kernelcache",
+          "kext": "com.apple.driver.AppleS8000SmartIO"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/apple/vxd-deva.bin",
+      "sha256": "bf5167652e81540471aaca141943fd33d71c3990c137f145471305f5f5ade83b",
+      "steps": [
+        {
+          "step": "vxd-firmware-from-kernelcache@1",
+          "input": "kernelcache"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/apple/j72s-fwstart.z2fw",
+      "sha256": "d1ba8bc78e4bf67db163db426f11d22323057705aa66954b8785e9a57495da27",
+      "steps": [
+        {
+          "step": "z2fw-from-z2-packet@1",
+          "input": "J72s.mtprops",
+          "profile": "C1F15,1",
+          "calibration_address": 268472320,
+          "calibration_size": 1024
+        }
+      ]
+    }
+  ]
+}

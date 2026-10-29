@@ -1,0 +1,35 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 21:32:51 +0800
+Subject: [PATCH] dt-bindings: mfd: syscon: Add Apple S8000 i2s-switch
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The A9 i2s-switch (AppleAE2I2SSwitch3 in iOS) is a small block of
+routing registers shared by the MCA serializers: each register selects
+the clock and data source of one pad, MCA or DSP node. The MCA driver
+that owns a route programs it through the syscon.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux 7fbe6da5 (J71t ledger 10.5); his DT used
+ the compatible with "syscon" without a binding entry.]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ Documentation/devicetree/bindings/mfd/syscon.yaml | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/Documentation/devicetree/bindings/mfd/syscon.yaml b/Documentation/devicetree/bindings/mfd/syscon.yaml
+index 945a168b6..6efc0da0f 100644
+--- a/Documentation/devicetree/bindings/mfd/syscon.yaml
++++ b/Documentation/devicetree/bindings/mfd/syscon.yaml
+@@ -46,6 +46,7 @@ properties:
+               - apm,xgene-mcb
+               - apm,xgene-rb
+               - apm,xgene-scu
++              - apple,s8000-i2s-switch
+               - atmel,sama5d2-sfrbu
+               - atmel,sama5d3-nfc-io
+               - atmel,sama5d3-sfrbu

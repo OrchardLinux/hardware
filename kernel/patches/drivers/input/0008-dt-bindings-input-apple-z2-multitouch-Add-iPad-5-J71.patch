@@ -1,0 +1,123 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 21:37:08 +0800
+Subject: [PATCH] dt-bindings: input: apple,z2-multitouch: Add iPad 5 (J71t)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The iPad 5 touchscreen controller (iOS AppleMultitouchN1SPI, personality
+C1F15,1) speaks the generation-1 Z2 runtime protocol of the iPad 6, but
+boots through the N1 HBPP bootloader. Its analog supply is a PMIC switch
+(ADT pmuL(0x21f)) instead of a GPIO, the LDO enable is GPIO 73, and the
+display-sync pin (GPIO 74) toggles between peripheral route 2 and the
+GPIO function, so it is described by two pinctrl states.
+
+Calibration reaches it the same way as on the iPad 6: the bootloader
+copies the unit's multi-touch-calibration into apple,z2-cal-blob.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux 2a31877a, e623b3c6 (J71t ledger 8.1,
+ 8.3, 8.4); his separate apple,j71t-n1 binding (vdd-supply, ldo-gpios,
+ attn-gpios, sync-on/sync-off states, private firmware names) becomes
+ an apple,z2-multitouch compatible with the existing property names.
+ The SPI chip-select delays move out of the DT into driver match data.]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../touchscreen/apple,z2-multitouch.yaml      | 62 +++++++++++++++++++
+ 1 file changed, 62 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml b/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml
+index 78c212785..1f5801674 100644
+--- a/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml
++++ b/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml
+@@ -18,6 +18,7 @@ properties:
+       - apple,j293-touchbar
+       - apple,j493-touchbar
+       - apple,j71b-touchscreen
++      - apple,j71t-touchscreen
+       - apple,j172-touchscreen
+       - apple,d11-touchscreen
+       - apple,d111-touchscreen
+@@ -34,6 +35,11 @@ properties:
+   power-ldo-gpios:
+     maxItems: 1
+ 
++  ana-supply:
++    description:
++      Analog supply for the touchscreen controller, where a PMIC switch
++      rather than a GPIO provides it
++
+   hv-supply:
+     description: High-voltage analog supply for the touchscreen controller
+ 
+@@ -169,6 +175,35 @@ allOf:
+         - spi-cpol
+         - apple,z2-bpw16-min-len
+         - apple,z2-no-init-ack
++  - if:
++      properties:
++        compatible:
++          const: apple,j71t-touchscreen
++    then:
++      properties:
++        pinctrl-names:
++          items:
++            - const: display-sync-active
++            - const: display-sync-inactive
++        power-ana-gpios: false
++        display-sync-gpios: false
++        display-sync1-gpios: false
++        hv-supply: false
++        core-supply: false
++        spi-cpha: false
++        spi-cpol: false
++        apple,z2-bpw16-min-len: false
++        apple,z2-no-init-ack: false
++      required:
++        - clocks
++        - ana-supply
++        - power-ldo-gpios
++        - pinctrl-0
++        - pinctrl-1
++        - pinctrl-names
++    else:
++      properties:
++        ana-supply: false
+   - if:
+       properties:
+         compatible:
+@@ -207,4 +242,31 @@ examples:
+         };
+     };
+ 
++  - |
++    #include <dt-bindings/gpio/gpio.h>
++    #include <dt-bindings/interrupt-controller/irq.h>
++
++    spi {
++        #address-cells = <1>;
++        #size-cells = <0>;
++
++        touchscreen@0 {
++            compatible = "apple,j71t-touchscreen";
++            reg = <0>;
++            spi-max-frequency = <12048192>;
++            interrupts-extended = <&pinctrl_ap 65 IRQ_TYPE_EDGE_FALLING>;
++            reset-gpios = <&pinctrl_ap 75 GPIO_ACTIVE_LOW>;
++            power-ldo-gpios = <&pinctrl_ap 73 GPIO_ACTIVE_HIGH>;
++            ana-supply = <&touch_analog>;
++            clocks = <&touchclk>;
++            pinctrl-names = "display-sync-active", "display-sync-inactive";
++            pinctrl-0 = <&touch_display_sync_active>;
++            pinctrl-1 = <&touch_display_sync_inactive>;
++            firmware-name = "apple/j71t-fwstart.z2fw";
++            touchscreen-size-x = <1536>;
++            touchscreen-size-y = <2048>;
++            touchscreen-inverted-y;
++        };
++    };
++
+ ...

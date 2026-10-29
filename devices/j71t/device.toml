@@ -1,0 +1,60 @@
+# iPad 5 (Wi-Fi) (J71T, S8003 TSMC): hardware identity, boot assets and firmware recipe.
+# iPad 5 support comes from Berkay Kösebay's port (brkosebay/omarchy-ipad5, OrchardLinux/hardware#6).
+schema = 1
+kind = "hardware.device"
+
+[device]
+profile = "j71t"
+name = "iPad 5 (Wi-Fi)"
+apple_products = ["iPad6,11"]
+dt_compatible = ["apple,j71t"]
+
+# BDID: ApChipID/ApBoardID of the j71tap identities in the 20H350 (iPadOS 16.7.10) BuildManifest.plist.
+[match.dfu]
+chip = 0x8003
+board = 0x10
+
+# USB product of the Orchard recovery system ("<Board> Recovery").
+[match.linux]
+product = "J71t Recovery"
+
+[boot]
+methods = ["checkm8-pongo"]
+# Not published yet: no j71t launcher release exists. Mirrors the j71b URL pattern.
+launch_manifest = "https://github.com/OrchardLinux/hardware/releases/latest/download/j71t-apple-launcher.boot.toml"
+
+[kernel]
+platform = "apple-16k" # kernel/series/apple-16k, kernel/configs/apple-16k
+dtb = "s8003-j71t"     # arch/arm64/boot/dts/apple/<dtb>.dtb
+
+[firmware]
+recipe = "firmware.json" # Relative to this device.toml; public recipe, not firmware bytes.
+
+[support]
+install = false # Until a J71t install test on this revision.
+status = "experimental"
+caveats = [
+  "RAM boot (storage, PCIe, display, touch, ALS, Wi-Fi) tested on a J71t in OrchardLinux/hardware#28, before the move onto main; this revision and installation are not tested on a device yet.",
+  "Boot with Hoolock's prebuilt Pongo (orchard build --pongo FILE); Orchard's own Pongo does not boot on the A9 yet.",
+  "Charging: Apple chargers and USB-C sources up to 2.4 A; computers per the host's own grant; other sources 500 mA.",
+]
+wifi = true
+usb_serial = true
+usb_network = true
+
+# States: working, partial, untested, missing, none (features.toml).
+[features]
+display = "untested"
+touch = "untested"
+wifi = "untested"
+bluetooth = "untested"
+storage = "untested"
+battery = "untested"
+charging = "untested"
+backlight = "untested"
+buttons = "untested"
+audio = "untested"
+camera = "missing"
+cellular = "none"
+suspend = "missing"
+gpu = "missing"

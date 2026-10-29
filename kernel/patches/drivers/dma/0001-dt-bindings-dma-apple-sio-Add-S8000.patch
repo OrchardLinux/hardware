@@ -1,0 +1,91 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 21:28:44 +0800
+Subject: [PATCH] dt-bindings: dma: apple,sio: Add S8000
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The A9 (S8000/S8003) SmartIO is the same AppleA7IOP coprocessor and
+message protocol as on T8010, with its own firmware image. Add its
+compatible and an optional reset: the PMGR power state of the
+coprocessor resets it when the boot chain left it running.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux c037b6f7 (J71t ledger 10.3); dropped the
+ apple,dma-endpoints property: the endpoint set is per-SoC firmware
+ knowledge and comes from the driver's match data instead.]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../devicetree/bindings/dma/apple,sio.yaml    | 26 ++++++++++++-------
+ 1 file changed, 17 insertions(+), 9 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/dma/apple,sio.yaml b/Documentation/devicetree/bindings/dma/apple,sio.yaml
+index 085d29872..8dc7114af 100644
+--- a/Documentation/devicetree/bindings/dma/apple,sio.yaml
++++ b/Documentation/devicetree/bindings/dma/apple,sio.yaml
+@@ -4,13 +4,13 @@
+ $id: http://devicetree.org/schemas/dma/apple,sio.yaml#
+ $schema: http://devicetree.org/meta-schemas/core.yaml#
+ 
+-title: Apple T8010 SmartIO coprocessor and DMA controller
++title: Apple S8000/T8010 SmartIO coprocessor and DMA controller
+ 
+ description: |
+-  The T8010 SmartIO coprocessor provides DMA channels for peripheral
+-  controllers. The application processor boots the SmartIO firmware and
+-  submits DMA commands through the SIO message queues. Clients select the
+-  firmware endpoint number used by their peripheral.
++  The S8000 (A9) and T8010 (A10) SmartIO coprocessor provides DMA channels
++  for peripheral controllers. The application processor boots the SmartIO
++  firmware and submits DMA commands through the SIO message queues. Clients
++  select the firmware endpoint number used by their peripheral.
+ 
+ maintainers:
+   - Paul Praschl <praschlpaul@g-p.at>
+@@ -20,11 +20,13 @@ allOf:
+ 
+ properties:
+   compatible:
+-    const: apple,t8010-sio
++    enum:
++      - apple,s8000-sio
++      - apple,t8010-sio
+ 
+   reg:
+     items:
+-      - description: AppleA7IOPV2 coprocessor and message queue registers
++      - description: AppleA7IOP coprocessor and message queue registers
+       - description: SmartIO DMA shim registers
+ 
+   reg-names:
+@@ -36,11 +38,17 @@ properties:
+     minItems: 4
+     maxItems: 4
+     description:
+-      The four interrupt outputs described by the T8010 SIO device tree node.
++      The four interrupt outputs of the SIO node in the Apple device tree, in
++      the same order.
+ 
+   power-domains:
+     maxItems: 1
+ 
++  resets:
++    maxItems: 1
++    description:
++      Power-state reset, used if the coprocessor is found already running.
++
+   firmware-name:
+     maxItems: 1
+ 
+@@ -51,7 +59,7 @@ properties:
+     const: 1
+     description:
+       Clients specify the SmartIO DMA endpoint number, for example 0x1a for
+-      SPI3 transmit and 0x1b for SPI3 receive.
++      SPI3 transmit, 0x1b for SPI3 receive or 0x28 for MCA0 transmit.
+ 
+ required:
+   - compatible
