@@ -6,9 +6,6 @@ Hardware support and image-building resources for Linux on Apple devices. This r
 
 Currently: iPad 6 Wi-Fi (`iPad7,5`, J71b), experimental. Boot is tethered and GPU acceleration is not available.
 
-An [iPad mini 2 Wi-Fi (J85) bring-up status](docs/j85-bringup-status.md) records
-separate RAM-boot experiments. J85 is not an Orchard installable profile.
-
 ## Use
 
 For installing and starting a published system, use the [Orchard CLI](https://github.com/OrchardLinux/cli). Its release requirements select compatible CLI and hardware wheels automatically.
