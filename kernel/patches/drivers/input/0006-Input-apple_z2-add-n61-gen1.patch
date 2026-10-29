@@ -1,9 +1,12 @@
-From: Shayne Legault <8741557+shaynelegault@users.noreply.github.com>
+From: Stan Skowronek <skylark@disorder.metrascale.com>
 Subject: [PATCH] Input: apple_z2 - add N61 Gen1 touchscreen support
 
 Add the N61 Gen1 firmware framing, startup sequence and input reports. The device match data selects the N61 path; the J71b drain, IRQ and timing policy remain in their existing path.
 
-[Orchard: informed by Corellium projectsandcastle 03db9c6ae04141eb940f3b9f56d446f50d57fadf; integrated with the apple_z2 driver and N61 power and calibration handling.]
+[Orchard: from https://github.com/corellium/projectsandcastle
+083c2d2b07f94c8114cbe7110e1d205906ab8c54; adapted the Gen1 protocol and
+calibration framing to the apple_z2 driver, with N61 power sequencing,
+bounds checks and transfer handling.]
 
 ---
 diff --git a/drivers/input/touchscreen/apple_z2.c b/drivers/input/touchscreen/apple_z2.c
@@ -733,11 +736,16 @@ index b1e1a45..9015e86 100644
  MODULE_DEVICE_TABLE(spi, apple_z2_of_id);
 diff --git a/drivers/input/touchscreen/apple_z2_n61.h b/drivers/input/touchscreen/apple_z2_n61.h
 new file mode 100644
-index 0000000..73cfa3c
+index 0000000..0f02526
 --- /dev/null
 +++ b/drivers/input/touchscreen/apple_z2_n61.h
-@@ -0,0 +1,142 @@
-+/* SPDX-License-Identifier: GPL-2.0 */
+@@ -0,0 +1,147 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++/*
++ * Generation-1 calibration and protocol framing adapted from
++ * Corellium Project Sandcastle.
++ * Copyright (C) 2020 Corellium LLC
++ */
 +#ifndef _APPLE_Z2_N61_H
 +#define _APPLE_Z2_N61_H
 +
