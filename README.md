@@ -6,6 +6,8 @@ Hardware support and image-building resources for Linux on Apple devices. This r
 
 Currently: iPad 6 Wi-Fi (`iPad7,5`, J71b), experimental. Boot is tethered and GPU acceleration is not available.
 
+The iPhone 6 (`iPhone7,2`, N61AP) has experimental tethered support. See the [bring-up record](docs/n61-bringup.md) for its tested features and remaining work.
+
 ## Use
 
 For installing and starting a published system, use the [Orchard CLI](https://github.com/OrchardLinux/cli). Its release requirements select compatible CLI and hardware wheels automatically.

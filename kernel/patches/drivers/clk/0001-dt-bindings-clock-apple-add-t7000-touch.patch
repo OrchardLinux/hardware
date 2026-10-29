@@ -1,0 +1,38 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Shayne Legault <8741557+shaynelegault@users.noreply.github.com>
+Date: Thu, 29 Oct 2026 11:46:46 -0600
+Subject: [PATCH] dt-bindings: clock: apple: Add T7000 touch clock
+
+Describe the T7000 touchscreen PMGR gate and divider.
+
+Signed-off-by: Shayne Legault <8741557+shaynelegault@users.noreply.github.com>
+
+---
+diff --git a/Documentation/devicetree/bindings/clock/apple,t8010-touch-clock.yaml b/Documentation/devicetree/bindings/clock/apple,t8010-touch-clock.yaml
+--- a/Documentation/devicetree/bindings/clock/apple,t8010-touch-clock.yaml
++++ b/Documentation/devicetree/bindings/clock/apple,t8010-touch-clock.yaml
+@@ -4,18 +4,20 @@
+ $id: http://devicetree.org/schemas/clock/apple,t8010-touch-clock.yaml#
+ $schema: http://devicetree.org/meta-schemas/core.yaml#
+ 
+-title: Apple T8010 touchscreen clock controller
++title: Apple T7000/T8010 touchscreen clock controller
+ 
+ maintainers:
+   - Paul Praschl <praschlpaul@g-p.at>
+ 
+ description:
+-  The T8010 PMGR contains a gate and integer divider for the 24 MHz clock
+-  consumed by the touchscreen controller.
++  The T7000 and T8010 PMGR contain a gate and integer divider for the
++  reference clock consumed by the touchscreen controller.
+ 
+ properties:
+   compatible:
+-    const: apple,t8010-touch-clock
++    enum:
++      - apple,t7000-touch-clock
++      - apple,t8010-touch-clock
+ 
+   reg:
+     maxItems: 1
