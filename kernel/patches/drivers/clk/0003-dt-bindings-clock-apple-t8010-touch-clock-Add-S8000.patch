@@ -1,0 +1,59 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 21:35:29 +0800
+Subject: [PATCH] dt-bindings: clock: apple,t8010-touch-clock: Add S8000
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The A9 PMGR has the T8010 touch clock block at PMGR offset 0x78000: the
+disable bit 31, enable bit 19, busy bit 18 and the divider in bits 9:0,
+with an 8 us start and a 100 us stop delay (iOS TCLK functions at
+0xfffffff006435fdc, 0xfffffff006435f74 and 0xfffffff00643417c). The
+iPad 5 ADT function TCLK(8,100,32768) runs it at 32768 Hz from the
+24 MHz reference, a divider of 732.
+
+Describe it with the T8010 compatible as a fallback; the rate comes
+from clock-frequency.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux 28c4b7e3 (J71t ledger 8.7); his separate
+ clk-apple-s8000-touch driver duplicated Paul Praschl's T8010 touch
+ clock driver with a fixed divider. The S8000 block becomes a compatible
+ with the T8010 fallback, and the 32768 Hz rate moves to the DT.]
+[Orchard: adapted to main's T7000 and N61 support when moved after it]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../bindings/clock/apple,t8010-touch-clock.yaml    | 14 ++++++++++----
+ 1 file changed, 10 insertions(+), 4 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/clock/apple,t8010-touch-clock.yaml b/Documentation/devicetree/bindings/clock/apple,t8010-touch-clock.yaml
+index 9516b899a..a558d5bd6 100644
+--- a/Documentation/devicetree/bindings/clock/apple,t8010-touch-clock.yaml
++++ b/Documentation/devicetree/bindings/clock/apple,t8010-touch-clock.yaml
+@@ -11,13 +11,19 @@ maintainers:
+ 
+ description:
+   The T7000 and T8010 PMGR contain a gate and integer divider for the
+-  reference clock consumed by the touchscreen controller.
++  reference clock consumed by the touchscreen controller. The S8000 PMGR has
++  the same block at the same offset; the iPad 5 N1 touchscreen runs it at
++  32768 Hz.
+ 
+ properties:
+   compatible:
+-    enum:
+-      - apple,t7000-touch-clock
+-      - apple,t8010-touch-clock
++    oneOf:
++      - enum:
++          - apple,t7000-touch-clock
++          - apple,t8010-touch-clock
++      - items:
++          - const: apple,s8000-touch-clock
++          - const: apple,t8010-touch-clock
+ 
+   reg:
+     maxItems: 1

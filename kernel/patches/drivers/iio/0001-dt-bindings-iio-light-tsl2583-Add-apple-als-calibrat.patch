@@ -1,0 +1,88 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 21:45:33 +0800
+Subject: [PATCH] dt-bindings: iio: light: tsl2583: Add apple,als-calibration
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The live ADT of the iPads carries the unit's resolved LSCI ambient-light
+calibration in the light sensor's alsCalibration property: on the iPad 6
+an LSCI v2 record, the 8-byte header (version 2, one record at offset 8,
+72 bytes in all) and one 0x40-byte record. Only the IPSW's ADT has the
+unresolved syscfg/LSCI placeholder.
+
+Let the bootloader copy those bytes into apple,als-calibration, as it
+does for the touchscreen calibration. Systems whose boot firmware
+provides a SysCfg NVMEM cell keep using nvmem-cells.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux a782d501 (J71t ledger 9.1); his
+ firmware-name property for a private LSCI file becomes a property the
+ bootloader fills from the ADT, so no unit data is packaged.]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../bindings/iio/light/tsl2583.yaml           | 29 +++++++++++++++++--
+ 1 file changed, 26 insertions(+), 3 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/iio/light/tsl2583.yaml b/Documentation/devicetree/bindings/iio/light/tsl2583.yaml
+index 988c634b5..ca799972e 100644
+--- a/Documentation/devicetree/bindings/iio/light/tsl2583.yaml
++++ b/Documentation/devicetree/bindings/iio/light/tsl2583.yaml
+@@ -11,9 +11,10 @@ maintainers:
+ 
+ description: |
+   Ambient light sensing with an i2c interface. The Apple CT819 and CT821
+-  factory calibration is stored in SysCfg. On systems where the SysCfg NVMEM
+-  provider is created by boot firmware, the static board tree omits the
+-  NVMEM link and firmware adds both NVMEM properties before kernel handoff.
++  factory calibration is stored in SysCfg. Boot firmware either copies the
++  resolved record into apple,als-calibration or, where it creates the SysCfg
++  NVMEM provider, adds both NVMEM properties before kernel handoff. The
++  static board tree carries neither.
+ 
+ properties:
+   compatible:
+@@ -37,6 +38,15 @@ properties:
+   vcc-supply:
+     description: Regulator that provides power to the sensor
+ 
++  apple,als-calibration:
++    $ref: /schemas/types.yaml#/definitions/uint8-array
++    minItems: 8
++    maxItems: 1024
++    description:
++      Apple factory LSCI ambient-light calibration record, the raw bytes of
++      the ADT alsCalibration property as resolved by iBoot. Used instead of
++      nvmem-cells when present.
++
+   nvmem-cells:
+     description:
+       Apple factory LSCI ambient-light calibration data. Boot firmware must
+@@ -68,6 +78,7 @@ allOf:
+           - nvmem-cells
+     else:
+       properties:
++        apple,als-calibration: false
+         nvmem-cells: false
+         nvmem-cell-names: false
+ 
+@@ -86,4 +97,16 @@ examples:
+             nvmem-cell-names = "calibration";
+         };
+     };
++  - |
++    i2c {
++        #address-cells = <1>;
++        #size-cells = <0>;
++
++        light-sensor@39 {
++            compatible = "apple,ct819", "amstaos,tsl2581";
++            reg = <0x39>;
++            /* Copied by the bootloader from the ADT; header only here */
++            apple,als-calibration = [00 02 01 08 48 00 a2 f8];
++        };
++    };
+ ...

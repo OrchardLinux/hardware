@@ -1,0 +1,123 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Thu, 29 Oct 2026 05:19:36 +0800
+Subject: [PATCH] arm64: dts: apple: iPad 5: Add Lightning charging, the touch
+ ATN line and the display DART windows
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Describe the iPad 5's charging and two details the J71t drivers need:
+
+- the PMIC GPIO controller as the PMU event interrupt controller on AP
+  GPIO 76, the Tristar (CBTL1610) at i2c0 0x1a, the Lightning charger
+  consuming the PMU line, ADC completion and the charger events, and the
+  USB device controller reporting the host's allowance to it;
+- the touchscreen's ATN line (GPIO 65) as an input, next to its
+  falling-edge interrupt, as the validated N1 setup configured it;
+- the display DART windows, which the display pipe reads to confirm the
+  scanout is untranslated before it replaces the boot framebuffer.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux e40d2403, c7c3eb2d, 681cceb6 (J71t ledger
+ 5.1, 6.1, 8.1, 11.1); the charger is Orchard's shared Tristar driver on
+ the shared D2365 event controller instead of the J71t charger and power
+ controller; event numbers as on the iPad 6.]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/arm64/boot/dts/apple/s8003.dtsi       |  6 +++-
+ arch/arm64/boot/dts/apple/s800x-ipad5.dtsi | 42 ++++++++++++++++++----
+ 2 files changed, 41 insertions(+), 7 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/apple/s8003.dtsi b/arch/arm64/boot/dts/apple/s8003.dtsi
+index da6469f82..b51588941 100644
+--- a/arch/arm64/boot/dts/apple/s8003.dtsi
++++ b/arch/arm64/boot/dts/apple/s8003.dtsi
+@@ -81,7 +81,11 @@
+ 		      <0x2 0x06440000 0x0 0x8000>,
+ 		      <0x2 0x06480000 0x0 0x8000>,
+ 		      <0x2 0x064c0000 0x0 0x8000>,
+-		      <0x2 0x06500000 0x0 0x1c>;
++		      <0x2 0x06500000 0x0 0x1c>,
++		      <0x2 0x06304000 0x0 0x4000>,
++		      <0x2 0x06300000 0x0 0x4000>;
++		reg-names = "adp", "disp-a", "disp-b", "disp-c", "disp-d",
++			    "side", "dart0", "dart1";
+ 		interrupt-parent = <&aic>;
+ 		interrupts = <AIC_IRQ 140 IRQ_TYPE_LEVEL_HIGH>,
+ 			     <AIC_IRQ 143 IRQ_TYPE_LEVEL_HIGH>,
+diff --git a/arch/arm64/boot/dts/apple/s800x-ipad5.dtsi b/arch/arm64/boot/dts/apple/s800x-ipad5.dtsi
+index c427ce167..abb6ea2b1 100644
+--- a/arch/arm64/boot/dts/apple/s800x-ipad5.dtsi
++++ b/arch/arm64/boot/dts/apple/s800x-ipad5.dtsi
+@@ -159,6 +159,11 @@
+ &i2c0 {
+ 	status = "okay";
+ 
++	tristar: port-controller@1a {
++		compatible = "nxp,cbtl1610";
++		reg = <0x1a>;
++	};
++
+ 	d2365_pmic: pmic@3c {
+ 		compatible = "apple,angel-pmic", "apple,i2c-pmic";
+ 		reg = <0x3c>;
+@@ -174,14 +179,33 @@
+ 			gpio-controller;
+ 			#gpio-cells = <2>;
+ 			gpio-reserved-ranges = <1 9>, <11 2>, <15 9>;
++			interrupt-controller;
++			#interrupt-cells = <2>;
++			interrupts-extended = <&pinctrl_ap 76 IRQ_TYPE_LEVEL_LOW>;
+ 		};
+ 
+-		/*
+-		 * The PMU event interrupt controller (event line AP GPIO 76,
+-		 * active low) on pmu_gpio and the Lightning charger at 0x180,
+-		 * with the Tristar at i2c0 0x1a, are described with the
+-		 * shared D2365 event controller.
+-		 */
++		tristar_charger: charger@180 {
++			compatible = "apple,j71t-tristar-charger", "apple,tristar-charger";
++			reg = <0x180 0x10>, <0xa00 0x04>, <0x4000 0x03>;
++			reg-names = "status", "control", "adc";
++			interrupt-parent = <&pmu_gpio>;
++			/*
++			 * The PMU line, ADC done, then the events the iPadOS
++			 * charger subscribes to.
++			 */
++			interrupts = <240 IRQ_TYPE_EDGE_RISING>,
++				     <176 IRQ_TYPE_EDGE_RISING>,
++				     <16 IRQ_TYPE_EDGE_RISING>,
++				     <40 IRQ_TYPE_EDGE_RISING>,
++				     <41 IRQ_TYPE_EDGE_RISING>,
++				     <42 IRQ_TYPE_EDGE_RISING>,
++				     <43 IRQ_TYPE_EDGE_RISING>,
++				     <72 IRQ_TYPE_EDGE_RISING>,
++				     <73 IRQ_TYPE_EDGE_RISING>,
++				     <77 IRQ_TYPE_EDGE_RISING>;
++			apple,tristar = <&tristar>;
++			input-current-limit-microamp = <2400000>;
++		};
+ 
+ 		rtc@500 {
+ 			compatible = "apple,angel-pmic-rtc", "apple,antigua-pmic-rtc";
+@@ -316,6 +340,7 @@
+ 		/* N1 selects 83 ns; the controller rounds up to divider 6 */
+ 		spi-max-frequency = <12048192>;
+ 		interrupts-extended = <&pinctrl_ap 65 IRQ_TYPE_EDGE_FALLING>;
++		attn-gpios = <&pinctrl_ap 65 GPIO_ACTIVE_LOW>;
+ 		reset-gpios = <&pinctrl_ap 75 GPIO_ACTIVE_LOW>;
+ 		power-ldo-gpios = <&pinctrl_ap 73 GPIO_ACTIVE_HIGH>;
+ 		ana-supply = <&touch_analog>;
+@@ -427,3 +452,8 @@
+ };
+ 
+ #endif /* S800X_IPAD5_PCIE */
++
++/* Tell the Lightning charger what the USB host allows. */
++&usbdev {
++	usb-psy-name = "lightning";
++};

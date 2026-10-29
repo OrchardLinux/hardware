@@ -1,0 +1,86 @@
+From b328870b9ae288ac300b8641bb981e4fdde630fb Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <berkaykosebay@gmail.com>
+Date: Thu, 29 Oct 2026 12:00:00 +0100
+Subject: [PATCH] power: supply: apple_tristar_charger: Restore the input limit
+ after a PMIC reset
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+On the iPad 5 (J71t) the D2365 returns the input limit at 0xa03 to its
+attach default 0x02 (100 mA) after the attach: 26 ms after the write in
+one capture, 160-380 ms into the attach in another (brkosebay/omarchy-ipad5
+charge8 and charge9). The driver writes the 500 mA fallback once, when the
+status first reads online, and afterwards only reads the register back
+right after its own writes. A source that stays at the fallback (anything
+unidentified, a USB host without a grant) was then left at 100 mA while
+input_current_limit reported 500 mA. On J71t that drains the battery at
+about 1.1 A with the source attached (charge8).
+
+Read the limit back once a second while charging. Restore the fallback
+when the hardware holds less; a grant above it drops to the fallback and
+ramps again under the usual pack checks. A limit above the one written is
+put back down. Each correction is logged, so a device run shows whether
+and when the PMIC resets it.
+
+Signed-off-by: Berkay Kösebay <berkaykosebay@gmail.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/power/supply/apple_tristar_charger.c | 34 ++++++++++++++++++++
+ 1 file changed, 34 insertions(+)
+
+diff --git a/drivers/power/supply/apple_tristar_charger.c b/drivers/power/supply/apple_tristar_charger.c
+index ac52aec..3b53fe1 100644
+--- a/drivers/power/supply/apple_tristar_charger.c
++++ b/drivers/power/supply/apple_tristar_charger.c
+@@ -813,6 +813,37 @@ static void tristar_ramp_step(struct tristar_charger *chg, u64 now)
+ 		chg->phase = TRISTAR_CHARGING;
+ }
+ 
++/*
++ * On the iPad 5 the PMIC returns the input limit to its attach default of
++ * 100 mA some 25-400 ms after attach, after the fallback has been written.
++ * Put the fallback back; a grant above it was set by a later ramp, so drop
++ * to the fallback and ramp again under the usual pack checks. A limit above
++ * the one written is put back down at once. Caller holds lock.
++ */
++static void tristar_check_limit(struct tristar_charger *chg)
++{
++	u32 reg = chg->control_base + TRISTAR_CHG_INPUT_LIMIT;
++	unsigned int hw, code = chg->code;
++
++	if (regmap_read(chg->regmap, reg, &hw) || hw == code)
++		return;
++	dev_warn_ratelimited(chg->dev, "input limit changed to %u mA by the PMIC; restoring\n",
++			     tristar_code_ma(hw));
++	if (hw > code) {
++		if (tristar_set_code(chg, code))
++			dev_crit(chg->dev, "Input-limit write failed; limit unverified\n");
++		return;
++	}
++	if (tristar_set_code(chg, min_t(unsigned int, code, TRISTAR_CHG_FALLBACK_CODE))) {
++		dev_crit(chg->dev, "Fallback write failed; input limit unverified\n");
++		return;
++	}
++	if (code > TRISTAR_CHG_FALLBACK_CODE) {
++		chg->phase = TRISTAR_RAMPING;
++		chg->step_ns = 0;
++	}
++}
++
+ static void tristar_guard(struct tristar_charger *chg, u64 now)
+ {
+ 	struct tristar_pack pack;
+@@ -820,6 +851,9 @@ static void tristar_guard(struct tristar_charger *chg, u64 now)
+ 	if (now - chg->guard_ns < NSEC_PER_SEC)
+ 		return;
+ 	chg->guard_ns = now;
++	tristar_check_limit(chg);
++	if (chg->phase != TRISTAR_CHARGING)
++		return;
+ 	if (tristar_read_pack(&pack))
+ 		return;
+ 	if (chg->code > TRISTAR_CHG_FALLBACK_CODE && !tristar_pack_allows_grant(&pack)) {
+-- 
+2.49.0
+

@@ -1,0 +1,382 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Thu, 29 Oct 2026 05:18:18 +0800
+Subject: [PATCH] Input: apple_z2: Bound and recover the iPad 5 runtime like
+ the N1 driver
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Bring the J71t variant's interrupt handling in line with the N1 driver
+validated on the iPad 5:
+
+- Keep the falling ATN edge the DT describes (iOS maps the ADT flags to
+  falling-edge mode 5) instead of switching to level-low as on J71b, and
+  read frames while ATN stays asserted, at most eight per interrupt. ATN
+  comes from the optional attn-gpios, requested as an input; without it,
+  frames are read until the queue is empty.
+- Retry a failed frame up to three times, 1-2 ms apart. A bad length
+  reply, a corrupt data phase, or an empty queue while ATN is still
+  asserted counts as failed.
+- After a frame error, or more than eight frames, release all contacts,
+  mask the interrupt and resynchronise from a delayed work a second
+  later: wake and drain, then rediscovery if that fails, up to three
+  times, then a full restart of the controller. Firmware and calibration
+  are only reloaded by that restart.
+- Do not require the report ID echo at byte 1 of the E3 reply; the N1
+  path in iOS checks only the command echo and the checksum.
+- Reject an all-0x00 or all-0xff calibration.
+
+Stopping the device cancels the resynchronisation before it masks the
+interrupt, and the interrupt state is changed under the I/O lock, since
+the interrupt thread now masks it itself.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux e623b3c6, 39c86d64, b0270d0b (J71t ledger
+ 8.1, 8.2); restores his edge/ATN interrupt handling, frame retries,
+ bounded recovery and calibration check after an independent comparison
+ with his validated apple_n1. The recovery ends in a full restart
+ instead of waiting for a rebind.]
+[Orchard: adapted to main's T7000 and N61 support when moved after it]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/input/touchscreen/apple_z2.c | 228 +++++++++++++++++++++++++--
+ 1 file changed, 219 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/input/touchscreen/apple_z2.c b/drivers/input/touchscreen/apple_z2.c
+index 23a46878c..fe124525d 100644
+--- a/drivers/input/touchscreen/apple_z2.c
++++ b/drivers/input/touchscreen/apple_z2.c
+@@ -26,6 +26,7 @@
+ #include <linux/regulator/consumer.h>
+ #include <linux/spi/spi.h>
+ #include <linux/unaligned.h>
++#include <linux/workqueue.h>
+ 
+ #include "apple_z2_n61.h"
+ 
+@@ -102,6 +103,11 @@
+ #define APPLE_Z2_N1_REPORT_SENSOR        0xd3
+ #define APPLE_Z2_N1_REPORT_REGION        0xd0
+ #define APPLE_Z2_N1_REPORT_REGION_PARAMS 0xa1
++/* Runtime bounds of the iPad 5 interrupt service and its recovery. */
++#define APPLE_Z2_N1_IRQ_FRAMES           8
++#define APPLE_Z2_N1_FRAME_ATTEMPTS       3
++#define APPLE_Z2_N1_REARM_ATTEMPTS       3
++#define APPLE_Z2_N1_REARM_DELAY_MS       1000
+ 
+ #define APPLE_Z2_FW_CONFIG_WORDS         11
+ #define APPLE_Z2_FW_CONFIG_MIN_DMA       BIT(0)
+@@ -215,10 +221,14 @@ struct apple_z2 {
+ 	struct pinctrl *sync_pinctrl;
+ 	struct pinctrl_state *sync_active;
+ 	struct pinctrl_state *sync_inactive;
++	struct gpio_desc *attn_gpio;
++	struct delayed_work rearm_work;
++	unsigned int rearm_attempts;
+ 	unsigned long last_wake;
+ 	bool wake_valid;
+ 	bool ana_enabled;
+ 	bool irq_on;
++	bool stopping;
+ 	struct clk *clk;
+ 	struct input_dev *input_dev;
+ 	struct completion boot_irq;
+@@ -359,6 +369,8 @@ static void apple_z2_z2_checksum(u8 *cmd, unsigned int len);
+ static bool apple_z2_z2_checksum_valid(const u8 *cmd, unsigned int len);
+ static int apple_z2_hbpp_xfer(struct apple_z2 *z2, unsigned int len);
+ static int apple_z2_hbpp_nop(struct apple_z2 *z2);
++static void apple_z2_platform_power_off(struct apple_z2 *z2);
++static int apple_z2_j71t_boot(struct apple_z2 *z2);
+ 
+ static bool apple_z2_float_to_integer(const u8 *raw, s64 *value)
+ {
+@@ -1248,7 +1260,7 @@ static int apple_z2_read_report_info_locked(struct apple_z2 *z2, u8 report,
+ 	}
+ 
+ 	if (z2->rx_buf[0] != APPLE_Z2_CMD_REPORT_INFO ||
+-	    z2->rx_buf[1] != report ||
++	    (z2->rx_buf[1] != report && !apple_z2_is_j71t(z2)) ||
+ 	    !apple_z2_z2_checksum_valid(z2->rx_buf, APPLE_Z2_CMD_SIZE))
+ 		return -EPROTO;
+ 
+@@ -1905,6 +1917,159 @@ static void apple_z2_irq_off(struct apple_z2 *z2)
+ 	disable_irq(z2->spidev->irq);
+ }
+ 
++static void apple_z2_release_contacts(struct apple_z2 *z2)
++{
++	unsigned int i;
++
++	for (i = 0; i < z2->input_dev->mt->num_slots; i++) {
++		input_mt_slot(z2->input_dev, i);
++		input_mt_report_slot_inactive(z2->input_dev);
++	}
++	input_mt_sync_frame(z2->input_dev);
++	input_sync(z2->input_dev);
++}
++
++/*
++ * ATN is the interrupt line read back as a GPIO. Without it, frames are
++ * read until the queue is empty.
++ */
++static int apple_z2_n1_attn(struct apple_z2 *z2, bool queue_empty)
++{
++	if (!z2->attn_gpio)
++		return !queue_empty;
++
++	return gpiod_get_value_cansleep(z2->attn_gpio);
++}
++
++/*
++ * One iPad 5 frame: 1 when a frame (or a control reply) was read, 0 when
++ * the queue is empty and ATN is released. A failed read, or an empty queue
++ * while ATN stays asserted, is retried up to three times.
++ */
++static int apple_z2_n1_frame_locked(struct apple_z2 *z2)
++{
++	unsigned int i;
++	int error = 0;
++
++	for (i = 0; i < APPLE_Z2_N1_FRAME_ATTEMPTS; i++) {
++		if (i)
++			usleep_range(1000, 2000);
++
++		error = apple_z2_read_packet(z2);
++		if (!error) {
++			if (z2->runtime_frame_valid || z2->runtime_control_reply)
++				return 1;
++			if (!z2->runtime_queue_empty) {
++				error = -EBADMSG;
++				continue;
++			}
++			error = apple_z2_n1_attn(z2, true);
++			if (!error)
++				return 0;
++			if (error > 0)
++				error = -EPROTO;
++		}
++	}
++
++	return error;
++}
++
++/*
++ * Read frames while ATN stays asserted, at most eight per call; more, or a
++ * failed frame, is an error.
++ */
++static int apple_z2_n1_service_locked(struct apple_z2 *z2)
++{
++	unsigned int i;
++	int ret;
++
++	for (i = 0; i < APPLE_Z2_N1_IRQ_FRAMES; i++) {
++		ret = apple_z2_n1_frame_locked(z2);
++		if (ret <= 0)
++			return ret;
++		ret = apple_z2_n1_attn(z2, false);
++		if (ret <= 0)
++			return ret;
++	}
++
++	return -EOVERFLOW;
++}
++
++/*
++ * After a runtime error the interrupt stays masked and this work tries to
++ * resynchronise: wake and drain, then rediscovery, up to three times a
++ * second apart, then a full boot. It never reloads firmware otherwise.
++ */
++static void apple_z2_n1_rearm_work(struct work_struct *work)
++{
++	struct apple_z2 *z2 = container_of(to_delayed_work(work),
++					   struct apple_z2, rearm_work);
++	int error;
++
++	mutex_lock(&z2->io_lock);
++	if (z2->stopping || !z2->booted) {
++		mutex_unlock(&z2->io_lock);
++		return;
++	}
++
++	if (z2->rearm_attempts++ < APPLE_Z2_N1_REARM_ATTEMPTS) {
++		z2->wake_valid = false;
++		error = apple_z2_n1_wake_locked(z2);
++		if (!error)
++			error = apple_z2_n1_service_locked(z2);
++		if (error) {
++			apple_z2_release_contacts(z2);
++			z2->index_parity = 0;
++			error = apple_z2_n1_discover_locked(z2);
++			if (!error)
++				error = apple_z2_n1_service_locked(z2);
++		}
++		if (!error) {
++			z2->rearm_attempts = 0;
++			apple_z2_irq_on(z2);
++		} else {
++			dev_warn(&z2->spidev->dev,
++				 "touch resynchronisation %u failed: %d\n",
++				 z2->rearm_attempts, error);
++			schedule_delayed_work(&z2->rearm_work,
++					      msecs_to_jiffies(APPLE_Z2_N1_REARM_DELAY_MS));
++		}
++		mutex_unlock(&z2->io_lock);
++		return;
++	}
++
++	z2->booted = false;
++	mutex_unlock(&z2->io_lock);
++
++	dev_warn(&z2->spidev->dev, "restarting the touch controller\n");
++	apple_z2_platform_power_off(z2);
++	error = apple_z2_j71t_boot(z2);
++	if (error)
++		dev_err(&z2->spidev->dev, "touch controller restart failed: %d\n",
++			error);
++}
++
++static void apple_z2_n1_irq_locked(struct apple_z2 *z2)
++{
++	int error;
++
++	if (z2->stopping || !z2->irq_on)
++		return;
++
++	error = apple_z2_n1_service_locked(z2);
++	if (!error)
++		return;
++
++	dev_warn_ratelimited(&z2->spidev->dev,
++			     "touch frame error %d, resynchronising\n", error);
++	apple_z2_release_contacts(z2);
++	z2->irq_on = false;
++	disable_irq_nosync(z2->spidev->irq);
++	z2->rearm_attempts = 0;
++	schedule_delayed_work(&z2->rearm_work,
++			      msecs_to_jiffies(APPLE_Z2_N1_REARM_DELAY_MS));
++}
++
+ static irqreturn_t apple_z2_irq(int irq, void *data)
+ {
+ 	struct apple_z2 *z2 = data;
+@@ -1912,6 +2077,10 @@ static irqreturn_t apple_z2_irq(int irq, void *data)
+ 
+ 	if (unlikely(!z2->booted)) {
+ 		complete(&z2->boot_irq);
++	} else if (apple_z2_is_j71t(z2)) {
++		mutex_lock(&z2->io_lock);
++		apple_z2_n1_irq_locked(z2);
++		mutex_unlock(&z2->io_lock);
+ 	} else {
+ 		mutex_lock(&z2->io_lock);
+ 		error = apple_z2_is_gen1(z2) ? apple_z2_gen1_drain(z2) :
+@@ -2853,21 +3022,25 @@ static int apple_z2_n1_finish_boot(struct apple_z2 *z2)
+ 	if (error)
+ 		return error;
+ 
++	/*
++	 * Drain what queued up during discovery, then take the falling ATN
++	 * edge the DT describes, as iOS does; the interrupt thread reads
++	 * frames while ATN stays asserted.
++	 */
+ 	mutex_lock(&z2->io_lock);
+ 	z2->index_parity = 0;
+ 	error = apple_z2_n1_discover_locked(z2);
+ 	if (!error) {
+ 		z2->booted = true;
+-		error = apple_z2_gen1_drain(z2);
++		error = apple_z2_n1_service_locked(z2);
++	}
++	if (!error) {
++		z2->rearm_attempts = 0;
++		apple_z2_irq_on(z2);
+ 	}
+-	if (!error)
+-		error = apple_z2_gen1_set_level_irq(z2);
+ 	mutex_unlock(&z2->io_lock);
+-	if (error)
+-		return error;
+ 
+-	apple_z2_irq_on(z2);
+-	return 0;
++	return error;
+ }
+ 
+ static const u8 *apple_z2_build_n61_cal(struct apple_z2 *z2,
+@@ -3884,6 +4057,7 @@ static int apple_z2_probe(struct spi_device *spi)
+ 						    "apple,z2-no-init-ack");
+ 	init_completion(&z2->boot_irq);
+ 	mutex_init(&z2->io_lock);
++	INIT_DELAYED_WORK(&z2->rearm_work, apple_z2_n1_rearm_work);
+ 	spi_set_drvdata(spi, z2);
+ 
+ 	z2->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_OUT_HIGH);
+@@ -3902,6 +4076,12 @@ static int apple_z2_probe(struct spi_device *spi)
+ 					     "unable to get core supply\n");
+ 	}
+ 	if (apple_z2_is_j71t(z2)) {
++		/* Claimed as an input so its pin is configured as one. */
++		z2->attn_gpio = devm_gpiod_get_optional(dev, "attn", GPIOD_IN);
++		if (IS_ERR(z2->attn_gpio))
++			return dev_err_probe(dev, PTR_ERR(z2->attn_gpio),
++					     "unable to get ATN GPIO\n");
++
+ 		z2->ana_supply = devm_regulator_get(dev, "ana");
+ 		if (IS_ERR(z2->ana_supply))
+ 			return dev_err_probe(dev, PTR_ERR(z2->ana_supply),
+@@ -3994,6 +4174,20 @@ static int apple_z2_probe(struct spi_device *spi)
+ 			return dev_err_probe(dev, -EINVAL,
+ 					     "invalid calibration size %d\n",
+ 					     cal_size);
++
++		u8 *cal __free(kfree) = kmalloc(cal_size, GFP_KERNEL);
++		if (!cal)
++			return -ENOMEM;
++		error = device_property_read_u8_array(dev, CAL_PROP_NAME, cal,
++						      cal_size);
++		if (error)
++			return dev_err_probe(dev, error,
++					     "unable to read calibration\n");
++		/* An erased or unset record is not a calibration. */
++		if (!memchr_inv(cal, 0, cal_size) ||
++		    !memchr_inv(cal, 0xff, cal_size))
++			return dev_err_probe(dev, -EINVAL,
++					     "blank calibration\n");
+ 	}
+ 
+ 	z2->input_dev = devm_input_allocate_device(dev);
+@@ -4040,7 +4234,22 @@ static int apple_z2_probe(struct spi_device *spi)
+ 
+ static void apple_z2_stop(struct apple_z2 *z2)
+ {
+-	apple_z2_irq_off(z2);
++	bool irq_on;
++
++	if (apple_z2_is_j71t(z2)) {
++		mutex_lock(&z2->io_lock);
++		z2->stopping = true;
++		mutex_unlock(&z2->io_lock);
++		cancel_delayed_work_sync(&z2->rearm_work);
++	}
++
++	/* The iPad 5 interrupt thread may mask the interrupt itself. */
++	mutex_lock(&z2->io_lock);
++	irq_on = z2->irq_on;
++	z2->irq_on = false;
++	mutex_unlock(&z2->io_lock);
++	if (irq_on)
++		disable_irq(z2->spidev->irq);
+ 	gpiod_direction_output(z2->reset_gpio, 1);
+ 	z2->booted = false;
+ 	apple_z2_platform_power_off(z2);
+@@ -4063,6 +4272,7 @@ static int apple_z2_resume(struct device *dev)
+ {
+ 	struct apple_z2 *z2 = spi_get_drvdata(to_spi_device(dev));
+ 
++	z2->stopping = false;
+ 	return apple_z2_boot(z2);
+ }
+ 

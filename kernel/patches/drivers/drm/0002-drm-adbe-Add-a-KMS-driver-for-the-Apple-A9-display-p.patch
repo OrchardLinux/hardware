@@ -1,0 +1,1060 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 21:32:33 +0800
+Subject: [PATCH] drm: adbe: Add a KMS driver for the Apple A9 display pipe
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The iPad 5 (J71t) and the other A9 devices run on simpledrm, which
+copies every frame into the boot framebuffer and has no vblank. The A9
+display pipe has no coprocessor: iBoot leaves the pipe, the eDP link and
+the panel running, and the pipe takes new plane parameters through its
+ADP parameter FIFO.
+
+Add a KMS driver that adopts the running 1536x2048 mode with one
+XRGB8888 primary plane. A flip pushes the new base (and stride, when it
+changes) as one parameter packet; the pipe holds it until the next frame
+boundary and raises its "packet applied" status bit there, which
+completes the flip. Vblank comes from the same interrupt. The driver
+never programs timings, clocks or the link. Disabling the CRTC scans out
+the boot framebuffer cleared to black. On probe it retires the
+simple-framebuffer device, so simpledrm cannot take the scanout back.
+
+The FIFO port and the layer registers sit at the same offsets as in the
+H7 pipe driven by drivers/gpu/drm/adp; the A9 pipe is the ADBE of iOS's
+AppleH8ADBE0 kext.
+
+Device result on J71t: native eDP-1, fixed-mode flips 31/31.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux 71a3dfd5 (J71t ledger 11.1, 11.2) and
+ omarchy-ipad5 patches/display/round3; reduced to the validated paths:
+ base packet commit and "next frame" token, without the commit/token
+ module parameters, the round-4 GEM/CMA accounting and the debugfs
+ state. The apple_adbe_drm.enable=0 parameter is dropped: the DT node's
+ status decides whether the driver binds, simpledrm keeps the display
+ otherwise. The display DART walk from hard-coded addresses is replaced
+ by the plane base check (bypass gives base == the boot framebuffer's
+ low 32 bits); the driver holds the disp0 and dp power domains while
+ bound; the flip timer fallback is dropped (the 3-vblank fallback
+ stays).]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/gpu/drm/Kconfig         |   1 +
+ drivers/gpu/drm/Makefile        |   1 +
+ drivers/gpu/drm/adbe/Kconfig    |  17 +
+ drivers/gpu/drm/adbe/Makefile   |   3 +
+ drivers/gpu/drm/adbe/adbe_drv.c | 943 ++++++++++++++++++++++++++++++++
+ 5 files changed, 965 insertions(+)
+ create mode 100644 drivers/gpu/drm/adbe/Kconfig
+ create mode 100644 drivers/gpu/drm/adbe/Makefile
+ create mode 100644 drivers/gpu/drm/adbe/adbe_drv.c
+
+diff --git a/drivers/gpu/drm/Kconfig b/drivers/gpu/drm/Kconfig
+index 323422861..4c74c1501 100644
+--- a/drivers/gpu/drm/Kconfig
++++ b/drivers/gpu/drm/Kconfig
+@@ -299,6 +299,7 @@ config DRM_PRIVACY_SCREEN
+ 	default n
+ 
+ # DRM driver Kconfig files, sorted
++source "drivers/gpu/drm/adbe/Kconfig"
+ source "drivers/gpu/drm/adp/Kconfig"
+ source "drivers/gpu/drm/amd/amdgpu/Kconfig"
+ source "drivers/gpu/drm/arm/Kconfig"
+diff --git a/drivers/gpu/drm/Makefile b/drivers/gpu/drm/Makefile
+index e635fcffd..d75eba399 100644
+--- a/drivers/gpu/drm/Makefile
++++ b/drivers/gpu/drm/Makefile
+@@ -220,6 +220,7 @@ obj-y			+= tiny/
+ obj-$(CONFIG_DRM_PL111) += pl111/
+ obj-$(CONFIG_DRM_TVE200) += tve200/
+ obj-$(CONFIG_DRM_ADP) += adp/
++obj-$(CONFIG_DRM_APPLE_ADBE) += adbe/
+ obj-$(CONFIG_DRM_XEN) += xen/
+ obj-$(CONFIG_DRM_VBOXVIDEO) += vboxvideo/
+ obj-$(CONFIG_DRM_LIMA)  += lima/
+diff --git a/drivers/gpu/drm/adbe/Kconfig b/drivers/gpu/drm/adbe/Kconfig
+new file mode 100644
+index 000000000..20dd5722f
+--- /dev/null
++++ b/drivers/gpu/drm/adbe/Kconfig
+@@ -0,0 +1,17 @@
++# SPDX-License-Identifier: GPL-2.0-only
++config DRM_APPLE_ADBE
++	tristate "DRM support for the Apple A9 display pipe"
++	depends on DRM && OF && ARM64 && MMU
++	depends on ARCH_APPLE || COMPILE_TEST
++	select APERTURE_HELPERS
++	select DRM_CLIENT_SELECTION
++	select DRM_GEM_DMA_HELPER
++	select DRM_KMS_HELPER
++	help
++	  KMS driver for the display pipe (disp0) of the Apple A9 SoCs
++	  (S8000/S8003), as used in the iPad 5. It adopts the mode the
++	  bootloader leaves running, takes the framebuffer over from
++	  simpledrm, and adds page flips and vblank interrupts. It never
++	  programs timings, clocks or the eDP link.
++
++	  If M is selected, the module is called apple_adbe_drm.
+diff --git a/drivers/gpu/drm/adbe/Makefile b/drivers/gpu/drm/adbe/Makefile
+new file mode 100644
+index 000000000..2b414419e
+--- /dev/null
++++ b/drivers/gpu/drm/adbe/Makefile
+@@ -0,0 +1,3 @@
++# SPDX-License-Identifier: GPL-2.0-only
++apple_adbe_drm-y := adbe_drv.o
++obj-$(CONFIG_DRM_APPLE_ADBE) += apple_adbe_drm.o
+diff --git a/drivers/gpu/drm/adbe/adbe_drv.c b/drivers/gpu/drm/adbe/adbe_drv.c
+new file mode 100644
+index 000000000..6f56b8c8f
+--- /dev/null
++++ b/drivers/gpu/drm/adbe/adbe_drv.c
+@@ -0,0 +1,943 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * DRM/KMS driver for the Apple A9 (S8000/S8003) display pipe, disp0.
++ *
++ * iBoot leaves the eDP link, the panel and the timing generator running.
++ * This driver adopts that mode and never programs timings, clocks or the
++ * link. It offers one XRGB8888 primary plane. A new framebuffer reaches the
++ * pipe through the ADP parameter FIFO, which holds the packet until the next
++ * frame boundary and applies it there; the pipe then raises the "packet
++ * applied" status bit, which completes the page flip. A flip event therefore
++ * never arrives before the new buffer is being scanned out.
++ *
++ * The block is the ADBE back end of iOS's AppleH8ADBE0 kext
++ * (AppleMobileADBE0, AppleH7DisplayPipe). Its FIFO port and layer registers
++ * (0x10c0, 0x402c, 0x4030, 0x4038, 0x4068) sit at the same offsets as in the
++ * H7 pipe driven by drivers/gpu/drm/adp.
++ *
++ * Disabling the CRTC scans out the boot framebuffer, cleared to black,
++ * instead of clearing the layer enable or touching the link: neither has
++ * been verified on hardware.
++ *
++ * The pipe's bus is 32 bits wide with DRAM at bus address 0. iBoot leaves
++ * the display DART in bypass, so the plane base register holds the low 32
++ * bits of the boot framebuffer's physical address; the bus offset is taken
++ * from that live scanout. Scanout buffers are ordinary DMA allocations that
++ * must fall inside the same 4 GiB window.
++ */
++
++#include <linux/aperture.h>
++#include <linux/bitfield.h>
++#include <linux/bits.h>
++#include <linux/delay.h>
++#include <linux/dma-mapping.h>
++#include <linux/interrupt.h>
++#include <linux/io.h>
++#include <linux/iopoll.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/of_address.h>
++#include <linux/of_platform.h>
++#include <linux/of_reserved_mem.h>
++#include <linux/platform_device.h>
++#include <linux/pm_domain.h>
++#include <linux/pm_runtime.h>
++#include <linux/sizes.h>
++
++#include <drm/clients/drm_client_setup.h>
++#include <drm/drm_atomic.h>
++#include <drm/drm_atomic_helper.h>
++#include <drm/drm_drv.h>
++#include <drm/drm_dumb_buffers.h>
++#include <drm/drm_fb_dma_helper.h>
++#include <drm/drm_fbdev_dma.h>
++#include <drm/drm_fourcc.h>
++#include <drm/drm_framebuffer.h>
++#include <drm/drm_gem_dma_helper.h>
++#include <drm/drm_gem_framebuffer_helper.h>
++#include <drm/drm_managed.h>
++#include <drm/drm_modeset_helper.h>
++#include <drm/drm_print.h>
++#include <drm/drm_probe_helper.h>
++#include <drm/drm_vblank.h>
++
++/* Offsets in the ADP window, reg[0]. */
++#define ADP_SPDS		0x1014	/* [15:0] SPDS version */
++#define ADP_SPDS_VERSION	0x13
++#define ADP_PARMST		0x101c	/* parameter FIFO state */
++#define ADP_PARMST_STATE	GENMASK(7, 4)
++#define ADP_INTEN		0x1028
++#define ADP_STATUS		0x102c	/* W1C; reads are unmasked */
++#define ADP_FRAME		0x1034	/* [15:0] frame counter */
++#define ADP_VALID		0x1038	/* bit 0: pipe state usable */
++#define ADP_FIFO_PTR		0x1040
++#define ADP_FIFO_PTR_BUSY	GENMASK(12, 0)	/* != 0: packet in flight */
++#define ADP_PKT			0x10c0	/* parameter FIFO push port */
++
++/* Pipe 0, layer 0. */
++#define ADP_FORMAT		0x402c
++#define ADP_FORMAT_FLAGS	(BIT(0) | BIT(21) | BIT(22) | GENMASK(27, 24))
++#define ADP_BASE		0x4030
++#define ADP_STRIDE		0x4038
++#define ADP_LAYERS		0x4068
++
++#define ADP_ST_VBI		BIT(0)
++/*
++ * Packet completion. Every parameter packet raises bit 10 at the frame
++ * boundary where it is applied: the FIFO holds it (ParmSt 3, 0x1040 = 1)
++ * until that boundary, then ParmSt returns to 1, 0x1040 to 0 and bit 10
++ * sets together with VBI. iOS waits on 0x408; bit 3 ("packet synced") was
++ * never seen on this pipe, but is accepted as well.
++ */
++#define ADP_ST_SYNCED		BIT(3)
++#define ADP_ST_APPLIED		BIT(10)
++#define ADP_ST_DONE		(ADP_ST_SYNCED | ADP_ST_APPLIED)
++#define ADP_ST_ERRORS		0xa42	/* OutUnder, PFAlign, PFOver, RdErr */
++
++/*
++ * Parameter FIFO packets: a preamble (bit 31, armed bit 30, word count in
++ * [28:16], token in [15:0]) followed by register entries, each a header
++ * (bit 29, one data word in [28:16], register in [15:0]) and the value.
++ * The pipe loads the token into its frame counter when it takes the packet,
++ * so the driver sends the next frame number to keep the counter continuous.
++ */
++#define ADP_PKT_PREAMBLE	BIT(31)
++#define ADP_PKT_ARMED		BIT(30)
++#define ADP_PKT_COUNT		GENMASK(28, 16)
++#define ADP_PKT_TOKEN		GENMASK(15, 0)
++#define ADP_PKT_ENTRY		BIT(29)
++#define ADP_PKT_REG		GENMASK(15, 0)
++#define ADP_PKT_MAX_WORDS	4
++
++#define ADBE_ALIGN		64	/* plane base and stride */
++#define ADBE_ADDR_TAG		(ADBE_ALIGN - 1)	/* low bits of base/stride */
++#define ADBE_BUS_LIMIT		BIT_ULL(32)
++#define ADBE_WIDTH		1536
++#define ADBE_HEIGHT		2048
++#define ADBE_PITCH		(ADBE_WIDTH * 4)
++#define ADBE_FB_SIZE		(ADBE_PITCH * ADBE_HEIGHT)
++#define ADBE_KICK_WAIT_US	(20 * USEC_PER_MSEC)	/* iOS allows 1 s */
++#define ADBE_PARK_WAIT_US	(100 * USEC_PER_MSEC)
++#define ADBE_FLIP_VBLANKS	3	/* complete on VBI if bit 10 never comes */
++#define ADBE_INTEN_VBLANK	(ADP_ST_VBI | ADP_ST_APPLIED)
++
++struct adbe {
++	struct drm_device drm;
++	struct drm_plane plane;
++	struct drm_crtc crtc;
++	struct drm_encoder encoder;
++	struct drm_connector connector;
++	void __iomem *regs;
++	void __iomem *boot_va;
++	struct resource boot;
++	u64 bus_offset;
++	u32 boot_base;
++	u32 boot_stride;
++	u32 saved_inten;
++	bool vbl_enabled;
++
++	/* Staged by the plane update, pushed by the CRTC flush. */
++	u32 next_base;
++	u32 next_stride;
++	bool next_dirty;
++	/* Commit tail only. */
++	u32 cur_base;
++	bool boot_black;
++
++	/* Protected by drm.event_lock. */
++	struct drm_pending_vblank_event *event;
++	unsigned int event_vbls;
++	bool event_applied;
++	u64 kick_seq;
++};
++
++static struct adbe *to_adbe(struct drm_device *drm)
++{
++	return container_of(drm, struct adbe, drm);
++}
++
++static const struct drm_display_mode adbe_mode = {
++	DRM_MODE_INIT(60, ADBE_WIDTH, ADBE_HEIGHT, 148, 197),
++};
++
++static u32 adbe_tag_word(u32 value, u32 tag)
++{
++	return (value & ~ADBE_ADDR_TAG) | (tag & ADBE_ADDR_TAG);
++}
++
++/* Bus address of [cpu, cpu + len); false if not reachable or misaligned. */
++static bool adbe_cpu_to_bus(struct adbe *adbe, u64 cpu, u64 len, u32 *bus)
++{
++	u64 offset = adbe->bus_offset;
++
++	if (!len || cpu < offset || (cpu & ADBE_ADDR_TAG) ||
++	    cpu - offset >= ADBE_BUS_LIMIT ||
++	    len > ADBE_BUS_LIMIT - (cpu - offset))
++		return false;
++	*bus = cpu - offset;
++	return true;
++}
++
++/*
++ * readCurrentParamFIFOState() in iOS: ready when no packet is in flight
++ * and ParmSt is not 2; ParmSt above 5 is undefined.
++ */
++static int adbe_fifo_state(struct adbe *adbe)
++{
++	u32 state = FIELD_GET(ADP_PARMST_STATE, readl(adbe->regs + ADP_PARMST));
++
++	if (readl(adbe->regs + ADP_FIFO_PTR) & ADP_FIFO_PTR_BUSY)
++		return 0;
++	if (state > 5)
++		return -EIO;
++	return state != 2;
++}
++
++static int adbe_fifo_wait_ready(struct adbe *adbe)
++{
++	int state, ret;
++
++	ret = read_poll_timeout(adbe_fifo_state, state, state, 1000,
++				ADBE_KICK_WAIT_US, false, adbe);
++	if (ret)
++		return ret;
++	return state < 0 ? state : 0;
++}
++
++/* Caller holds event_lock; the port has no per-word handshake. */
++static void adbe_pkt_push(struct adbe *adbe, const u32 *words,
++			  unsigned int count)
++{
++	u16 token = readl(adbe->regs + ADP_FRAME) + 1;
++	unsigned int i;
++
++	writel(ADP_PKT_PREAMBLE | ADP_PKT_ARMED |
++	       FIELD_PREP(ADP_PKT_COUNT, count) |
++	       FIELD_PREP(ADP_PKT_TOKEN, token), adbe->regs + ADP_PKT);
++	for (i = 0; i < count; i++)
++		writel(words[i], adbe->regs + ADP_PKT);
++}
++
++static unsigned int adbe_pkt_add(u32 *words, unsigned int count, u32 reg,
++				 u32 value)
++{
++	words[count++] = ADP_PKT_ENTRY | FIELD_PREP(ADP_PKT_COUNT, 1) |
++			 FIELD_PREP(ADP_PKT_REG, reg);
++	words[count++] = value;
++	return count;
++}
++
++static void adbe_send_event(struct adbe *adbe,
++			    struct drm_pending_vblank_event *event)
++{
++	unsigned long flags;
++
++	if (!event)
++		return;
++	spin_lock_irqsave(&adbe->drm.event_lock, flags);
++	drm_crtc_send_vblank_event(&adbe->crtc, event);
++	spin_unlock_irqrestore(&adbe->drm.event_lock, flags);
++	drm_crtc_vblank_put(&adbe->crtc);
++}
++
++static irqreturn_t adbe_irq(int irq, void *data)
++{
++	struct adbe *adbe = data;
++	struct drm_pending_vblank_event *done = NULL;
++	u32 status;
++
++	/*
++	 * Read and acknowledge under event_lock, so that a flip armed by
++	 * adbe_kick() never completes on a status read from before its push.
++	 */
++	spin_lock(&adbe->drm.event_lock);
++	status = readl(adbe->regs + ADP_STATUS);
++	if (!status) {
++		spin_unlock(&adbe->drm.event_lock);
++		return IRQ_NONE;
++	}
++	writel(status, adbe->regs + ADP_STATUS);
++	if (adbe->event) {
++		if (status & ADP_ST_DONE)
++			adbe->event_applied = true;
++		/*
++		 * Complete once the boundary's vblank has been counted (VBI in
++		 * this read, or already handled), so the event carries that
++		 * frame's sequence and timestamp even if bit 10 arrives just
++		 * before VBI.
++		 */
++		if (adbe->event_applied &&
++		    ((status & ADP_ST_VBI) ||
++		     drm_crtc_vblank_count(&adbe->crtc) != adbe->kick_seq)) {
++			done = adbe->event;
++			adbe->event = NULL;
++		} else if (!adbe->event_applied && (status & ADP_ST_VBI) &&
++			   ++adbe->event_vbls >= ADBE_FLIP_VBLANKS) {
++			done = adbe->event;
++			adbe->event = NULL;
++		}
++	}
++	spin_unlock(&adbe->drm.event_lock);
++
++	if (status & ADP_ST_ERRORS)
++		dev_warn_ratelimited(adbe->drm.dev, "pipe error bits %#x\n",
++				     status & ADP_ST_ERRORS);
++	/* VBI is sticky: only count it while vblank is enabled. */
++	if ((status & ADP_ST_VBI) && READ_ONCE(adbe->vbl_enabled))
++		drm_crtc_handle_vblank(&adbe->crtc);
++	adbe_send_event(adbe, done);
++
++	return IRQ_HANDLED;
++}
++
++/*
++ * Push one plane update: base and, if it changed, stride. Sleeps for at most
++ * ADBE_KICK_WAIT_US on the FIFO; a busy FIFO skips the update. If @event is
++ * given and vblank is available, it completes when the pipe applies the
++ * packet and *@event is cleared.
++ */
++static int adbe_kick(struct adbe *adbe, u32 base, u32 stride,
++		     struct drm_pending_vblank_event **event)
++{
++	u32 words[ADP_PKT_MAX_WORDS];
++	unsigned int count = 0;
++	unsigned long flags;
++	bool armed = false;
++	u32 status;
++	int ret;
++
++	if (readl(adbe->regs + ADP_STRIDE) != stride)
++		count = adbe_pkt_add(words, count, ADP_STRIDE, stride);
++	count = adbe_pkt_add(words, count, ADP_BASE, base);
++
++	ret = adbe_fifo_wait_ready(adbe);
++	if (ret) {
++		dev_warn_ratelimited(adbe->drm.dev,
++				     "parameter FIFO busy, update skipped\n");
++		return ret;
++	}
++
++	if (event && *event && !drm_crtc_vblank_get(&adbe->crtc))
++		armed = true;
++
++	spin_lock_irqsave(&adbe->drm.event_lock, flags);
++	/* A completion latched before this push belongs to an earlier packet. */
++	status = readl(adbe->regs + ADP_STATUS) & ADP_ST_DONE;
++	if (status)
++		writel(status, adbe->regs + ADP_STATUS);
++	adbe_pkt_push(adbe, words, count);
++	if (armed) {
++		adbe->event = *event;
++		adbe->event_vbls = 0;
++		adbe->event_applied = false;
++		adbe->kick_seq = drm_crtc_vblank_count(&adbe->crtc);
++		*event = NULL;
++	}
++	spin_unlock_irqrestore(&adbe->drm.event_lock, flags);
++
++	adbe->cur_base = base;
++	return 0;
++}
++
++/*
++ * Scan out the boot framebuffer, cleared to black. If the packet is not
++ * applied in time, store the base directly and push an empty packet, as the
++ * H7 pipe driver does.
++ */
++static void adbe_park(struct adbe *adbe)
++{
++	unsigned long flags;
++	u32 base;
++
++	if (!adbe->boot_black) {
++		memset_io(adbe->boot_va, 0, ADBE_FB_SIZE);
++		wmb();	/* publish the write-combined stores before the flip */
++		adbe->boot_black = true;
++	}
++	if (adbe->cur_base == adbe->boot_base &&
++	    readl(adbe->regs + ADP_BASE) == adbe->boot_base)
++		return;
++
++	if (!adbe_kick(adbe, adbe->boot_base, adbe->boot_stride, NULL) &&
++	    !readl_poll_timeout(adbe->regs + ADP_BASE, base,
++				base == adbe->boot_base, 1000,
++				ADBE_PARK_WAIT_US))
++		return;
++
++	dev_warn(adbe->drm.dev, "park packet not applied, storing the boot base\n");
++	writel(adbe->boot_stride, adbe->regs + ADP_STRIDE);
++	writel(adbe->boot_base, adbe->regs + ADP_BASE);
++	if (!adbe_fifo_wait_ready(adbe)) {
++		spin_lock_irqsave(&adbe->drm.event_lock, flags);
++		adbe_pkt_push(adbe, NULL, 0);
++		spin_unlock_irqrestore(&adbe->drm.event_lock, flags);
++	}
++	adbe->cur_base = adbe->boot_base;
++}
++
++static int adbe_plane_atomic_check(struct drm_plane *plane,
++				   struct drm_atomic_commit *state)
++{
++	struct drm_plane_state *new_state =
++		drm_atomic_get_new_plane_state(state, plane);
++	struct adbe *adbe = to_adbe(plane->dev);
++	struct drm_crtc_state *crtc_state = NULL;
++	struct drm_framebuffer *fb = new_state->fb;
++	dma_addr_t addr;
++	u32 bus;
++	u64 len;
++	int ret;
++
++	if (new_state->crtc)
++		crtc_state = drm_atomic_get_new_crtc_state(state, new_state->crtc);
++	ret = drm_atomic_helper_check_plane_state(new_state, crtc_state,
++						  DRM_PLANE_NO_SCALING,
++						  DRM_PLANE_NO_SCALING,
++						  false, false);
++	if (ret || !new_state->visible)
++		return ret;
++
++	if (fb->pitches[0] % ADBE_ALIGN || fb->pitches[0] < ADBE_PITCH ||
++	    fb->pitches[0] > SZ_32K) {
++		drm_dbg_kms(plane->dev, "pitch %u unsupported\n", fb->pitches[0]);
++		return -EINVAL;
++	}
++	addr = drm_fb_dma_get_gem_addr(fb, new_state, 0);
++	len = (u64)fb->pitches[0] * (ADBE_HEIGHT - 1) + ADBE_PITCH;
++	if (!adbe_cpu_to_bus(adbe, addr, len, &bus)) {
++		drm_dbg_kms(plane->dev, "buffer %pad not reachable by the pipe\n",
++			    &addr);
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
++static void adbe_plane_atomic_update(struct drm_plane *plane,
++				     struct drm_atomic_commit *state)
++{
++	struct drm_plane_state *new_state =
++		drm_atomic_get_new_plane_state(state, plane);
++	struct adbe *adbe = to_adbe(plane->dev);
++	struct drm_framebuffer *fb = new_state->fb;
++	dma_addr_t addr;
++	u32 bus;
++
++	if (!new_state->visible)
++		return;
++	addr = drm_fb_dma_get_gem_addr(fb, new_state, 0);
++	/* Checked in atomic_check. */
++	if (!adbe_cpu_to_bus(adbe, addr, ADBE_ALIGN, &bus))
++		return;
++	/* Keep the tag bits iBoot left in the low bits of both words. */
++	adbe->next_base = adbe_tag_word(bus, adbe->boot_base);
++	adbe->next_stride = adbe_tag_word(fb->pitches[0], adbe->boot_stride);
++	adbe->next_dirty = true;
++}
++
++static const struct drm_plane_helper_funcs adbe_plane_helper_funcs = {
++	.atomic_check = adbe_plane_atomic_check,
++	.atomic_update = adbe_plane_atomic_update,
++};
++
++static const struct drm_plane_funcs adbe_plane_funcs = {
++	.update_plane = drm_atomic_helper_update_plane,
++	.disable_plane = drm_atomic_helper_disable_plane,
++	.destroy = drm_plane_cleanup,
++	.reset = drm_atomic_helper_plane_reset,
++	.atomic_duplicate_state = drm_atomic_helper_plane_duplicate_state,
++	.atomic_destroy_state = drm_atomic_helper_plane_destroy_state,
++};
++
++static const u32 adbe_formats[] = {
++	DRM_FORMAT_XRGB8888,
++};
++
++static const u64 adbe_modifiers[] = {
++	DRM_FORMAT_MOD_LINEAR,
++	DRM_FORMAT_MOD_INVALID,
++};
++
++static int adbe_crtc_atomic_check(struct drm_crtc *crtc,
++				  struct drm_atomic_commit *state)
++{
++	struct drm_crtc_state *crtc_state =
++		drm_atomic_get_new_crtc_state(state, crtc);
++
++	if (!crtc_state->enable)
++		return 0;
++	if (crtc_state->mode.hdisplay != ADBE_WIDTH ||
++	    crtc_state->mode.vdisplay != ADBE_HEIGHT)
++		return -EINVAL;
++
++	return drm_atomic_helper_check_crtc_primary_plane(crtc_state);
++}
++
++static void adbe_crtc_atomic_flush(struct drm_crtc *crtc,
++				   struct drm_atomic_commit *state)
++{
++	struct adbe *adbe = to_adbe(crtc->dev);
++	struct drm_pending_vblank_event *event = crtc->state->event;
++	unsigned long flags;
++
++	crtc->state->event = NULL;
++	if (adbe->next_dirty) {
++		adbe->next_dirty = false;
++		adbe_kick(adbe, adbe->next_base, adbe->next_stride, &event);
++	}
++	if (!event)
++		return;
++
++	/* Nothing pushed: complete at the next vblank, or now if it is off. */
++	spin_lock_irqsave(&crtc->dev->event_lock, flags);
++	if (!drm_crtc_vblank_get(crtc))
++		drm_crtc_arm_vblank_event(crtc, event);
++	else
++		drm_crtc_send_vblank_event(crtc, event);
++	spin_unlock_irqrestore(&crtc->dev->event_lock, flags);
++}
++
++static void adbe_crtc_atomic_enable(struct drm_crtc *crtc,
++				    struct drm_atomic_commit *state)
++{
++	drm_crtc_vblank_on(crtc);
++}
++
++static void adbe_crtc_atomic_disable(struct drm_crtc *crtc,
++				     struct drm_atomic_commit *state)
++{
++	struct adbe *adbe = to_adbe(crtc->dev);
++	struct drm_pending_vblank_event *done;
++	unsigned long flags;
++
++	spin_lock_irqsave(&crtc->dev->event_lock, flags);
++	done = adbe->event;
++	adbe->event = NULL;
++	spin_unlock_irqrestore(&crtc->dev->event_lock, flags);
++	adbe_send_event(adbe, done);
++
++	drm_crtc_vblank_off(crtc);
++	adbe->next_dirty = false;
++	adbe_park(adbe);
++
++	spin_lock_irqsave(&crtc->dev->event_lock, flags);
++	if (crtc->state->event && !crtc->state->active) {
++		drm_crtc_send_vblank_event(crtc, crtc->state->event);
++		crtc->state->event = NULL;
++	}
++	spin_unlock_irqrestore(&crtc->dev->event_lock, flags);
++}
++
++static int adbe_enable_vblank(struct drm_crtc *crtc)
++{
++	struct adbe *adbe = to_adbe(crtc->dev);
++
++	/*
++	 * VBI stays latched while vblank is off; unmasking it would report a
++	 * stale boundary as a vblank now.
++	 */
++	writel(ADP_ST_VBI, adbe->regs + ADP_STATUS);
++	WRITE_ONCE(adbe->vbl_enabled, true);
++	writel(adbe->saved_inten | ADBE_INTEN_VBLANK, adbe->regs + ADP_INTEN);
++
++	return 0;
++}
++
++static void adbe_disable_vblank(struct drm_crtc *crtc)
++{
++	struct adbe *adbe = to_adbe(crtc->dev);
++
++	/* Restore the exact mask iBoot left (OutUnder only). */
++	writel(adbe->saved_inten, adbe->regs + ADP_INTEN);
++	WRITE_ONCE(adbe->vbl_enabled, false);
++}
++
++static const struct drm_crtc_helper_funcs adbe_crtc_helper_funcs = {
++	.atomic_check = adbe_crtc_atomic_check,
++	.atomic_flush = adbe_crtc_atomic_flush,
++	.atomic_enable = adbe_crtc_atomic_enable,
++	.atomic_disable = adbe_crtc_atomic_disable,
++};
++
++static const struct drm_crtc_funcs adbe_crtc_funcs = {
++	.reset = drm_atomic_helper_crtc_reset,
++	.set_config = drm_atomic_helper_set_config,
++	.page_flip = drm_atomic_helper_page_flip,
++	.atomic_duplicate_state = drm_atomic_helper_crtc_duplicate_state,
++	.atomic_destroy_state = drm_atomic_helper_crtc_destroy_state,
++	.enable_vblank = adbe_enable_vblank,
++	.disable_vblank = adbe_disable_vblank,
++};
++
++static int adbe_connector_get_modes(struct drm_connector *connector)
++{
++	return drm_connector_helper_get_modes_fixed(connector, &adbe_mode);
++}
++
++static const struct drm_connector_helper_funcs adbe_connector_helper_funcs = {
++	.get_modes = adbe_connector_get_modes,
++};
++
++static const struct drm_connector_funcs adbe_connector_funcs = {
++	.reset = drm_atomic_helper_connector_reset,
++	.fill_modes = drm_helper_probe_single_connector_modes,
++	.atomic_duplicate_state = drm_atomic_helper_connector_duplicate_state,
++	.atomic_destroy_state = drm_atomic_helper_connector_destroy_state,
++};
++
++static const struct drm_mode_config_funcs adbe_mode_config_funcs = {
++	.fb_create = drm_gem_fb_create,
++	.atomic_check = drm_atomic_helper_check,
++	.atomic_commit = drm_atomic_helper_commit,
++};
++
++/* Enable the CRTC before the planes, so a flip always has vblank. */
++static const struct drm_mode_config_helper_funcs adbe_mode_config_helpers = {
++	.atomic_commit_tail = drm_atomic_helper_commit_tail_rpm,
++};
++
++static int adbe_dumb_create(struct drm_file *file, struct drm_device *drm,
++			    struct drm_mode_create_dumb *args)
++{
++	int ret;
++
++	ret = drm_mode_size_dumb(drm, args, ADBE_ALIGN, 0);
++	if (ret)
++		return ret;
++
++	return drm_gem_dma_dumb_create_internal(file, drm, args);
++}
++
++DEFINE_DRM_GEM_DMA_FOPS(adbe_fops);
++
++static const struct drm_driver adbe_drm_driver = {
++	.driver_features = DRIVER_GEM | DRIVER_MODESET | DRIVER_ATOMIC,
++	.fops = &adbe_fops,
++	DRM_GEM_DMA_DRIVER_OPS_WITH_DUMB_CREATE(adbe_dumb_create),
++	DRM_FBDEV_DMA_DRIVER_OPS,
++	.name = "adbe",
++	.desc = "Apple A9 display pipe",
++	.major = 1,
++	.minor = 0,
++};
++
++/*
++ * The simple-framebuffer the bootloader describes for the running scanout.
++ * Returns it with a reference held, or an ERR_PTR.
++ */
++static struct device_node *adbe_find_boot_fb(struct adbe *adbe)
++{
++	struct device_node *np;
++	const char *format = "";
++	u32 width = 0, height = 0, stride = 0;
++	int ret;
++
++	for_each_child_of_node(of_chosen, np) {
++		if (!of_device_is_compatible(np, "simple-framebuffer") ||
++		    !of_device_is_available(np))
++			continue;
++
++		ret = of_reserved_mem_region_to_resource(np, 0, &adbe->boot);
++		if (ret)
++			ret = of_address_to_resource(np, 0, &adbe->boot);
++		if (!ret)
++			ret = of_property_read_u32(np, "width", &width) ?:
++			      of_property_read_u32(np, "height", &height) ?:
++			      of_property_read_u32(np, "stride", &stride) ?:
++			      of_property_read_string(np, "format", &format);
++		if (ret || width != ADBE_WIDTH || height != ADBE_HEIGHT ||
++		    stride != ADBE_PITCH || strcmp(format, "x8r8g8b8") ||
++		    resource_size(&adbe->boot) < ADBE_FB_SIZE) {
++			of_node_put(np);
++			return ERR_PTR(-EINVAL);
++		}
++		return np;
++	}
++
++	return ERR_PTR(-ENODEV);
++}
++
++/*
++ * Retire the firmware framebuffer. The aperture helpers unplug simpledrm if
++ * it is bound; a simple-framebuffer device it has not bound yet (probe
++ * order, or simpledrm built as a module) is destroyed, so it cannot take
++ * the boot framebuffer back later.
++ */
++static int adbe_take_boot_fb(struct adbe *adbe, struct device_node *fb_np)
++{
++	struct platform_device *fb;
++	int ret;
++
++	ret = aperture_remove_conflicting_devices(adbe->boot.start,
++						  resource_size(&adbe->boot),
++						  adbe_drm_driver.name);
++	if (ret)
++		return ret;
++
++	fb = of_find_device_by_node(fb_np);
++	if (fb) {
++		of_platform_device_destroy(&fb->dev, NULL);
++		put_device(&fb->dev);
++	}
++
++	return 0;
++}
++
++/* Check that the pipe runs as iBoot leaves it; reads only. */
++static int adbe_adopt(struct adbe *adbe)
++{
++	struct device *dev = adbe->drm.dev;
++	u32 base, stride, format;
++	u16 frame;
++
++	format = readl(adbe->regs + ADP_FORMAT) & ~ADP_FORMAT_FLAGS;
++	if ((readl(adbe->regs + ADP_SPDS) & 0xffff) != ADP_SPDS_VERSION ||
++	    (format != 0xc6000 && format != 0xe4000) ||
++	    !(readl(adbe->regs + ADP_VALID) & BIT(0)) ||
++	    (readl(adbe->regs + ADP_LAYERS) & 0xf) != 1 ||
++	    (readl(adbe->regs + ADP_STATUS) & ADP_ST_ERRORS))
++		return dev_err_probe(dev, -ENODEV,
++				     "pipe is not running as iBoot leaves it\n");
++
++	frame = readl(adbe->regs + ADP_FRAME);
++	msleep(50);
++	if ((u16)readl(adbe->regs + ADP_FRAME) == frame)
++		return dev_err_probe(dev, -ENODEV,
++				     "frame counter is not advancing\n");
++
++	base = readl(adbe->regs + ADP_BASE);
++	stride = readl(adbe->regs + ADP_STRIDE);
++	/*
++	 * With the display DART in bypass the plane base is the low half of
++	 * the boot framebuffer's physical address. Anything else means the
++	 * pipe reads through a translation this driver does not manage.
++	 */
++	if ((stride & ~ADBE_ADDR_TAG) != ADBE_PITCH ||
++	    (base & ~ADBE_ADDR_TAG) != lower_32_bits(adbe->boot.start))
++		return dev_err_probe(dev, -ENODEV,
++				     "plane %#x/%#x is not the boot framebuffer %pa\n",
++				     base, stride, &adbe->boot.start);
++
++	adbe->boot_base = base;
++	adbe->boot_stride = stride;
++	adbe->cur_base = base;
++	adbe->bus_offset = adbe->boot.start - (base & ~ADBE_ADDR_TAG);
++	adbe->saved_inten = readl(adbe->regs + ADP_INTEN);
++
++	return 0;
++}
++
++static int adbe_modeset_init(struct adbe *adbe)
++{
++	struct drm_device *drm = &adbe->drm;
++	int ret;
++
++	ret = drmm_mode_config_init(drm);
++	if (ret)
++		return ret;
++	drm->mode_config.min_width = 32;
++	drm->mode_config.min_height = 32;
++	drm->mode_config.max_width = 4096;
++	drm->mode_config.max_height = 4096;
++	drm->mode_config.preferred_depth = 24;
++	/* Write-combined buffers: CPU readback is slow. */
++	drm->mode_config.prefer_shadow = 1;
++	drm->mode_config.funcs = &adbe_mode_config_funcs;
++	drm->mode_config.helper_private = &adbe_mode_config_helpers;
++
++	ret = drm_universal_plane_init(drm, &adbe->plane, BIT(0),
++				       &adbe_plane_funcs, adbe_formats,
++				       ARRAY_SIZE(adbe_formats), adbe_modifiers,
++				       DRM_PLANE_TYPE_PRIMARY, NULL);
++	if (ret)
++		return ret;
++	drm_plane_helper_add(&adbe->plane, &adbe_plane_helper_funcs);
++
++	ret = drmm_crtc_init_with_planes(drm, &adbe->crtc, &adbe->plane, NULL,
++					 &adbe_crtc_funcs, NULL);
++	if (ret)
++		return ret;
++	drm_crtc_helper_add(&adbe->crtc, &adbe_crtc_helper_funcs);
++
++	ret = drmm_encoder_init(drm, &adbe->encoder, NULL,
++				DRM_MODE_ENCODER_NONE, NULL);
++	if (ret)
++		return ret;
++	adbe->encoder.possible_crtcs = drm_crtc_mask(&adbe->crtc);
++
++	ret = drmm_connector_init(drm, &adbe->connector, &adbe_connector_funcs,
++				  DRM_MODE_CONNECTOR_eDP, NULL);
++	if (ret)
++		return ret;
++	drm_connector_helper_add(&adbe->connector, &adbe_connector_helper_funcs);
++	ret = drm_connector_attach_encoder(&adbe->connector, &adbe->encoder);
++	if (ret)
++		return ret;
++
++	ret = drm_vblank_init(drm, 1);
++	if (ret)
++		return ret;
++	drm_mode_config_reset(drm);
++
++	return 0;
++}
++
++/*
++ * Powering disp0 or dp off resets the pipe and the eDP link, which this
++ * driver cannot bring back. Hold every listed domain while bound.
++ */
++static int adbe_power_init(struct device *dev)
++{
++	struct dev_pm_domain_list *pd_list;
++	int ret;
++
++	/* The driver core attaches a single domain itself. */
++	if (!dev->pm_domain) {
++		ret = devm_pm_domain_attach_list(dev, NULL, &pd_list);
++		if (ret < 0)
++			return ret;
++	}
++	ret = devm_pm_runtime_enable(dev);
++	if (ret)
++		return ret;
++
++	return pm_runtime_resume_and_get(dev);
++}
++
++static void adbe_power_put(void *data)
++{
++	pm_runtime_put_noidle(data);
++}
++
++static int adbe_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct device_node *fb_np;
++	struct adbe *adbe;
++	int irq, ret;
++
++	adbe = devm_drm_dev_alloc(dev, &adbe_drm_driver, struct adbe, drm);
++	if (IS_ERR(adbe))
++		return PTR_ERR(adbe);
++	platform_set_drvdata(pdev, adbe);
++
++	adbe->regs = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(adbe->regs))
++		return PTR_ERR(adbe->regs);
++
++	ret = adbe_power_init(dev);
++	if (ret)
++		return dev_err_probe(dev, ret, "cannot hold the power domains\n");
++	ret = devm_add_action_or_reset(dev, adbe_power_put, dev);
++	if (ret)
++		return ret;
++
++	fb_np = adbe_find_boot_fb(adbe);
++	if (IS_ERR(fb_np))
++		return dev_err_probe(dev, PTR_ERR(fb_np),
++				     "no %ux%u boot framebuffer\n",
++				     ADBE_WIDTH, ADBE_HEIGHT);
++
++	ret = adbe_adopt(adbe);
++	if (ret)
++		goto put_fb;
++
++	ret = dma_set_mask_and_coherent(dev, DMA_BIT_MASK(36));
++	if (ret)
++		goto put_fb;
++
++	adbe->boot_va = devm_ioremap_wc(dev, adbe->boot.start, ADBE_FB_SIZE);
++	if (!adbe->boot_va) {
++		ret = -ENOMEM;
++		goto put_fb;
++	}
++
++	ret = adbe_modeset_init(adbe);
++	if (ret)
++		goto put_fb;
++
++	irq = platform_get_irq(pdev, 0);
++	if (irq < 0) {
++		ret = irq;
++		goto put_fb;
++	}
++	/* No packet of ours yet: a latched completion is not ours. */
++	writel(ADP_ST_DONE, adbe->regs + ADP_STATUS);
++	ret = devm_request_irq(dev, irq, adbe_irq, 0, dev_name(dev), adbe);
++	if (ret)
++		goto put_fb;
++
++	/* From here on simpledrm is gone; the pipe still shows its buffer. */
++	ret = adbe_take_boot_fb(adbe, fb_np);
++	of_node_put(fb_np);
++	if (ret)
++		return dev_err_probe(dev, ret,
++				     "cannot take over the boot framebuffer\n");
++
++	ret = drm_dev_register(&adbe->drm, 0);
++	if (ret)
++		return ret;
++
++	drm_client_setup(&adbe->drm, NULL);
++
++	return 0;
++
++put_fb:
++	of_node_put(fb_np);
++	return ret;
++}
++
++static void adbe_remove(struct platform_device *pdev)
++{
++	struct adbe *adbe = platform_get_drvdata(pdev);
++
++	drm_dev_unplug(&adbe->drm);
++	drm_atomic_helper_shutdown(&adbe->drm);
++	writel(adbe->saved_inten, adbe->regs + ADP_INTEN);
++}
++
++static void adbe_shutdown(struct platform_device *pdev)
++{
++	struct adbe *adbe = platform_get_drvdata(pdev);
++
++	drm_atomic_helper_shutdown(&adbe->drm);
++	writel(adbe->saved_inten, adbe->regs + ADP_INTEN);
++}
++
++static int adbe_suspend(struct device *dev)
++{
++	struct adbe *adbe = dev_get_drvdata(dev);
++
++	return drm_mode_config_helper_suspend(&adbe->drm);
++}
++
++static int adbe_resume(struct device *dev)
++{
++	struct adbe *adbe = dev_get_drvdata(dev);
++
++	return drm_mode_config_helper_resume(&adbe->drm);
++}
++
++static DEFINE_SIMPLE_DEV_PM_OPS(adbe_pm_ops, adbe_suspend, adbe_resume);
++
++static const struct of_device_id adbe_of_match[] = {
++	{ .compatible = "apple,s8000-display-pipe" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, adbe_of_match);
++
++static struct platform_driver adbe_platform_driver = {
++	.probe = adbe_probe,
++	.remove = adbe_remove,
++	.shutdown = adbe_shutdown,
++	.driver = {
++		.name = "apple-adbe",
++		.of_match_table = adbe_of_match,
++		.pm = pm_sleep_ptr(&adbe_pm_ops),
++	},
++};
++module_platform_driver(adbe_platform_driver);
++
++MODULE_DESCRIPTION("DRM driver for the Apple A9 display pipe");
++MODULE_AUTHOR("Berkay Kösebay <brkosebay@users.noreply.github.com>");
++MODULE_LICENSE("GPL");

@@ -1,0 +1,111 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 21:36:46 +0800
+Subject: [PATCH] pinctrl: apple: Add S8000 mux semantics
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The A9 GPIO block encodes platform functions differently from the M1
+one. iOS routes a pin to a peripheral with bit 4 cleared (for the iPad 5
+touch display-sync pin, GPIO 74, route 2: mask 0x270, value 0x240), and
+its GPIO function puts the pin into output mode (mask 0x27e, value
+0x202). The generic set_mux() leaves bit 4 and the mode alone, so the
+display sync never reaches the states the N1 touchscreen expects.
+
+Add S8000 match data that reproduces both masks. The pin data, pulls and
+the M1 semantics stay as they are.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux 13d6f07c (J71t ledger 8.9); unchanged in
+ substance, with the bit named. Not carried: the warm-boot handling of
+ inherited GPIO interrupts (8.10, kexec only) and IRQCHIP_SKIP_SET_WAKE
+ from the same squash, which belongs to the Smart Cover work.]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/pinctrl/pinctrl-apple-gpio.c | 37 +++++++++++++++++++++++++---
+ 1 file changed, 34 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/pinctrl/pinctrl-apple-gpio.c b/drivers/pinctrl/pinctrl-apple-gpio.c
+index 6305b96aa..f9d444a95 100644
+--- a/drivers/pinctrl/pinctrl-apple-gpio.c
++++ b/drivers/pinctrl/pinctrl-apple-gpio.c
+@@ -30,9 +30,19 @@
+ #include "core.h"
+ #include "pinmux.h"
+ 
++struct apple_gpio_soc_data {
++	/*
++	 * S8000 platform-function modes (iOS GPIO driver): routing a pin to
++	 * a peripheral also clears bit 4, and selecting the GPIO function
++	 * puts the pin in output mode.
++	 */
++	bool s8000_mux;
++};
++
+ struct apple_gpio_pinctrl {
+ 	struct device *dev;
+ 	struct pinctrl_dev *pctldev;
++	const struct apple_gpio_soc_data *soc;
+ 
+ 	void __iomem *base;
+ 	struct regmap *map;
+@@ -52,6 +62,7 @@ struct apple_gpio_pinctrl {
+ #define REG_GPIOx_IN_IRQ_DN  5
+ #define REG_GPIOx_IN_IRQ_ANY 6
+ #define REG_GPIOx_IN_IRQ_OFF 7
++#define REG_GPIOx_S8000_MUX  BIT(4)
+ #define REG_GPIOx_PERIPH     GENMASK(6, 5)
+ #define REG_GPIOx_PULL       GENMASK(8, 7)
+ #define REG_GPIOx_PULL_OFF   0
+@@ -181,10 +192,24 @@ static int apple_gpio_pinmux_set(struct pinctrl_dev *pctldev, unsigned int func,
+ 				 unsigned int group)
+ {
+ 	struct apple_gpio_pinctrl *pctl = pinctrl_dev_get_drvdata(pctldev);
++	u32 mask = REG_GPIOx_PERIPH | REG_GPIOx_INPUT_ENABLE;
++	u32 value = FIELD_PREP(REG_GPIOx_PERIPH, func) | REG_GPIOx_INPUT_ENABLE;
+ 
+-	apple_gpio_set_reg(
+-		pctl, group, REG_GPIOx_PERIPH | REG_GPIOx_INPUT_ENABLE,
+-		FIELD_PREP(REG_GPIOx_PERIPH, func) | REG_GPIOx_INPUT_ENABLE);
++	/*
++	 * This reproduces iOS' masks for the iPad 5 touch display sync:
++	 * peripheral route 2 writes mask 0x270 / value 0x240, the GPIO
++	 * function mask 0x27e / value 0x202. The pin's data and pull fields
++	 * are kept.
++	 */
++	if (pctl->soc && pctl->soc->s8000_mux) {
++		mask |= REG_GPIOx_S8000_MUX;
++		if (!func) {
++			mask |= REG_GPIOx_MODE;
++			value |= FIELD_PREP(REG_GPIOx_MODE, REG_GPIOx_OUT);
++		}
++	}
++
++	apple_gpio_set_reg(pctl, group, mask, value);
+ 
+ 	return 0;
+ }
+@@ -455,6 +480,7 @@ static int apple_gpio_pinctrl_probe(struct platform_device *pdev)
+ 	if (!pctl)
+ 		return -ENOMEM;
+ 	pctl->dev = &pdev->dev;
++	pctl->soc = of_device_get_match_data(&pdev->dev);
+ 	pctl->gpio_chip.irq.num_parents = nirqs;
+ 	dev_set_drvdata(&pdev->dev, pctl);
+ 
+@@ -521,7 +547,12 @@ static int apple_gpio_pinctrl_probe(struct platform_device *pdev)
+ 	return apple_gpio_register(pctl);
+ }
+ 
++static const struct apple_gpio_soc_data apple_gpio_s8000_data = {
++	.s8000_mux = true,
++};
++
+ static const struct of_device_id apple_gpio_pinctrl_of_match[] = {
++	{ .compatible = "apple,s8000-pinctrl", .data = &apple_gpio_s8000_data },
+ 	{ .compatible = "apple,t8103-pinctrl", },
+ 	{ .compatible = "apple,pinctrl", },
+ 	{ }

@@ -1,0 +1,106 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 21:45:58 +0800
+Subject: [PATCH] iio: light: tsl2583: Read the LSCI calibration from the
+ device tree
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The CT819 and CT821 need the unit's factory LSCI record. On the iPads
+the bootloader can copy it from the live ADT (alsCalibration) into
+apple,als-calibration; take it from there when present and fall back to
+the SysCfg NVMEM cell otherwise.
+
+Both sources go through the same checks: the header version, the
+record count and offset, the total length, the 16-bit word checksum,
+the record layout and the calibration values.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux a782d501, 459fa902 (J71t ledger 9.1);
+ his private firmware file (request_firmware_direct) becomes the
+ bootloader-provided DT property, with the NVMEM cell as the fallback.
+ The power-bit and interrupt-clear parameters for the open points A1
+ and A2 (9.3) are not carried.]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/iio/light/tsl2583.c | 45 +++++++++++++++++++++++++++++++------
+ 1 file changed, 38 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/iio/light/tsl2583.c b/drivers/iio/light/tsl2583.c
+index db0779f5d..c86d59550 100644
+--- a/drivers/iio/light/tsl2583.c
++++ b/drivers/iio/light/tsl2583.c
+@@ -18,6 +18,7 @@
+ #include <linux/module.h>
+ #include <linux/nvmem-consumer.h>
+ #include <linux/overflow.h>
++#include <linux/property.h>
+ #include <linux/iio/iio.h>
+ #include <linux/iio/sysfs.h>
+ #include <linux/pm_runtime.h>
+@@ -276,12 +277,47 @@ static bool apple_als_record_is_supported(const struct tsl2583_chip_info *info,
+ 	return true;
+ }
+ 
++/*
++ * The record comes from the bootloader (the ADT's resolved alsCalibration)
++ * or from a SysCfg NVMEM cell. The caller frees it.
++ */
++static u8 *apple_als_read_calibration(struct device *dev, size_t *len)
++{
++	struct nvmem_cell *cell;
++	u8 *data;
++	int ret;
++
++	if (device_property_present(dev, "apple,als-calibration")) {
++		ret = device_property_count_u8(dev, "apple,als-calibration");
++		if (ret <= 0)
++			return ERR_PTR(ret ?: -EINVAL);
++		*len = ret;
++
++		data = kmalloc(*len, GFP_KERNEL);
++		if (!data)
++			return ERR_PTR(-ENOMEM);
++		ret = device_property_read_u8_array(dev, "apple,als-calibration",
++						    data, *len);
++		if (ret) {
++			kfree(data);
++			return ERR_PTR(ret);
++		}
++
++		return data;
++	}
++
++	cell = devm_nvmem_cell_get(dev, "calibration");
++	if (IS_ERR(cell))
++		return ERR_CAST(cell);
++
++	return nvmem_cell_read(cell, len);
++}
++
+ static int apple_als_load_calibration(struct tsl2583_chip *chip)
+ {
+ 	const struct tsl2583_chip_info *info = chip->info;
+ 	struct device *dev = &chip->client->dev;
+ 	struct apple_als_calibration *cal = &chip->cal;
+-	struct nvmem_cell *cell;
+ 	const u8 *record;
+ 	size_t len;
+ 	u32 checksum = 0;
+@@ -290,12 +326,7 @@ static int apple_als_load_calibration(struct tsl2583_chip *chip)
+ 	int ret;
+ 	int i;
+ 
+-	cell = devm_nvmem_cell_get(dev, "calibration");
+-	if (IS_ERR(cell))
+-		return dev_err_probe(dev, PTR_ERR(cell),
+-				     "failed to get LSCI calibration\n");
+-
+-	data = nvmem_cell_read(cell, &len);
++	data = apple_als_read_calibration(dev, &len);
+ 	if (IS_ERR(data))
+ 		return dev_err_probe(dev, PTR_ERR(data),
+ 				     "failed to read LSCI calibration\n");

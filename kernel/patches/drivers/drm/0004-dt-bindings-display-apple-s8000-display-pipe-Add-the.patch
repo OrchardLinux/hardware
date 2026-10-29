@@ -1,0 +1,86 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <henrik@goat-code.com>
+Date: Thu, 29 Oct 2026 05:14:37 +0800
+Subject: [PATCH] dt-bindings: display: apple,s8000-display-pipe: Add the
+ display DART windows
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The A9 display pipe reads memory through dart-disp0, which iBoot leaves
+in bypass. The DART cannot get a node of its own: binding apple-dart to
+it would reset the streams under the live scanout. The display driver
+only needs to read its translation control registers to confirm that
+the scanout bypasses translation before it takes the display over.
+
+Add the two dart-disp0 windows (Apple device tree order: 0x206304000,
+then 0x206300000) as optional "dart0" and "dart1" reg entries, and name
+all reg entries so the optional ones can be found by name.
+
+This is part of J71t ledger 11.1.
+
+Reported-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../display/apple,s8000-display-pipe.yaml     | 27 ++++++++++++++++---
+ 1 file changed, 24 insertions(+), 3 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/display/apple,s8000-display-pipe.yaml b/Documentation/devicetree/bindings/display/apple,s8000-display-pipe.yaml
+index b6a297a91..7626d7f8f 100644
+--- a/Documentation/devicetree/bindings/display/apple,s8000-display-pipe.yaml
++++ b/Documentation/devicetree/bindings/display/apple,s8000-display-pipe.yaml
+@@ -14,14 +14,17 @@ description:
+   with the compatible "adbe0,s8000" in the Apple device tree. It contains
+   the ADP/ADBE display pipe that scans out to the internal eDP panel. The
+   bootloader leaves the pipe, the eDP link and the panel running; the pipe
+-  reads memory through the display DART, which the bootloader leaves in
+-  bypass.
++  reads memory through the display DART (dart-disp0), which the bootloader
++  leaves in bypass. The DART has no node of its own: it must not be reset
++  under the running scanout, so its two register windows are listed here
++  and only read, to check that the scanout bypasses translation.
+ 
+ properties:
+   compatible:
+     const: apple,s8000-display-pipe
+ 
+   reg:
++    minItems: 6
+     items:
+       - description:
+           ADP window, with the control and interrupt registers, the
+@@ -31,6 +34,20 @@ properties:
+       - description: Display block window C
+       - description: Display block window D
+       - description: Seven-register side block
++      - description: Display DART (dart-disp0), first window
++      - description: Display DART (dart-disp0), second window
++
++  reg-names:
++    minItems: 6
++    items:
++      - const: adp
++      - const: disp-a
++      - const: disp-b
++      - const: disp-c
++      - const: disp-d
++      - const: side
++      - const: dart0
++      - const: dart1
+ 
+   interrupts:
+     items:
+@@ -71,7 +88,11 @@ examples:
+                   <0x2 0x06440000 0x0 0x8000>,
+                   <0x2 0x06480000 0x0 0x8000>,
+                   <0x2 0x064c0000 0x0 0x8000>,
+-                  <0x2 0x06500000 0x0 0x1c>;
++                  <0x2 0x06500000 0x0 0x1c>,
++                  <0x2 0x06304000 0x0 0x4000>,
++                  <0x2 0x06300000 0x0 0x4000>;
++            reg-names = "adp", "disp-a", "disp-b", "disp-c", "disp-d",
++                        "side", "dart0", "dart1";
+             interrupt-parent = <&aic>;
+             interrupts = <AIC_IRQ 140 IRQ_TYPE_LEVEL_HIGH>,
+                          <AIC_IRQ 143 IRQ_TYPE_LEVEL_HIGH>,

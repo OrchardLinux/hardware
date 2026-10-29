@@ -1,0 +1,63 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 21:36:07 +0800
+Subject: [PATCH] dt-bindings: regulator: apple,pmic-touch-regulator: Add Angel
+ analog supply
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The Angel PMIC (D2365) of the iPad 5 switches the analog supply of the
+N1 touchscreen controller (ADT function pmuL(0x21f)). Add a compatible
+for it and allow a regulator-touch-analog child on the PMIC.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux 28c4b7e3 (J71t ledger 8.8); his
+ apple,d2365-touch-analog node had its own driver and a reg property
+ holding the PMIC register. It becomes a compatible of Paul Praschl's
+ PMIC touch regulator binding, where the register is driver match data.]
+[Orchard: adapted to main's T7000 and N61 support when moved after it]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ Documentation/devicetree/bindings/mfd/apple,pmic.yaml        | 2 +-
+ .../bindings/regulator/apple,pmic-touch-regulator.yaml       | 5 +++--
+ 2 files changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/mfd/apple,pmic.yaml b/Documentation/devicetree/bindings/mfd/apple,pmic.yaml
+index 80ad51588..947f83928 100644
+--- a/Documentation/devicetree/bindings/mfd/apple,pmic.yaml
++++ b/Documentation/devicetree/bindings/mfd/apple,pmic.yaml
+@@ -73,7 +73,7 @@ patternProperties:
+   "^nvmem(@[0-9a-f]+)?$":
+     $ref: /schemas/nvmem/apple,pmic-nvmem.yaml
+ 
+-  "^regulator-touch-(core|hv)$":
++  "^regulator-touch-(analog|core|hv)$":
+     $ref: /schemas/regulator/apple,pmic-touch-regulator.yaml
+ 
+ required:
+diff --git a/Documentation/devicetree/bindings/regulator/apple,pmic-touch-regulator.yaml b/Documentation/devicetree/bindings/regulator/apple,pmic-touch-regulator.yaml
+index 11d3f0a9f..ef1cc776f 100644
+--- a/Documentation/devicetree/bindings/regulator/apple,pmic-touch-regulator.yaml
++++ b/Documentation/devicetree/bindings/regulator/apple,pmic-touch-regulator.yaml
+@@ -10,8 +10,8 @@ maintainers:
+   - Paul Praschl <praschlpaul@g-p.at>
+ 
+ description:
+-  Fixed touchscreen supply switches provided by the D2186, Adelyn and Chestnut
+-  PMICs. The compatible identifies both the PMIC and the physical supply;
++  Fixed touchscreen supply switches provided by the D2186, Adelyn, Angel and
++  Chestnut PMICs. The compatible identifies both the PMIC and the physical supply;
+   register layout is an implementation detail of the regulator driver.
+ 
+ allOf:
+@@ -21,6 +21,7 @@ properties:
+   compatible:
+     enum:
+       - apple,adelyn-touch-core-regulator
++      - apple,angel-touch-analog-regulator
+       - apple,chestnut-touch-hv-regulator
+       - apple,d2186-touch-core-regulator
+ 

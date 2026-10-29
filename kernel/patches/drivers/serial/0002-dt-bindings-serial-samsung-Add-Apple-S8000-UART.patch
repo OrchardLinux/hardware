@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 21:27:35 +0800
+Subject: [PATCH] dt-bindings: serial: samsung: Add Apple S8000 UART
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The S8000 (A9) UARTs program UBRDIV with the divisor and the
+oversampling selector like the T8010 ones; the Bluetooth UART of the
+iPad 5 needs that to reach 3 Mbit/s. Add apple,s8000-uart with
+apple,t8010-uart and apple,s5l-uart as fallbacks, so the driver uses
+the existing T8010 data and no driver change is needed.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux 57ff1534 (J71t ledger 6.19); dropped
+ the separate apple,s8000-uart driver match entry and made
+ apple,t8010-uart a fallback compatible instead]
+[Orchard: adapted to main's T7000 and N61 support when moved after it]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ Documentation/devicetree/bindings/serial/samsung_uart.yaml | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/serial/samsung_uart.yaml b/Documentation/devicetree/bindings/serial/samsung_uart.yaml
+index 806b60e21..25f4d6dac 100644
+--- a/Documentation/devicetree/bindings/serial/samsung_uart.yaml
++++ b/Documentation/devicetree/bindings/serial/samsung_uart.yaml
+@@ -32,7 +32,9 @@ properties:
+           - const: apple,t8010-uart
+           - const: apple,s5l-uart
+       - items:
+-          - const: apple,t7000-uart
++          - enum:
++              - apple,s8000-uart
++              - apple,t7000-uart
+           - const: apple,t8010-uart
+           - const: apple,s5l-uart
+       - items:
