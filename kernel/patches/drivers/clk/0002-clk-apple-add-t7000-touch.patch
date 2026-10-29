@@ -1,0 +1,51 @@
+From: Shayne Legault <8741557+shaynelegault@users.noreply.github.com>
+Subject: [PATCH] clk: apple: Add T7000 touch clock
+
+The T7000 touch clock uses the existing PMGR gate and divider operations. Match the T7000 compatible and retain the T8010 operations.
+
+---
+diff --git a/drivers/clk/clk-apple-t8010-touch.c b/drivers/clk/clk-apple-t8010-touch.c
+--- a/drivers/clk/clk-apple-t8010-touch.c
++++ b/drivers/clk/clk-apple-t8010-touch.c
+@@ -1,6 +1,6 @@
+ // SPDX-License-Identifier: GPL-2.0-only OR MIT
+ /*
+- * Apple T8010 touchscreen clock driver
++ * Apple T7000/T8010 touchscreen clock driver
+  *
+  * Copyright (C) Corellium LLC
+  * Copyright (C) Paul Praschl
+@@ -187,6 +187,7 @@
+ }
+ 
+ static const struct of_device_id apple_t8010_touch_clk_of_match[] = {
++	{ .compatible = "apple,t7000-touch-clock" },
+ 	{ .compatible = "apple,t8010-touch-clock" },
+ 	{ }
+ };
+@@ -201,6 +202,6 @@
+ };
+ module_platform_driver(apple_t8010_touch_clk_driver);
+ 
+-MODULE_DESCRIPTION("Apple T8010 touchscreen clock driver");
++MODULE_DESCRIPTION("Apple T7000/T8010 touchscreen clock driver");
+ MODULE_AUTHOR("Paul Praschl");
+ MODULE_LICENSE("Dual MIT/GPL");
+diff --git a/drivers/clk/Kconfig b/drivers/clk/Kconfig
+--- a/drivers/clk/Kconfig
++++ b/drivers/clk/Kconfig
+@@ -67,12 +67,12 @@
+ 	  generators of audio clocks.
+ 
+ config COMMON_CLK_APPLE_T8010_TOUCH
+-	bool "Clock driver for Apple T8010 touchscreens"
++	bool "Clock driver for Apple T7000/T8010 touchscreens"
+ 	depends on ARCH_APPLE || COMPILE_TEST
+ 	default ARCH_APPLE
+ 	help
+ 	  This driver supports the PMGR clock gate and divider used by
+-	  touchscreen controllers on A10/T8010 Apple devices. The clock
++	  touchscreen controllers on A8/T7000 and A10/T8010 Apple devices. The clock
+ 	  is required for firmware upload and runtime touch reports on
+ 	  iPad models using this controller.
+ 

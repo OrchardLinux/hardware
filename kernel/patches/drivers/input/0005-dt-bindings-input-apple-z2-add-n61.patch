@@ -1,0 +1,71 @@
+From: Shayne Legault <8741557+shaynelegault@users.noreply.github.com>
+Subject: [PATCH] dt-bindings: input: apple-z2: Add iPhone 6 touchscreen
+
+Describe N61 supplies, calibration and the touchscreen compatible.
+
+---
+diff --git a/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml b/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml
+index 78c2127..7f048a9 100644
+--- a/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml
++++ b/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml
+@@ -21,6 +21,7 @@ properties:
+       - apple,j172-touchscreen
+       - apple,d11-touchscreen
+       - apple,d111-touchscreen
++      - apple,n61-touchscreen
+ 
+   interrupts:
+     maxItems: 1
+@@ -53,6 +54,14 @@ properties:
+   clocks:
+     maxItems: 1
+ 
++  ana-supply:
++    description: N61 analog touchscreen supply from the Chestnut touch LDO
++
++  apple,z2-prox-cal-blob:
++    $ref: /schemas/types.yaml#/definitions/uint8-array
++    maxItems: 128
++    description: Optional N61 proximity calibration supplied by the bootloader
++
+   apple,z2-bpw16-min-len:
+     $ref: /schemas/types.yaml#/definitions/uint32
+     description:
+@@ -72,7 +81,9 @@ properties:
+     $ref: /schemas/types.yaml#/definitions/uint8-array
+     maxItems: 4096
+     description:
+-      Calibration blob supplied by the bootloader
++      Calibration blob supplied by the bootloader. N61 requires this
++      per-unit data at driver probe; it can be absent from a static DTB
++      before the bootloader adds it.
+ 
+   apple,z2-orb-gap-cal-blob:
+     $ref: /schemas/types.yaml#/definitions/uint8-array
+@@ -184,6 +195,26 @@ allOf:
+         - spi-cpol
+         - apple,z2-no-init-ack
+ 
++  - if:
++      properties:
++        compatible:
++          const: apple,n61-touchscreen
++    then:
++      properties:
++        apple,z2-cal-blob:
++          minItems: 1
++          maxItems: 1024
++        power-ana-gpios: false
++        power-ldo-gpios: false
++        display-sync-gpios: false
++        display-sync1-gpios: false
++        spi-cpha: false
++        spi-cpol: false
++      required:
++        - ana-supply
++        - core-supply
++        - clocks
++
+ unevaluatedProperties: false
+ 
+ examples:

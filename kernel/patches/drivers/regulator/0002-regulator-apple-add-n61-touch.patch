@@ -1,0 +1,83 @@
+From: Shayne Legault <8741557+shaynelegault@users.noreply.github.com>
+Subject: [PATCH] regulator: apple: Add N61 touch supplies
+
+Add D2186 LDO14 and Chestnut LDO2 support for the iPhone 6 touchscreen. Enable the Chestnut boost and Sage dependencies before the touch rail, and preserve those shared display bits when disabling the touch rail.
+
+---
+diff --git a/drivers/regulator/apple-pmic-touch-regulator.c b/drivers/regulator/apple-pmic-touch-regulator.c
+--- a/drivers/regulator/apple-pmic-touch-regulator.c
++++ b/drivers/regulator/apple-pmic-touch-regulator.c
+@@ -17,6 +17,58 @@
+ 	.enable = regulator_enable_regmap,
+ 	.disable = regulator_disable_regmap,
+ 	.is_enabled = regulator_is_enabled_regmap,
++};
++
++static int apple_chestnut_touch_ldo_enable(struct regulator_dev *rdev)
++{
++	struct regmap *regmap = rdev_get_regmap(rdev);
++	int error;
++
++	/* N61 LDO2 needs the shared boost and Sage0 display rails. */
++	error = regmap_update_bits(regmap, 0x05, 0x07, 0x07);
++	if (error)
++		return error;
++	return regulator_enable_regmap(rdev);
++}
++
++static int apple_chestnut_touch_ldo_is_enabled(struct regulator_dev *rdev)
++{
++	unsigned int value;
++	int error;
++
++	error = regmap_read(rdev_get_regmap(rdev), 0x05, &value);
++	if (error)
++		return error;
++	return (value & 0x17) == 0x17;
++}
++
++static const struct regulator_ops apple_chestnut_touch_ldo_ops = {
++	.enable = apple_chestnut_touch_ldo_enable,
++	/* Disable owns only bit 4. Shared display rails remain enabled. */
++	.disable = regulator_disable_regmap,
++	.is_enabled = apple_chestnut_touch_ldo_is_enabled,
++};
++
++static const struct regulator_desc apple_d2186_touch_core = {
++	.name = "d2186-touch-core",
++	.ops = &apple_pmic_touch_regulator_ops,
++	.type = REGULATOR_VOLTAGE,
++	.owner = THIS_MODULE,
++	.enable_reg = 0x85,
++	.enable_mask = 0x02,
++	.enable_val = 0x02,
++	.disable_val = 0,
++};
++
++static const struct regulator_desc apple_chestnut_touch_ldo = {
++	.name = "chestnut-touch-ldo",
++	.ops = &apple_chestnut_touch_ldo_ops,
++	.type = REGULATOR_VOLTAGE,
++	.owner = THIS_MODULE,
++	.enable_reg = 0x05,
++	.enable_mask = 0x10,
++	.enable_val = 0x10,
++	.disable_val = 0,
+ };
+ 
+ static const struct regulator_desc apple_adelyn_touch_core = {
+@@ -73,6 +125,14 @@
+ 
+ static const struct of_device_id apple_pmic_touch_regulator_of_match[] = {
+ 	{
++		.compatible = "apple,d2186-touch-core-regulator",
++		.data = &apple_d2186_touch_core,
++	},
++	{
++		.compatible = "apple,chestnut-touch-ldo-regulator",
++		.data = &apple_chestnut_touch_ldo,
++	},
++	{
+ 		.compatible = "apple,adelyn-touch-core-regulator",
+ 		.data = &apple_adelyn_touch_core,
+ 	},
