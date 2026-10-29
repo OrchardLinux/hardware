@@ -1,0 +1,62 @@
+From: Shayne Legault <8741557+shaynelegault@users.noreply.github.com>
+Subject: [PATCH] arm64: dts: apple: Describe N61 SPI2
+
+Describe the T7000 SPI2 register range, interrupt, power domain and clock. Enable the bus and GPIO chip select for N61. The bus remains disabled on other T7000 boards.
+
+The values agree with the public N61 ADT reference at https://github.com/SoMainline/adt_collection/blob/768d800c46140c9ba39a372d097fa49f7197a66d/a8/n61.adt.
+
+---
+diff --git a/arch/arm64/boot/dts/apple/t7000.dtsi b/arch/arm64/boot/dts/apple/t7000.dtsi
+--- a/arch/arm64/boot/dts/apple/t7000.dtsi
++++ b/arch/arm64/boot/dts/apple/t7000.dtsi
+@@ -24,6 +24,14 @@
+ 		#clock-cells = <0>;
+ 		clock-frequency = <24000000>;
+ 		clock-output-names = "clkref";
++	};
++
++	spi2_clk: clock-spi2 {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++		/* ADT clock ID 0x12e: clock-frequencies[46]. */
++		clock-frequency = <60000000>;
++		clock-output-names = "spi2";
+ 	};
+ 
+ 	cpus {
+@@ -201,6 +209,18 @@
+ 			status = "disabled";
+ 		};
+ 
++		spi2: spi@20a088000 {
++			compatible = "apple,t7000-spi", "apple,spi";
++			reg = <0x2 0x0a088000 0x0 0x4000>;
++			interrupt-parent = <&aic>;
++			interrupts = <AIC_IRQ 154 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&spi2_clk>;
++			power-domains = <&ps_spi2>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			status = "disabled";
++		};
++
+ 		bus@20c000000 {
+ 			compatible = "apple,t7000-usb-complex", "apple,s5l8960x-usb-complex", "simple-pm-bus";
+ 			#address-cells = <2>;
+diff --git a/arch/arm64/boot/dts/apple/t7000-n61.dts b/arch/arm64/boot/dts/apple/t7000-n61.dts
+--- a/arch/arm64/boot/dts/apple/t7000-n61.dts
++++ b/arch/arm64/boot/dts/apple/t7000-n61.dts
+@@ -11,4 +11,13 @@
+ / {
+ 	compatible = "apple,n61", "apple,t7000", "apple,arm-platform";
+ 	model = "Apple iPhone 6";
++
++	aliases {
++		spi2 = &spi2;
++	};
+ };
++
++&spi2 {
++	cs-gpios = <&pinctrl 185 GPIO_ACTIVE_LOW>;
++	status = "okay";
++};

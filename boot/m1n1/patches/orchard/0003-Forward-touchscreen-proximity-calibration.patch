@@ -1,0 +1,21 @@
+From: Shayne Legault <8741557+shaynelegault@users.noreply.github.com>
+Subject: [PATCH] kboot: forward proximity calibration for touchscreen aliases
+
+N61 Gen1 firmware optionally uses its per-unit proximity calibration in
+addition to the required multi-touch calibration. Copy it through the
+existing touchscreen0 alias path and keep the same missing/syscfg-reference
+handling as the other calibration providers. The firmware container names
+the property at runtime; no unit-specific bytes enter the shared recipe.
+
+---
+diff --git a/src/kboot.c b/src/kboot.c
+--- a/src/kboot.c
++++ b/src/kboot.c
+@@ -932,6 +932,7 @@
+         {"firefly-p100-calibration", "apple,z2-firefly-p100-cal-blob"},
+         {"ext-multi-touch-calibration", "apple,z2-ext-cal-blob"},
+         {"pressure-effect-correction", "apple,z2-pressure-cal-blob"},
++        {"prox-calibration", "apple,z2-prox-cal-blob"},
+     };
+     const char *path = fdt_get_alias(dt, "touchscreen0");
+     if (path == NULL)

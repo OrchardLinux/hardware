@@ -1,0 +1,80 @@
+From: Shayne Legault <8741557+shaynelegault@users.noreply.github.com>
+Subject: [PATCH] arm64: dts: apple: Wire N61 touch power and clock
+
+Describe the PMGR touch clock, N61 touch supplies and touchscreen child. The loader supplies per-unit calibration through the touchscreen alias.
+
+---
+diff --git a/arch/arm64/boot/dts/apple/t7000-pmgr.dtsi b/arch/arm64/boot/dts/apple/t7000-pmgr.dtsi
+--- a/arch/arm64/boot/dts/apple/t7000-pmgr.dtsi
++++ b/arch/arm64/boot/dts/apple/t7000-pmgr.dtsi
+@@ -5,6 +5,16 @@
+  * Copyright (c) 2024, Nick Chan <towinchenmi@gmail.com>
+  */
+ &pmgr {
++	touchclk: clock-controller@1e000 {
++		compatible = "apple,t7000-touch-clock";
++		reg = <0x1e000 0x4>;
++		#clock-cells = <0>;
++		clocks = <&clkref>;
++		clock-output-names = "touchclk";
++		clock-frequency = <32768>;
++		status = "disabled";
++	};
++
+ 	ps_cpu0: power-controller@20000 {
+ 		compatible = "apple,t7000-pmgr-pwrstate", "apple,pmgr-pwrstate";
+ 		reg = <0x20000 4>;
+diff --git a/arch/arm64/boot/dts/apple/t7000-n61.dts b/arch/arm64/boot/dts/apple/t7000-n61.dts
+--- a/arch/arm64/boot/dts/apple/t7000-n61.dts
++++ b/arch/arm64/boot/dts/apple/t7000-n61.dts
+@@ -14,10 +14,50 @@
+ 
+ 	aliases {
+ 		spi2 = &spi2;
++		touchscreen0 = &touchscreen;
+ 	};
+ };
+ 
+ &spi2 {
+ 	cs-gpios = <&pinctrl 185 GPIO_ACTIVE_LOW>;
+ 	status = "okay";
++
++	touchscreen: touchscreen@0 {
++		compatible = "apple,n61-touchscreen";
++		reg = <0>;
++		spi-max-frequency = <500000>;
++		interrupts-extended = <&pinctrl 3 IRQ_TYPE_EDGE_FALLING>;
++		reset-gpios = <&pinctrl 2 GPIO_ACTIVE_LOW>;
++		ana-supply = <&touch_ana>;
++		core-supply = <&touch_core>;
++		clocks = <&touchclk>;
++		firmware-name = "apple/n61-fwstart.z2fw";
++		touchscreen-size-x = <750>;
++		touchscreen-size-y = <1334>;
++		/* Physical taps and swipes passed the experimental N61 NFS boot. */
++		status = "okay";
++	};
+ };
++
++&touchclk {
++	status = "okay";
++};
++
++&i2c0 {
++	pmic@74 {
++		touch_core: regulator-touch-core {
++			compatible = "apple,d2186-touch-core-regulator";
++			regulator-name = "n61-touch-core";
++		};
++	};
++
++	display-pmu@27 {
++		compatible = "apple,chestnut-pmic";
++		reg = <0x27>;
++
++		touch_ana: regulator-touch-ana {
++			compatible = "apple,chestnut-touch-ldo-regulator";
++			regulator-name = "n61-touch-ana";
++		};
++	};
++};
