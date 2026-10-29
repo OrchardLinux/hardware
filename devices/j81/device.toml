@@ -35,23 +35,24 @@ status = "experimental"
 caveats = [
   "RAM boot only: the internal storage is not supported yet.",
   "Wi-Fi module rieslinga (BCM4350).",
-  "Not yet run on Orchard's stack. Wi-Fi, the battery gauge, USB, the display and the buttons were validated in Martin Puškáč's port.",
+  "Validated with the pinned Hoolock Pongo prebuilt; the locally built quiet Pongo did not enumerate on this J81.",
+  "J81 RAM hardware checks passed on Orchard 7.3.0-rc1 on 2026-10-29; see docs/integration/j81.md.",
 ]
-wifi = false # True once Wi-Fi is validated on Orchard's stack.
+wifi = true # Scan, association, DHCP and gateway ping verified on J81.
 usb_serial = true
 usb_network = true
 
 # States: working, partial, untested, missing, none (features.toml).
 [features]
-display = "untested"
+display = "working"
 touch = "missing"
-wifi = "untested"
+wifi = "working"
 bluetooth = "missing"
 storage = "missing"
-battery = "untested"
+battery = "working"
 charging = "missing"
-backlight = "untested"
-buttons = "untested"
+backlight = "working"
+buttons = "working"
 audio = "missing"
 camera = "missing"
 cellular = "none"
