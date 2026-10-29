@@ -6,5 +6,17 @@
   "dropbear": {
     "url": "https://dropbear.nl/mirror/releases/dropbear-2026.94.tar.bz2",
     "sha256": "e098034a843699200c8c977a991fff73159735bf795d5f72ef672c41a6b1ae81"
+  },
+  "libnl": {
+    "url": "https://github.com/thom311/libnl/releases/download/libnl3_11_0/libnl-3.11.0.tar.gz",
+    "sha256": "2a56e1edefa3e68a7c00879496736fdbf62fc94ed3232c0baba127ecfa76874d"
+  },
+  "wpa_supplicant": {
+    "url": "https://w1.fi/releases/wpa_supplicant-2.11.tar.gz",
+    "sha256": "912ea06f74e30a8e36fbb68064d6cdff218d8d591db0fc5d75dee6c81ac7fc0a"
+  },
+  "iw": {
+    "url": "https://www.kernel.org/pub/software/network/iw/iw-6.9.tar.xz",
+    "sha256": "3f2db22ad41c675242b98ae3942dbf3112548c60a42ff739210f2de4e98e4894"
   }
 }

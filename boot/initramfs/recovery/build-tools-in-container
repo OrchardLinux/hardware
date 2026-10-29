@@ -3,16 +3,71 @@ set -euo pipefail
 work=${ORCHARD_WORK:-/work}
 [[ ! -e "$work/bin" ]] || { echo 'Tool output exists; choose a fresh work directory' >&2; exit 1; }
 build=$(mktemp -d "$work/build.XXXXXX")
-tar -xjf "$work/dropbear.tar.bz2" -C "$build"
-cd "$build/dropbear-2026.94"
-# Static musl avoids the installed system's NSS/libc ABI.
-printf '%s\n' '#define DROPBEAR_SVR_PASSWORD_AUTH 0' '#define DROPBEAR_SVR_PAM_AUTH 0' > localoptions.h
-CC=musl-gcc ./configure --enable-static --disable-zlib
-make -j2 PROGRAMS='dropbear dropbearkey'
-dpkg-deb -x "$work/busybox.deb" "$build/package"
 mkdir "$build/bin"
+
+# Static musl avoids the installed system's NSS/libc ABI.
+export CC=musl-gcc
+# musl-gcc searches no glibc headers; give it the kernel UAPI headers only.
+kernel_headers="$build/kernel-headers"
+mkdir "$kernel_headers"
+ln -s /usr/include/linux /usr/include/asm-generic "$kernel_headers/"
+ln -s "/usr/include/$(gcc -dumpmachine)/asm" "$kernel_headers/asm"
+export CFLAGS="-Os -isystem $kernel_headers"
+
+tar -xjf "$work/dropbear.tar.bz2" -C "$build"
+(
+  cd "$build/dropbear-2026.94"
+  printf '%s\n' '#define DROPBEAR_SVR_PASSWORD_AUTH 0' '#define DROPBEAR_SVR_PAM_AUTH 0' > localoptions.h
+  ./configure --enable-static --disable-zlib
+  make -j2 PROGRAMS='dropbear dropbearkey'
+  cp dropbear dropbearkey "$build/bin/"
+)
+
+# Wi-Fi: libnl for the nl80211 interface, then wpa_supplicant (WPA2-PSK with
+# its internal crypto, no OpenSSL) and iw, all linked statically.
+libnl="$build/libnl"
+tar -xzf "$work/libnl.tar.gz" -C "$build"
+(
+  cd "$build/libnl-3.11.0"
+  ./configure --prefix="$libnl" --enable-static --disable-shared --disable-cli --disable-debug
+  make -j2
+  make install
+)
+export PKG_CONFIG_PATH="$libnl/lib/pkgconfig"
+
+tar -xzf "$work/wpa_supplicant.tar.gz" -C "$build"
+(
+  cd "$build/wpa_supplicant-2.11/wpa_supplicant"
+  cat > .config <<'CONFIG'
+CONFIG_DRIVER_NL80211=y
+CONFIG_LIBNL32=y
+CONFIG_TLS=internal
+CONFIG_INTERNAL_LIBTOMMATH=y
+CONFIG_CTRL_IFACE=y
+CONFIG_BACKEND=file
+CONFIG_NO_CONFIG_WRITE=y
+CONFIG_SME=y
+CONFIG_IEEE80211W=y
+CONFIG_IEEE80211N=y
+CONFIG_IEEE80211AC=y
+CONFIG
+  make -j2 EXTRA_CFLAGS="$CFLAGS -I$libnl/include/libnl3" LDFLAGS="-static -L$libnl/lib" \
+    wpa_supplicant wpa_cli
+  cp wpa_supplicant wpa_cli "$build/bin/"
+)
+
+tar -xJf "$work/iw.tar.xz" -C "$build"
+(
+  cd "$build/iw-6.9"
+  make -j2 LDFLAGS=-static
+  cp iw "$build/bin/"
+)
+
+dpkg-deb -x "$work/busybox.deb" "$build/package"
 cp "$build/package/bin/busybox" "$build/bin/busybox"
-cp dropbear dropbearkey "$build/bin/"
-chmod 755 "$build/bin/busybox" "$build/bin/dropbear" "$build/bin/dropbearkey"
+chmod 755 "$build/bin/"*
+for tool in "$build/bin/"*; do
+  file "$tool" | grep -q 'statically linked' || { echo "$tool is not static" >&2; exit 1; }
+done
 mv "$build/bin" "$work/bin"
 echo "Static recovery tools copied to $work/bin"
