@@ -34,9 +34,20 @@ try:
             log(f'  part {i + 1}: {uuid.UUID(bytes_le=e[:16])} {first}-{last} '
                 f'"{e[56:128].decode("utf-16-le", "replace").rstrip(chr(0))}"')
     started = time.monotonic()
-    for lba in range(16, 16 + 256):
-        block(lba)
+    single = b''.join(block(lba) for lba in range(16, 16 + 256))
     log(f'256 single-block reads in {time.monotonic() - started:.2f} s')
+    # Multi-block read (orchard patch 0003): the block count rides in the
+    # third argument of MAIN_STORAGE_READ; older loaders ignore it.
+    big = u.memalign(0x4000, 256 * 4096)
+    started = time.monotonic()
+    if p.request(p.P_MAIN_STORAGE_READ, 16, big, 256):
+        multi = iface.readmem(big, 256 * 4096)
+        log(f'one 256-block read in {time.monotonic() - started:.3f} s, '
+            f'{"identical" if multi == single else "DIFFERENT"} to the single reads')
+        if multi != single:
+            raise SystemExit('RESULT FAIL: multi-block read differs')
+    else:
+        log('multi-block read refused (loader without patch 0003?)')
     print(f'RESULT PASS {guid}', flush=True)
 finally:
     p.main_storage_shutdown()

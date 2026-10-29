@@ -1,0 +1,205 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <89942958+henrikklee@users.noreply.github.com>
+Date: Thu, 29 Oct 2026 20:05:45 +0800
+Subject: [PATCH] storage: Read many blocks per command on A9 and A10
+
+main_storage_read() moves one 4 KiB block per call, which over the USB
+proxy is one round trip per block: about 15000 for a kernel and
+initramfs. Add main_storage_read_blocks(): the apcie backend reads up to
+256 contiguous blocks (1 MiB, one NVMMU FlatDMA slot) per NVMe command,
+bounded by the controller's MDTS from Identify; other backends read
+block by block. The proxy's MAIN_STORAGE_READ takes the block count in
+its third argument, so the op numbering stays upstream's and older hosts
+(count 0) still read one block.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/apcie_nvme.c | 48 +++++++++++++++++++++++++++++++++++-------------
+ src/apcie_nvme.h |  2 ++
+ src/proxy.c      |  7 ++++++-
+ src/utils.c      | 18 ++++++++++++++++++
+ src/utils.h      |  1 +
+ 5 files changed, 62 insertions(+), 14 deletions(-)
+
+diff --git a/src/apcie_nvme.c b/src/apcie_nvme.c
+index eb6d743..c059c42 100644
+--- a/src/apcie_nvme.c
++++ b/src/apcie_nvme.c
+@@ -296,6 +296,7 @@ static struct queue adminq, ioq;
+ static void *identify_buf;
+ static bool powered, link_up, controller_on, initialized;
+ static const struct apcie_soc *soc;
++static u32 max_blocks;
+ 
+ static int t8010_setup_link(void);
+ 
+@@ -798,14 +799,15 @@ static int setup_nvmmu(void)
+ }
+ 
+ /* Page count last: a non-zero count is what makes the TCB valid. */
+-static u64 tcb_map(u32 tag, void *buf, bool to_memory)
++static u64 tcb_map(u32 tag, void *buf, u32 npages, bool to_memory)
+ {
+     u32 *tcb = tcbs + tag * (NVMMU_TCB_BYTES / 4);
+     u32 *sgl = sgls + tag * NVMMU_MAX_PAGES;
+     u64 sgl_addr = (u64)sgl;
+ 
+-    sgl[0] = (u64)buf >> 12;
+-    dc_civac_range(sgl, sizeof(u32));
++    for (u32 i = 0; i < npages; i++)
++        sgl[i] = ((u64)buf >> 12) + i;
++    dc_civac_range(sgl, npages * sizeof(u32));
+     memset(tcb, 0, NVMMU_TCB_BYTES);
+     tcb[0] = to_memory ? NVMMU_TCB_WRITE : NVMMU_TCB_READ;
+     tcb[2] = (u64)buf >> 12;
+@@ -813,7 +815,7 @@ static u64 tcb_map(u32 tag, void *buf, bool to_memory)
+     tcb[5] = sgl_addr >> 32;
+     dc_civac_range(tcb, NVMMU_TCB_BYTES);
+     dma_wmb();
+-    tcb[1] = 1;
++    tcb[1] = npages;
+     dc_civac_range(tcb, NVMMU_TCB_BYTES);
+     return FLATDMA_BASE + tag * FLATDMA_STRIDE;
+ }
+@@ -938,14 +940,14 @@ static bool submit(struct queue *q, struct nvme_sqe *cmd)
+     return true;
+ }
+ 
+-static bool flatdma_read_cmd(struct queue *q, struct nvme_sqe *cmd, u32 tag, void *buf)
++static bool flatdma_read_cmd(struct queue *q, struct nvme_sqe *cmd, u32 tag, void *buf, u32 npages)
+ {
+-    dc_civac_range(buf, SZ_4K);
++    dc_civac_range(buf, npages * SZ_4K);
+     cmd->flags = NVME_FLAG_FLATDMA;
+-    cmd->prp1 = tcb_map(tag, buf, true);
++    cmd->prp1 = tcb_map(tag, buf, npages, true);
+     bool ok = submit(q, cmd);
+     tcb_retire(tag);
+-    dc_civac_range(buf, SZ_4K);
++    dc_civac_range(buf, npages * SZ_4K);
+     return ok;
+ }
+ 
+@@ -1005,9 +1007,18 @@ static int create_io_queues(void)
+ 
+     struct nvme_sqe cmd = {0};
+     cmd.opcode = NVME_ADMIN_IDENTIFY;
++    cmd.cdw10 = 1; /* controller */
++    if (!flatdma_read_cmd(&adminq, &cmd, TAG_IDENTIFY, identify_buf, 1))
++        return -1;
++    /* MDTS is a power of two in units of the 4 KiB memory page; 0 is no limit */
++    u8 mdts = ((const u8 *)identify_buf)[77];
++    max_blocks = mdts && mdts < 8 ? 1U << mdts : NVMMU_MAX_PAGES;
++
++    memset(&cmd, 0, sizeof(cmd));
++    cmd.opcode = NVME_ADMIN_IDENTIFY;
+     cmd.nsid = 1;
+     cmd.cdw10 = 0; /* namespace */
+-    if (!flatdma_read_cmd(&adminq, &cmd, TAG_IDENTIFY, identify_buf))
++    if (!flatdma_read_cmd(&adminq, &cmd, TAG_IDENTIFY, identify_buf, 1))
+         return -1;
+     const u8 *ns = identify_buf;
+     u8 lbads = ns[128 + 4 * (ns[26] & 0xf) + 2];
+@@ -1147,9 +1158,15 @@ bool apcie_nvme_init(void)
+     return true;
+ }
+ 
+-bool apcie_nvme_read(u64 lba, void *buffer)
++u32 apcie_nvme_max_blocks(void)
++{
++    return initialized ? max_blocks : 0;
++}
++
++/* count contiguous 4 KiB blocks into a contiguous buffer, one command */
++bool apcie_nvme_read_blocks(u64 lba, u32 count, void *buffer)
+ {
+-    if (!initialized || ((u64)buffer & (SZ_4K - 1)))
++    if (!initialized || ((u64)buffer & (SZ_4K - 1)) || !count || count > max_blocks)
+         return false;
+ 
+     struct nvme_sqe cmd = {0};
+@@ -1157,6 +1174,11 @@ bool apcie_nvme_read(u64 lba, void *buffer)
+     cmd.nsid = 1;
+     cmd.cdw10 = lba;
+     cmd.cdw11 = lba >> 32;
+-    cmd.cdw12 = 0; /* one 4 KiB block */
+-    return flatdma_read_cmd(&ioq, &cmd, TAG_READ, buffer);
++    cmd.cdw12 = count - 1;
++    return flatdma_read_cmd(&ioq, &cmd, TAG_READ, buffer, count);
++}
++
++bool apcie_nvme_read(u64 lba, void *buffer)
++{
++    return apcie_nvme_read_blocks(lba, 1, buffer);
+ }
+diff --git a/src/apcie_nvme.h b/src/apcie_nvme.h
+index 6d3a3ff..92ef41a 100644
+--- a/src/apcie_nvme.h
++++ b/src/apcie_nvme.h
+@@ -7,5 +7,7 @@
+ bool apcie_nvme_init(void);
+ void apcie_nvme_shutdown(void);
+ bool apcie_nvme_read(u64 lba, void *buffer);
++bool apcie_nvme_read_blocks(u64 lba, u32 count, void *buffer);
++u32 apcie_nvme_max_blocks(void);
+ 
+ #endif
+diff --git a/src/proxy.c b/src/proxy.c
+index 17e992c..82936e1 100644
+--- a/src/proxy.c
++++ b/src/proxy.c
+@@ -616,7 +616,12 @@ int proxy_process(ProxyRequest *request, ProxyReply *reply)
+             main_storage_shutdown();
+             break;
+         case P_MAIN_STORAGE_READ:
+-            reply->retval = main_storage_read(request->args[0], (void *)request->args[1]);
++            /* args[2]: block count; 0 (older hosts) reads one block */
++            if (request->args[2] > 1)
++                reply->retval = main_storage_read_blocks(request->args[0], request->args[2],
++                                                         (void *)request->args[1]);
++            else
++                reply->retval = main_storage_read(request->args[0], (void *)request->args[1]);
+             break;
+         case P_MAIN_STORAGE_FLUSH:
+             reply->retval = main_storage_flush();
+diff --git a/src/utils.c b/src/utils.c
+index 5def0d2..22c5b12 100644
+--- a/src/utils.c
++++ b/src/utils.c
+@@ -344,6 +344,24 @@ bool main_storage_read(u64 lba, u64 *bfr)
+     }
+ }
+ 
++/* count contiguous blocks; one command per chunk where the backend can */
++bool main_storage_read_blocks(u64 lba, u32 count, void *bfr)
++{
++    u32 chunk = storage_type == STORAGE_TYPE_APCIE ? apcie_nvme_max_blocks() : 1;
++    u8 *out = bfr;
++
++    while (count) {
++        u32 n = count < chunk ? count : chunk;
++        bool ok = n > 1 ? apcie_nvme_read_blocks(lba, n, out) : main_storage_read(lba, (u64 *)out);
++        if (!ok)
++            return false;
++        lba += n;
++        out += (u64)n * SZ_4K;
++        count -= n;
++    }
++    return true;
++}
++
+ void main_storage_shutdown(void)
+ {
+     if (!storage_type)
+diff --git a/src/utils.h b/src/utils.h
+index 429db16..9a11918 100644
+--- a/src/utils.h
++++ b/src/utils.h
+@@ -531,6 +531,7 @@ u64 top_of_memory_alloc(size_t size);
+ 
+ bool main_storage_init(void);
+ bool main_storage_read(u64 lba, u64 *bfr);
++bool main_storage_read_blocks(u64 lba, u32 count, void *bfr);
+ void main_storage_shutdown(void);
+ bool main_storage_flush(void);
+ #endif
