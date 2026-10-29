@@ -25,7 +25,8 @@ def prepare(root, output):
     roles = {'loader': 'quiet/m1n1.bin', 'pongo': 'quiet/pongo.bin',
              'kernel': 'kernel/Image.gz', 'dtb': 'kernel/j71b.dtb',
              'kernel_release': 'kernel/kernel.release', 'busybox': 'boot/busybox',
-             'dropbear': 'boot/dropbear', 'dropbearkey': 'boot/dropbearkey'}
+             'dropbear': 'boot/dropbear', 'dropbearkey': 'boot/dropbearkey',
+             'wpa_supplicant': 'boot/wpa_supplicant', 'wpa_cli': 'boot/wpa_cli', 'iw': 'boot/iw'}
     files = {role: {'path': str((root / name).resolve()), **inventory['files'][name]}
              for role, name in roles.items()}
     modules = root / 'kernel/lib/modules'

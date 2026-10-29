@@ -24,7 +24,8 @@ class ComponentBundle(unittest.TestCase):
     def fixtures(self, root):
         for name in ('kernel/Image.gz', 'kernel/j71b.dtb', 'kernel/kernel.release',
                      'kernel/lib/modules/test/extra/test.ko', 'boot/busybox',
-                     'boot/dropbear', 'boot/dropbearkey', 'quiet/m1n1.bin', 'quiet/pongo.bin'):
+                     'boot/dropbear', 'boot/dropbearkey', 'boot/wpa_supplicant', 'boot/wpa_cli',
+                     'boot/iw', 'quiet/m1n1.bin', 'quiet/pongo.bin'):
             path = root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(name.encode())

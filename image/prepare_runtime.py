@@ -117,7 +117,8 @@ def stage_runtime(base, receipt, root):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ('busybox', 'dropbear', 'dropbearkey', 'base', 'base-receipt', 'modules-dir', 'policy-dir', 'output'):
+    for name in ('busybox', 'dropbear', 'dropbearkey', 'wpa-supplicant', 'wpa-cli', 'iw',
+                 'base', 'base-receipt', 'modules-dir', 'policy-dir', 'output'):
         parser.add_argument('--' + name, type=Path, required=True)
     purpose = parser.add_mutually_exclusive_group(required=True)
     purpose.add_argument('--root-receipt', type=Path)
@@ -140,7 +141,9 @@ def main():
         (root / name).mkdir(parents=True, exist_ok=True)
     (root / 'lib').symlink_to('usr/lib')
     for source, name in ((args.busybox, 'bin/busybox'), (args.dropbear, 'usr/sbin/dropbear'),
-                         (args.dropbearkey, 'usr/bin/dropbearkey')):
+                         (args.dropbearkey, 'usr/bin/dropbearkey'),
+                         (args.wpa_supplicant, 'usr/sbin/wpa_supplicant'),
+                         (args.wpa_cli, 'usr/bin/wpa_cli'), (args.iw, 'usr/sbin/iw')):
         copy(source, root / name, 0o755)
     stage_runtime(args.base, args.base_receipt, root)
     kernel_release, public = runtime_files(args.modules_dir, args.policy_dir)
