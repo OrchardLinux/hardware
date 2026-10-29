@@ -27,6 +27,8 @@ uses must hand its device over warm. On A9, Berkay Kösebay's kexec work shows
 the storage link failing to retrain after a hand-over (`POLL_COMPLIANCE`) in some
 boots. A10 and A11 have no EL3, so his PSCI-based CPU hand-over cannot apply there.
 
+The on-disk layout is the [boot contract](../../boot-contract.md).
+
 ## What m1n1 already has
 
 `boot/m1n1` builds Asahi m1n1 with Hoolock (Nick Chan) and Orchard patch layers.
