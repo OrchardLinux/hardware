@@ -11,6 +11,7 @@ diag configuration from the ADT, and the PCIe root complex with its MSI
 range and power domains.
 
 [Orchard: from mattonik/ipad-nixos b94d42f kernel/patches/0005-t7001-add-uart5-node.patch, 0016-pcie-apple-t7000-compile-only-skeleton.patch, 0090-t7001-air2-pcie-dart-options-and-wifi-node.patch, handed to Orchard by micro23 (ipadair2-omarchy 7ea2b2b); the DART takes the five-cell window binding and 0x2000 of registers (the ADT range covers the port 1 window), the reflector as an address, PCIe the H9P binding with all three power domains; UART3 and SPI3 stay out until Bluetooth and touch.]
+Signed-off-by: Martin Puškáč <martin@icebear.sk>
 Co-developed-by: Henrik Klee <henrik@goat-code.com>
 Signed-off-by: Henrik Klee <henrik@goat-code.com>
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

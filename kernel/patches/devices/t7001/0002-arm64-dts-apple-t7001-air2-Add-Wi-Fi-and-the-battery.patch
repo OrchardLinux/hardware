@@ -12,6 +12,7 @@ J82 (ADT module-instance). m1n1 fills the MAC address through the wifi0
 alias.
 
 [Orchard: from mattonik/ipad-nixos b94d42f kernel/patches/0006-t7001-air2-enable-uart5-battery.patch, 0052-pcie-apple-t7000-j81-reg-on.patch, 0090-t7001-air2-pcie-dart-options-and-wifi-node.patch, handed to Orchard by micro23 (ipadair2-omarchy 7ea2b2b); REG_ON as a regulator on the D2207 GPIO instead of a PMIC register write from the PCIe driver, device-wake on the endpoint for pwrctrl, the gauge on the w1 HDQ master, no zero MAC placeholder.]
+Signed-off-by: Martin Puškáč <martin@icebear.sk>
 Co-developed-by: Henrik Klee <henrik@goat-code.com>
 Signed-off-by: Henrik Klee <henrik@goat-code.com>
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
