@@ -15,8 +15,8 @@ SHA256 = re.compile(r'^[0-9a-f]{64}$')
 # profile: (Apple product, BDID from the IPSW BuildManifest ApBoardID, IPSW build)
 BOARDS = {
     'j72b': ('iPad7,6', 0x1a, '21H461'),
-    'j171': ('iPad7,11', 0x1c, '22H384'),
-    'j172': ('iPad7,12', 0x1e, '22H384'),
+    'j171': ('iPad7,11', 0x1c, '21H16'),   # iPadOS 17.7: 18.x encrypts its rootfs
+    'j172': ('iPad7,12', 0x1e, '21H16'),
     'd10': ('iPhone9,1', 0x08, '19H422'),
     'd101': ('iPhone9,3', 0x0c, '19H422'),
     'd11': ('iPhone9,2', 0x0a, '19H422'),
