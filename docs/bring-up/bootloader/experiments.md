@@ -118,9 +118,14 @@ Pass: BL-00's kernel boots from the boot partition instead of the host.
 
 ## Per-device menu
 
-| Device | SoC | Storage in m1n1 | Run |
+Every device runs [bl04_generic.py](bl04_generic.py) once during bring-up: it uses only
+m1n1's generic `main_storage_*` proxy calls, as the Orchard CLI does, then
+boots Linux and checks NVMe (BL-03).
+
+| Devices | SoC | m1n1 storage backend (match) | State |
 |---|---|---|---|
-| iPad 6 (J71b), iPad 7 (J171/J172), iPhone 7 (D10/D11, D101/D111) | T8010 | Missing | BL-00 → BL-04 |
-| iPad 5 (J71t and others) | S8003/S8000 | Missing | BL-00, then BL-01 with S8003 match data |
-| iPad Air 2 (J81/J82) | T7001 | Exists (ANS1; *inferred*: m1n1 names only A9/A9X/A10/A10X as unsupported) | BL-00, then `main_storage` read of LBA 1 directly |
-| A11 devices | T8015 | Exists | BL-00, then `main_storage` read of LBA 1 directly |
+| iPad 6 J71b/J72b, iPad 7 J171/J172, iPhone 7 D10/D11/D101/D111 | T8010 | Orchard `apcie_nvme` (`apcie,t8010`) | J71b: Python sequence passed BL-02/03; C backend pending BL-04. Others: inferred from the same SoC and ADT-driven setup |
+| iPad 5 J71t/J72t | S8003 (TSMC) | Orchard `apcie_nvme` (`apcie,s8003`) | Ported from the integrated Linux S8003 code (Berkay Kösebay). Untested |
+| iPad 5 J71s/J72s | S8000 (Samsung) | None yet | Its root complex differs (no phy-ip) and has no Linux description either |
+| iPad Air 2 J81/J82 | T7001 | Hoolock `ans1` (`iop,s5l8960x` on `/arm-io/ans`) | Hoolock states A7/A8/A8X. Not checked against a J81 ADT; Linux storage on the Air 2 is still missing |
+| A11 devices | T8015 | Hoolock `nvme` (`iop-ans2,t8015`) | Untested by Orchard |

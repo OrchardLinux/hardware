@@ -1,0 +1,1308 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <89942958+henrikklee@users.noreply.github.com>
+Date: Thu, 29 Oct 2026 17:45:51 +0800
+Subject: [PATCH] storage: Add read-only NVMe for A9 and A10 behind apcie
+
+On A9 and A10, ANS is an NVMe endpoint behind the apcie (H8P/H9P) PCIe
+root complex and the ADT has no /arm-io/ans, so main_storage_init()
+reported storage as unsupported. Add a backend for apcie,t8010 and
+apcie,s8003: power apcie, set up the root complex and port 0, the NVMMU
+with its SART aperture onto the ADT host memory buffer, the queues behind
+dart-apcie0 and data through NVMMU FlatDMA, following Linux's
+pcie-apple-h9p.c and pci-apple-ans.c. Registers, pins and the HMB come
+from the ADT; the SoC differences (common init, port 0 power cycle and
+link start, NVMMU invalidate FIFO, L1SS value, GPIO function) are per-SoC
+data. S8000 (A9, Samsung) has a different root complex and isn't covered.
+
+The backend has no write path. Shutdown stops the controller the way
+iBoot does, then clears and masks the port interrupt before taking the
+port down and powering apcie off. A pending link event left in the port
+interrupt status makes Linux's port interrupt storm.
+
+chainload_load() now uses the generic main storage functions, like the
+Rust side already does.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ Makefile         |    1 +
+ src/apcie_nvme.c | 1153 ++++++++++++++++++++++++++++++++++++++++++++++
+ src/apcie_nvme.h |   11 +
+ src/chainload.c  |    6 +-
+ src/utils.c      |   18 +-
+ 5 files changed, 1185 insertions(+), 4 deletions(-)
+ create mode 100644 src/apcie_nvme.c
+ create mode 100644 src/apcie_nvme.h
+
+diff --git a/Makefile b/Makefile
+index 4c02f7b..6f51220 100644
+--- a/Makefile
++++ b/Makefile
+@@ -129,6 +129,7 @@ OBJECTS := \
+ 	aic.o \
+ 	akf.o akf_fw.o \
+ 	ans1.o \
++	apcie_nvme.o \
+ 	asc.o \
+ 	bootlogo_48.o bootlogo_128.o bootlogo_256.o \
+ 	chainload.o \
+diff --git a/src/apcie_nvme.c b/src/apcie_nvme.c
+new file mode 100644
+index 0000000..eaa0f52
+--- /dev/null
++++ b/src/apcie_nvme.c
+@@ -0,0 +1,1153 @@
++/* SPDX-License-Identifier: MIT */
++/*
++ * Read-only NVMe for A9 (S8003) and A10 (T8010), where ANS is an NVMe
++ * endpoint behind the apcie (H8P/H9P) PCIe root complex instead of an
++ * ASC-attached controller.
++ *
++ * The bring-up follows Linux's pcie-apple-h9p.c and pci-apple-ans.c: the
++ * SoC's root complex and port 0 setup, NVMMU with the SART aperture onto
++ * the ADT host memory buffer, queues behind dart-apcie0, data through
++ * NVMMU FlatDMA. The shutdown leaves the port the way Linux expects to find
++ * it after power-on reset: the controller stopped the way iBoot stops it,
++ * the port interrupt cleared and masked, the port down and apcie off.
++ */
++
++#include "adt.h"
++#include "apcie_nvme.h"
++#include "malloc.h"
++#include "memory.h"
++#include "pmgr.h"
++#include "string.h"
++#include "utils.h"
++
++#define APCIE_PATH  "/arm-io/apcie"
++#define BRIDGE_PATH "/arm-io/apcie/pci-bridge0"
++#define DART_PATH   "/arm-io/dart-apcie0"
++#define NVMMU_PATH  "/arm-io/nvme-mmu0"
++#define GPIO_PATH   "/arm-io/gpio"
++
++/* /arm-io/apcie reg indexes */
++#define APCIE_REG_CONFIG 0
++#define APCIE_REG_PORT0  1
++#define APCIE_REG_NVMMU  2
++#define APCIE_REG_RC     9
++#define APCIE_REG_PHY    10
++#define APCIE_REG_PHY_IP 11
++
++#define RC_COMMON_CTL0           0x0004
++#define RC_COMMON_CTL1           0x0014
++#define RC_COMMON_CTL2           0x0024
++#define RC_COMMON_CTL3           0x0034
++#define RC_COMMON_STAT           0x0028
++#define RC_COMMON_STAT_READY     BIT(0)
++#define RC_COMMON_STAT_INIT_DONE BIT(4)
++#define RC_PORT0_CTL0            0x0100
++#define RC_PORT0_CTL1            0x0124
++#define RC_PORT0_CTL2            0x0134
++#define RC_PORT0_LINK_RATE       0x4020
++#define RC_PORT0_PWR             0x0114
++#define LINK_SPEED_8GT           3
++
++#define PHY_PORTMASK 0x000c
++
++#define PORT_LTSSMCTL         0x0080
++#define PORT_IRQSTAT          0x0100
++#define PORT_IRQMASK          0x0104
++#define PORT_IRQMASK_PRE_LINK 0xff002fff
++#define PORT_IRQSTAT_PRE_LINK 0x00ffd000
++#define PORT_IRQMASK_LINK_UP  0xff002f0f
++#define PORT_MSICTL           0x0124
++#define PORT_MSICTL_INIT      0x31
++#define PORT_MSIVECBASE       0x0128
++#define PORT_ENABLE           0x0140
++#define PORT_ENABLE_APPLE     BIT(31)
++#define PORT_LINKSTS          0x0208
++#define PORT_LINKSTS_LTSSM    GENMASK(13, 8)
++#define LTSSM_L0              0x11
++#define LTSSM_L1_IDLE         0x14
++
++#define CFG_PORT_MISC 0x08e0
++
++/* S8003 (A9, TSMC): T8010's register map with iOS's AppleS8003PCIe sequence */
++#define S8003_RC_LANE_CFG         0x0004
++#define S8003_RC_LANE_CFG_INIT    (BIT(4) | 1) /* lanes x2 x1 x1 x1 */
++#define S8003_RC_NVME_MODE0       0x0014
++#define S8003_RC_NVME_MODE1       0x0024
++#define S8003_RC_STAT             0x002c
++#define S8003_RC_STAT_COMMON      BIT(0)
++#define S8003_RC_STAT_PORT        BIT(4)
++#define S8003_RC_COMMON_DONE      0x0038
++#define S8003_RC_PORT_CTL         0x0100
++#define S8003_RC_PORT_CTL_ENABLE  BIT(0)
++#define S8003_RC_PORT_CTL_RESET   BIT(8)
++#define S8003_RC_PORT_PWR         0x0114
++#define S8003_RC_PORT_PWR_ON      BIT(0)
++#define S8003_RC_PORT_PWR_NOGATE  BIT(8)
++#define S8003_RC_PORT_REFCLK      0x0124
++#define S8003_RC_PORT_READY       0x012c
++#define S8003_RC_PORT_LSCNT       0x4020
++#define S8003_PORT_LINKSTS        0x0088
++#define S8003_PORT_PMETO          0x008c
++#define S8003_PORT_LINKPMGRSTS    0x0210
++#define S8003_PORT_NVMMU_INV_FIFO 0x022c
++#define S8003_PORT_LINKCDMSTS     0x0804
++#define S8003_PORT_LTSSM          GENMASK(14, 9)
++#define S8003_PHY_IP_GEN2_CTL     0x10188
++#define S8003_PORT0_LANES         0x3 /* x2 */
++#define S8003_PORT0_SPEED         2   /* 5 GT/s */
++#define S8003_LINK_TRIES          2
++#define LINK_TIMEOUT              (-2)
++#define CFG_BUS_SHIFT 20
++
++#define NVMMU_TCB_CTRL      0x0004
++#define NVMMU_TCB_CTRL_INIT BIT(16)
++#define NVMMU_TCB_CTRL_BUSY BIT(4)
++#define NVMMU_TCB_BASE      0x0008
++#define NVMMU_TCB_TABLE     0x0010
++#define NVMMU_SART_CTRL     0x0020
++#define NVMMU_SART_VA_BASE  0x0024
++#define NVMMU_SART_VA_END   0x0028
++#define NVMMU_SART_PA_BASE  0x002c
++#define NVMMU_TCB_BYTES     0x80
++#define NVMMU_TCB_READ      0x100 /* device reads host memory */
++#define NVMMU_TCB_WRITE     0x200 /* device writes host memory */
++#define NVMMU_MAX_REQS      36
++#define NVMMU_MAX_PAGES     256
++#define NVMMU_IOVA          0xbc000000
++#define FLATDMA_BASE        0x40000000
++#define FLATDMA_STRIDE      0x800000
++
++#define DART_STREAM_COMMAND         0x00
++#define DART_STREAM_COMMAND_INVAL   BIT(1)
++#define DART_STREAM_COMMAND_BUSY    BIT(3)
++#define DART_STREAM_COMMAND_SELECT0 BIT(8)
++#define DART_TCR                    0x0c
++#define DART_TCR_TRANSLATE          0x80
++#define DART_ERROR                  0x10
++#define DART_DIAG_CONFIG            0x20
++#define DART_ERROR_REFLECTOR        0x24
++#define DART_FETCH_CONFIG           0x30
++#define DART_TTBR(idx)              (0x40 + 4 * (idx))
++#define DART_TTBR_VALID             BIT(31)
++#define DART_PTE_VALID              3
++#define QUEUE_IOVA                  0x80010000
++
++/* t8010.dtsi ranges: PCI 0xc0000000 is CPU 0x7c0000000 */
++#define BAR_PCI 0xc0500000UL
++#define BAR_CPU 0x7c0500000UL
++
++#define ANS_REG_INIT         0x1800
++#define ANS_REG_HMB_SIZE_REQ 0x1808
++#define ANS_REG_HMB_BASE     0x1810
++#define ANS_REG_HMB_SIZE     0x1818
++#define ANS_LTR_MAX_LATENCY  0x10081008
++
++#define NVME_CAP          0x00
++#define NVME_CC           0x14
++#define NVME_CC_EN        BIT(0)
++#define NVME_CC_SHN       GENMASK(15, 14)
++#define NVME_CC_SHN_NORM  1
++#define NVME_CC_IO_QES    (6 << 16 | 4 << 20)
++#define NVME_CSTS         0x1c
++#define NVME_CSTS_RDY     BIT(0)
++#define NVME_CSTS_CFS     BIT(1)
++#define NVME_CSTS_SHST    GENMASK(3, 2)
++#define NVME_CSTS_SHST_OK 2
++#define NVME_AQA          0x24
++#define NVME_ASQ          0x28
++#define NVME_ACQ          0x30
++#define NVME_DOORBELL     0x1000
++
++#define NVME_ADMIN_DELETE_SQ 0x00
++#define NVME_ADMIN_CREATE_SQ 0x01
++#define NVME_ADMIN_DELETE_CQ 0x04
++#define NVME_ADMIN_CREATE_CQ 0x05
++#define NVME_ADMIN_IDENTIFY  0x06
++#define NVME_CMD_READ        0x02
++#define NVME_FLAG_FLATDMA    BIT(5)
++
++#define QUEUE_DEPTH     16
++#define TAG_IDENTIFY    0
++#define TAG_READ        1
++#define ENABLE_TIMEOUT  30000000
++#define COMMAND_TIMEOUT 5000000
++
++struct apcie_tunable {
++    u32 offset, mask, value;
++};
++
++static const struct apcie_tunable rc_common_tunables[] = {
++    {0x0008, 0x7f7f7f7f, 0x00000000}, {0x000c, 0x00073f3f, 0x00043f00},
++    {0x0010, 0x00000700, 0x00000000}, {0x0018, 0x00ffffff, 0x000c0960},
++    {0x001c, 0x00001fff, 0x0000092c}, {0x002c, 0x000000ff, 0x00000009},
++    {0x003c, 0x80000000, 0x00000000}, {0x0100, 0x31100010, 0x01000000},
++    {0x0108, 0x00000707, 0x00000000}, {0x010c, 0x00073f3f, 0x00043f00},
++    {0x0110, 0x00000011, 0x00000001}, {0x0114, 0x00000007, 0x00000000},
++    {0x0118, 0x00073f3f, 0x00043f00}, {0x0120, 0x0333003f, 0x0111000f},
++    {0x0130, 0x000000ff, 0x0000000f}, {0x0138, 0x0000007f, 0x0000003e},
++    {0x0180, 0x31100010, 0x01000000}, {0x0188, 0x00000707, 0x00000000},
++    {0x018c, 0x00073f3f, 0x00043f00}, {0x01a0, 0x0333003f, 0x0111000f},
++    {0x01b0, 0x000000ff, 0x0000000f}, {0x01b8, 0x0000007f, 0x0000003e},
++    {0x0200, 0x31100010, 0x01000000}, {0x0208, 0x00000707, 0x00000000},
++    {0x020c, 0x00073f3f, 0x00043f00}, {0x0220, 0x0333003f, 0x0111000f},
++    {0x0230, 0x000000ff, 0x0000000f}, {0x0238, 0x0000007f, 0x0000003e},
++    {0x0280, 0x31100010, 0x01000000}, {0x0288, 0x00000707, 0x00000000},
++    {0x028c, 0x00073f3f, 0x00043f00}, {0x02a0, 0x0333003f, 0x0111000f},
++    {0x02b0, 0x000000ff, 0x0000000f}, {0x02b8, 0x0000007f, 0x0000003e},
++    {0x0100, 0x00000010, 0x00000010}, {0x0180, 0x00000010, 0x00000000},
++    {0x0200, 0x00000010, 0x00000000}, {0x0280, 0x00000010, 0x00000000},
++};
++
++static const struct apcie_tunable config_tunables[] = {
++    {0x0098, 0x0000000f, 0x00000000},
++    {0x0164, 0x00f8ff00, 0x00000000},
++    {0x08e0, 0x00000005, 0x00000005},
++};
++
++static const struct apcie_tunable port_tunables[] = {
++    {0x0090, 0x000000ff, 0x00000028}, {0x0130, 0x0000000d, 0x00000005},
++    {0x0134, 0x00000001, 0x00000001}, {0x0138, 0x00007f7f, 0x00000000},
++    {0x013c, 0x00000002, 0x00000002}, {0x0140, 0x0073ffff, 0x00704c4b},
++};
++
++static const struct apcie_tunable s8003_phy_tunables[] = {
++    {0x0098, 0x0000000f, 0x00000000},
++    {0x0154, 0x00f8ff00, 0x00000000},
++    {0x0000, 0x0000318c, 0x00002108},
++    {0x0004, 0x0000318c, 0x00002108},
++};
++
++static const struct apcie_tunable s8003_rc_common_tunables[] = {
++    {0x0008, 0x7f7f7f7f, 0x00000000}, {0x000c, 0x00073f3f, 0x00043f00},
++    {0x0010, 0x00000700, 0x00000000}, {0x0018, 0x00ffffff, 0x000c0960},
++    {0x001c, 0x00001fff, 0x0000092c}, {0x0028, 0xffffffff, 0x02001000},
++    {0x0030, 0x000000ff, 0x00000009}, {0x0100, 0x31100010, 0x01000010},
++    {0x0104, 0x00000011, 0x00000001}, {0x0108, 0x00000007, 0x00000000},
++    {0x010c, 0x00073f3f, 0x00043f00}, {0x0110, 0x0333003f, 0x0111000f},
++    {0x0120, 0x000000ff, 0x00000040}, {0x0128, 0x0000007f, 0x0000003e},
++    {0x0130, 0x00000707, 0x00000000}, {0x0134, 0x00073f3f, 0x00043f00},
++    {0x0180, 0x31100010, 0x01000000}, {0x0190, 0x0333003f, 0x0111000f},
++    {0x01a0, 0x000000ff, 0x00000040}, {0x01a8, 0x0000007f, 0x0000003e},
++    {0x01b0, 0x00000707, 0x00000000}, {0x01b4, 0x00073f3f, 0x00043f00},
++    {0x0200, 0x31100010, 0x01000000}, {0x0210, 0x0333003f, 0x0111000f},
++    {0x0220, 0x000000ff, 0x00000040}, {0x0228, 0x0000007f, 0x0000003e},
++    {0x0230, 0x00000707, 0x00000000}, {0x0234, 0x00073f3f, 0x00043f00},
++    {0x0280, 0x31100010, 0x01000000}, {0x0290, 0x0333003f, 0x0111000f},
++    {0x02a0, 0x000000ff, 0x00000040}, {0x02a8, 0x0000007f, 0x0000003e},
++    {0x02b0, 0x00000707, 0x00000000}, {0x02b4, 0x00073f3f, 0x00043f00},
++};
++
++static const struct apcie_tunable s8003_config_tunables[] = {
++    {0x0098, 0x0000000f, 0x00000000},
++    {0x0154, 0x00f8ff00, 0x00000000},
++};
++
++static const struct apcie_tunable s8003_port_tunables[] = {
++    {0x0090, 0x000000ff, 0x00000028}, {0x0130, 0x00000005, 0x00000005},
++    {0x0134, 0x00000001, 0x00000001}, {0x0138, 0x00007f7f, 0x00000000},
++    {0x013c, 0x00000003, 0x00000002}, {0x0140, 0x0073ffff, 0x00704c4b},
++};
++
++struct apcie_soc {
++    const char *compatible;
++    int (*setup_common)(void);
++    int (*setup_link)(void);
++    u32 l1ss_ctl1;
++    u32 nvmmu_init_busy;
++    bool nvmmu_inv_fifo;
++    u32 gpio_mask;  /* GPIO function and output mode, as Linux/iOS set it */
++    u32 gpio_value;
++};
++
++struct nvme_sqe {
++    u8 opcode;
++    u8 flags;
++    u16 cid;
++    u32 nsid;
++    u64 rsvd;
++    u64 mptr;
++    u64 prp1;
++    u64 prp2;
++    u32 cdw10, cdw11, cdw12, cdw13, cdw14, cdw15;
++} PACKED;
++
++struct nvme_cqe {
++    u32 result;
++    u32 rsvd;
++    u16 sq_head;
++    u16 sq_id;
++    u16 cid;
++    u16 status;
++} PACKED;
++
++struct queue {
++    struct nvme_sqe *sq;
++    struct nvme_cqe *cq;
++    u16 sq_tail, cq_head, cid;
++    u8 phase, qid;
++};
++
++static u64 cfg_base, port_base, nvmmu_base, rc_base, phy_base, phy_ip_base;
++static u64 dart_base, gpio_base, hmb_base, hmb_size;
++static u32 perst_pin, clkreq_pin, doorbell_stride;
++static u32 *tcbs, *tcb_table, *sgls;
++static u64 *dart_l1, *dart_l2;
++static struct queue adminq, ioq;
++static void *identify_buf;
++static bool powered, link_up, controller_on, initialized;
++static const struct apcie_soc *soc;
++
++static int t8010_setup_link(void);
++
++static void apply_tunables(u64 base, const struct apcie_tunable *t, size_t count)
++{
++    for (size_t i = 0; i < count; i++)
++        mask32(base + t[i].offset, t[i].mask, t[i].value);
++}
++
++static int wait32(u64 addr, u32 mask, u32 target, u32 timeout, const char *what)
++{
++    if (poll32(addr, mask, target, timeout) < 0) {
++        printf("apcie-nvme: %s timeout (0x%x)\n", what, read32(addr));
++        return -1;
++    }
++    return 0;
++}
++
++static void gpio_output(u32 pin, u32 level)
++{
++    mask32(gpio_base + 4 * pin, soc->gpio_mask, soc->gpio_value | level);
++}
++
++static u32 gpio_input(u32 pin)
++{
++    mask32(gpio_base + 4 * pin, 0x26f, 0xe | 0x200);
++    return read32(gpio_base + 4 * pin) & 1;
++}
++
++static u32 ltssm_state(void)
++{
++    return FIELD_GET(PORT_LINKSTS_LTSSM, read32(port_base + PORT_LINKSTS));
++}
++
++static u64 cfg_addr(u32 bus)
++{
++    return cfg_base + ((u64)bus << CFG_BUS_SHIFT);
++}
++
++static u32 find_cap(u64 base, u8 id)
++{
++    u32 ptr = read32(base + 0x34) & 0xff;
++    for (int ttl = 48; ptr && ttl; ttl--) {
++        u32 word = read32(base + ptr);
++        if ((word & 0xff) == id)
++            return ptr;
++        ptr = (word >> 8) & 0xff;
++    }
++    return 0;
++}
++
++static u32 find_ext_cap(u64 base, u16 id)
++{
++    u32 ptr = 0x100;
++    for (int ttl = 64; ptr && ttl; ttl--) {
++        u32 word = read32(base + ptr);
++        if (!word || word == 0xffffffff)
++            return 0;
++        if ((word & 0xffff) == id)
++            return ptr;
++        ptr = (word >> 20) & 0xffc;
++    }
++    return 0;
++}
++
++static void *dma_zalloc(size_t size)
++{
++    void *p = memalign(SZ_16K, ALIGN_UP(size, SZ_16K));
++    if (p) {
++        memset(p, 0, size);
++        dc_civac_range(p, size);
++    }
++    return p;
++}
++
++static int get_reg(const char *path, int index, u64 *addr, u64 *size)
++{
++    int trace[8];
++    if (adt_path_offset_trace(adt, path, trace) < 0)
++        return -1;
++    return adt_get_reg(adt, trace, "reg", index, addr, size);
++}
++
++static int get_gpio(const char *prop, u32 *pin)
++{
++    int node = adt_path_offset(adt, BRIDGE_PATH);
++    u32 len;
++    const u32 *fn = node < 0 ? NULL : adt_getprop(adt, node, prop, &len);
++    /* phandle, 'GPIO', pin, flags */
++    if (!fn || len < 16)
++        return -1;
++    *pin = fn[2];
++    return 0;
++}
++
++static int read_adt(void)
++{
++    if (get_reg(APCIE_PATH, APCIE_REG_CONFIG, &cfg_base, NULL) < 0 ||
++        get_reg(APCIE_PATH, APCIE_REG_PORT0, &port_base, NULL) < 0 ||
++        get_reg(APCIE_PATH, APCIE_REG_NVMMU, &nvmmu_base, NULL) < 0 ||
++        get_reg(APCIE_PATH, APCIE_REG_RC, &rc_base, NULL) < 0 ||
++        get_reg(APCIE_PATH, APCIE_REG_PHY, &phy_base, NULL) < 0 ||
++        get_reg(APCIE_PATH, APCIE_REG_PHY_IP, &phy_ip_base, NULL) < 0 ||
++        get_reg(DART_PATH, 0, &dart_base, NULL) < 0 || get_reg(GPIO_PATH, 0, &gpio_base, NULL) < 0 ||
++        get_gpio("function-perst", &perst_pin) < 0 ||
++        (soc->setup_link == t8010_setup_link && get_gpio("function-clkreq", &clkreq_pin) < 0)) {
++        printf("apcie-nvme: incomplete ADT\n");
++        return -1;
++    }
++
++    u64 region[2];
++    int mmu = adt_path_offset(adt, NVMMU_PATH);
++    if (mmu < 0 || ADT_GETPROP_ARRAY(adt, mmu, "sart-region", region) < 0 || !region[1] ||
++        (region[0] & (SZ_1M - 1))) {
++        printf("apcie-nvme: invalid NVMe HMB region\n");
++        return -1;
++    }
++    hmb_base = region[0];
++    hmb_size = region[1];
++    return 0;
++}
++
++/* apple_t8010_setup_common */
++static int t8010_setup_common(void)
++{
++    write32(rc_base + RC_COMMON_CTL0, BIT(4));
++    set32(rc_base + RC_PORT0_CTL1, BIT(0));
++    if (wait32(rc_base + RC_COMMON_STAT, RC_COMMON_STAT_INIT_DONE, RC_COMMON_STAT_INIT_DONE, 250000,
++               "global PHY init") ||
++        wait32(rc_base + RC_COMMON_STAT, RC_COMMON_STAT_READY, RC_COMMON_STAT_READY, 250000,
++               "global PHY ready"))
++        return -1;
++    write32(rc_base + RC_COMMON_CTL3, BIT(0));
++    apply_tunables(rc_base, rc_common_tunables, ARRAY_SIZE(rc_common_tunables));
++    write32(rc_base + RC_COMMON_CTL1, BIT(0));
++    udelay(5000);
++    write32(rc_base + RC_COMMON_CTL2, BIT(0));
++    udelay(500);
++    return 0;
++}
++
++static void program_phy_lane0(void)
++{
++    static const struct {
++        u32 reg, value;
++    } fixed[] = {
++        {0x2009c, 175}, {0x200dc, 175}, {0x200a0, 333}, {0x200e0, 333}, {0x200a4, 530},
++        {0x200e4, 530}, {0x20330, 0},   {0x20340, 0},   {0x20350, 0},
++    };
++
++    set32(phy_ip_base + 0x180, 0x4000);
++    set32(phy_ip_base + 0x184, 0x4000);
++    mask32(phy_ip_base + 0x090, 0xfff, 100);
++    mask32(phy_ip_base + 0x098, 0xfff, 25);
++    set32(phy_ip_base + 0x10088, 0x4000);
++    write32(phy_ip_base + 0x10784, 0);
++    mask32(phy_ip_base + 0x10004, 0xfff, 0x600);
++    write32(phy_ip_base + 0x20788, 0x3105);
++    mask32(phy_ip_base + 0x207a0, 0xff, 0x9f);
++    mask32(phy_ip_base + 0x207a8, 0xff, 0x01);
++    mask32(phy_ip_base + 0x20400, 0x1f, 0x0a);
++    for (size_t i = 0; i < ARRAY_SIZE(fixed); i++)
++        write32(phy_ip_base + fixed[i].reg, fixed[i].value);
++}
++
++/* apple_t8010_setup_port for port 0 */
++static int t8010_setup_link(void)
++{
++    u64 root = cfg_addr(0);
++
++    if (ltssm_state() >= LTSSM_L0 && ltssm_state() <= LTSSM_L1_IDLE) {
++        printf("apcie-nvme: port 0 link already up\n");
++    } else {
++        gpio_output(perst_pin, 0);
++        udelay(1000);
++        clear32(rc_base + RC_PORT0_CTL2, BIT(0));
++        set32(rc_base + RC_PORT0_CTL1, BIT(0));
++        if (wait32(rc_base + RC_COMMON_STAT, RC_COMMON_STAT_INIT_DONE, RC_COMMON_STAT_INIT_DONE,
++                   250000, "port 0 init"))
++            return -1;
++        udelay(200);
++        set32(rc_base + RC_PORT0_CTL0, BIT(0));
++        clear32(rc_base + RC_PORT0_CTL0, 0x100);
++        udelay(200);
++        set32(rc_base + RC_PORT0_CTL2, BIT(0));
++        write32(rc_base + RC_PORT0_LINK_RATE, LINK_SPEED_8GT);
++        clear32(rc_base + RC_PORT0_CTL1, 0x100);
++        if (wait32(phy_base + PHY_PORTMASK, BIT(0), BIT(0), 250000, "PHY lane 0"))
++            return -1;
++
++        program_phy_lane0();
++
++        u64 timeout = timeout_calculate(250000);
++        while (gpio_input(clkreq_pin)) {
++            if (timeout_expired(timeout)) {
++                printf("apcie-nvme: CLKREQ# timeout\n");
++                return -1;
++            }
++        }
++
++        u32 cap = find_cap(root, 0x10);
++        if (cap)
++            mask32(root + cap + 0x30, 0xf, LINK_SPEED_8GT);
++        apply_tunables(root, config_tunables, ARRAY_SIZE(config_tunables));
++        u32 header[14];
++        for (int i = 0; i < 14; i++)
++            header[i] = read32(root + 0x08 + 4 * i);
++        apply_tunables(port_base, port_tunables, ARRAY_SIZE(port_tunables));
++        set32(root + CFG_PORT_MISC, BIT(0));
++        write32(port_base + PORT_IRQMASK, PORT_IRQMASK_PRE_LINK);
++        write32(port_base + PORT_IRQSTAT, PORT_IRQSTAT_PRE_LINK);
++        set32(port_base + PORT_ENABLE, PORT_ENABLE_APPLE);
++        write32(port_base + PORT_MSICTL, PORT_MSICTL_INIT);
++        write32(port_base + PORT_MSIVECBASE, 0);
++        write32(port_base + PORT_IRQMASK, PORT_IRQMASK_LINK_UP);
++        for (int i = 0; i < 14; i++)
++            write32(root + 0x08 + 4 * i, header[i]);
++
++        gpio_output(perst_pin, 1);
++        set32(port_base + PORT_LTSSMCTL, BIT(0));
++        timeout = timeout_calculate(500000);
++        while (ltssm_state() < LTSSM_L0 || ltssm_state() > LTSSM_L1_IDLE) {
++            if (timeout_expired(timeout)) {
++                printf("apcie-nvme: port 0 link did not reach L0 (0x%x)\n",
++                       read32(port_base + PORT_LINKSTS));
++                return -1;
++            }
++        }
++    }
++    return 0;
++}
++
++/* AppleS8003PCIe initCommon */
++static int s8003_setup_common(void)
++{
++    write32(rc_base + S8003_RC_LANE_CFG, S8003_RC_LANE_CFG_INIT);
++    if (wait32(rc_base + S8003_RC_STAT, S8003_RC_STAT_COMMON, S8003_RC_STAT_COMMON, 250000,
++               "common init"))
++        return -1;
++    write32(rc_base + S8003_RC_COMMON_DONE, 1);
++    apply_tunables(phy_base, s8003_phy_tunables, ARRAY_SIZE(s8003_phy_tunables));
++    apply_tunables(rc_base, s8003_rc_common_tunables, ARRAY_SIZE(s8003_rc_common_tunables));
++    return 0;
++}
++
++/* Stop a link training state machine left running */
++static int s8003_port_stop(void)
++{
++    write32(port_base + PORT_IRQMASK, PORT_IRQMASK_PRE_LINK);
++    clear32(port_base + PORT_LTSSMCTL, BIT(0));
++    read32(port_base + PORT_LTSSMCTL);
++    write32(port_base + S8003_PORT_PMETO, 0);
++    write32(port_base + PORT_IRQSTAT, PORT_IRQSTAT_PRE_LINK);
++    return wait32(port_base + PORT_LTSSMCTL, BIT(0), 0, 250000, "LTSSM stop");
++}
++
++static void s8003_port_off(void)
++{
++    clear32(rc_base + S8003_RC_PORT_REFCLK, BIT(0));
++    udelay(60);
++    clear32(rc_base + S8003_RC_PORT_PWR, S8003_RC_PORT_PWR_ON);
++    clear32(rc_base + S8003_RC_PORT_CTL, S8003_RC_PORT_CTL_ENABLE);
++}
++
++static bool s8003_port_on(void)
++{
++    return (read32(rc_base + S8003_RC_PORT_CTL) & S8003_RC_PORT_CTL_ENABLE) &&
++           (read32(rc_base + S8003_RC_PORT_PWR) & S8003_RC_PORT_PWR_ON);
++}
++
++/*
++ * The storage port's full off/on cycle, with the root complex in NVMe mode
++ * before the port powers up (apple_s8003_power_cycle_port).
++ */
++static int s8003_power_cycle_port0(void)
++{
++    if (s8003_port_on() && s8003_port_stop())
++        return -1;
++    s8003_port_off();
++    udelay(10000);
++    if (wait32(rc_base + S8003_RC_PORT_CTL, S8003_RC_PORT_CTL_ENABLE, 0, 250000, "port off"))
++        return -1;
++
++    write32(rc_base + S8003_RC_NVME_MODE0, 1);
++    udelay(150);
++    write32(rc_base + S8003_RC_NVME_MODE1, 1);
++
++    clear32(rc_base + S8003_RC_PORT_REFCLK, BIT(0));
++    set32(rc_base + S8003_RC_PORT_PWR, S8003_RC_PORT_PWR_ON | S8003_RC_PORT_PWR_NOGATE);
++    if (wait32(rc_base + S8003_RC_STAT, S8003_RC_STAT_PORT, S8003_RC_STAT_PORT, 250000,
++               "port power"))
++        return -1;
++    udelay(100);
++    set32(rc_base + S8003_RC_PORT_CTL, S8003_RC_PORT_CTL_ENABLE);
++    if (wait32(rc_base + S8003_RC_PORT_READY, BIT(0), BIT(0), 250000, "port ready"))
++        return -1;
++    clear32(rc_base + S8003_RC_PORT_CTL, S8003_RC_PORT_CTL_RESET);
++    set32(rc_base + S8003_RC_PORT_REFCLK, BIT(0));
++    read32(rc_base + S8003_RC_PORT_REFCLK);
++    udelay(100);
++    return s8003_port_stop();
++}
++
++static void s8003_program_phy_lanes(void)
++{
++    set32(phy_ip_base + 0x180, 0x4000);
++    set32(phy_ip_base + 0x184, 0x4000);
++    mask32(phy_ip_base + 0x090, 0xfff, 100);
++    mask32(phy_ip_base + 0x098, 0xfff, 25);
++    for (int lane = 0; lane < 2; lane++) {
++        u64 b = phy_ip_base + lane * 0x800;
++        set32(b + 0x10088, 0x4000);
++        write32(b + 0x10784, 0);
++        mask32(b + 0x10004, 0xfff, 0x600);
++        write32(b + 0x20788, 0x3105);
++        mask32(b + 0x207a0, 0xff, 0x9f);
++        mask32(b + 0x207a8, 0xff, 0x01);
++        write32(b + S8003_PHY_IP_GEN2_CTL, 0x100); /* 5 GT/s */
++        mask32(b + 0x20400, 0x1f, 0x0a);
++        write32(b + 0x2009c, 169);
++        write32(b + 0x200dc, 169);
++        write32(b + 0x200a0, 333);
++        write32(b + 0x200e0, 333);
++        write32(b + 0x20330, 0);
++        write32(b + 0x20340, 0);
++        write32(b + 0x20350, 0);
++    }
++}
++
++/* apple_s8003_start_link for port 0 */
++static int s8003_start_link(void)
++{
++    u64 root = cfg_addr(0);
++
++    write32(rc_base + S8003_RC_PORT_LSCNT, 3);
++    u32 pmgrsts = read32(port_base + S8003_PORT_LINKPMGRSTS);
++    if (pmgrsts)
++        write32(port_base + S8003_PORT_LINKPMGRSTS, pmgrsts);
++
++    u32 cap = find_cap(root, 0x10);
++    if (!cap)
++        return -1;
++    u32 speed = S8003_PORT0_SPEED;
++    u32 lnkcap2 = (read32(root + cap + 0x2c) >> 1) & 0x7f;
++    while (speed > 1 && !(lnkcap2 & BIT(speed - 1)))
++        speed--;
++    clear32(root + cap + 0x10, 0x3 | 0x10 | 0x20); /* LNKCTL: ASPM, LD, RL */
++    mask32(root + cap + 0x30, 0xf | 0x10, speed);  /* LNKCTL2: TLS, ENTER_COMP */
++    apply_tunables(root, s8003_config_tunables, ARRAY_SIZE(s8003_config_tunables));
++    apply_tunables(port_base, s8003_port_tunables, ARRAY_SIZE(s8003_port_tunables));
++    write32(port_base + PORT_IRQMASK, PORT_IRQMASK_PRE_LINK);
++    write32(port_base + PORT_IRQSTAT, PORT_IRQSTAT_PRE_LINK);
++    set32(port_base + PORT_ENABLE, PORT_ENABLE_APPLE);
++    write32(port_base + PORT_MSICTL, PORT_MSICTL_INIT);
++    write32(port_base + PORT_MSIVECBASE, 0);
++    mdelay(100); /* PERST# hold with a stable reference clock */
++    gpio_output(perst_pin, 1);
++    if (wait32(phy_base + PHY_PORTMASK, S8003_PORT0_LANES, S8003_PORT0_LANES, 250000, "PHY lanes"))
++        return -1;
++    s8003_program_phy_lanes();
++    write32(port_base + PORT_IRQMASK, PORT_IRQMASK_LINK_UP);
++    set32(port_base + PORT_LTSSMCTL, BIT(0));
++
++    if (poll32(port_base + S8003_PORT_LINKSTS, BIT(0), BIT(0), 500000) < 0 ||
++        poll32(port_base + S8003_PORT_LINKCDMSTS, S8003_PORT_LTSSM,
++               FIELD_PREP(S8003_PORT_LTSSM, LTSSM_L0), 100000) < 0 ||
++        !(read32(port_base + S8003_PORT_LINKSTS) & BIT(0))) {
++        printf("apcie-nvme: port 0 link down (LTSSM 0x%lx)\n",
++               FIELD_GET(S8003_PORT_LTSSM, read32(port_base + S8003_PORT_LINKCDMSTS)));
++        return LINK_TIMEOUT;
++    }
++    mdelay(100); /* link settle */
++    return 0;
++}
++
++static int s8003_setup_link_once(void)
++{
++    gpio_output(perst_pin, 0);
++    int ret = s8003_power_cycle_port0();
++    if (!ret)
++        ret = s8003_start_link();
++    if (ret)
++        gpio_output(perst_pin, 0);
++    return ret;
++}
++
++/* Linux's storage-port policy: two link tries, then fully off and once more */
++static int s8003_setup_link(void)
++{
++    int ret = -1;
++
++    for (int i = 0; i < S8003_LINK_TRIES; i++) {
++        ret = s8003_setup_link_once();
++        if (ret != LINK_TIMEOUT)
++            return ret;
++    }
++    if (s8003_port_on() && s8003_port_stop())
++        return -1;
++    s8003_port_off();
++    mdelay(100);
++    return s8003_setup_link_once();
++}
++
++static const struct apcie_soc apcie_socs[] = {
++    {
++        .compatible = "apcie,t8010",
++        .setup_common = t8010_setup_common,
++        .setup_link = t8010_setup_link,
++        .l1ss_ctl1 = 0x40550000,
++        .nvmmu_init_busy = NVMMU_TCB_CTRL_BUSY,
++        /* pinctrl-apple-gpio direction_output; also clears INPUT_ENABLE */
++        .gpio_mask = 0x26f,
++        .gpio_value = 0x2,
++    },
++    {
++        .compatible = "apcie,s8003",
++        .setup_common = s8003_setup_common,
++        .setup_link = s8003_setup_link,
++        .l1ss_ctl1 = 0x40440000,
++        .nvmmu_init_busy = NVMMU_TCB_CTRL_INIT,
++        .nvmmu_inv_fifo = true,
++        /* iOS's S8000 GPIO function: mask 0x27e, value 0x202, plus data */
++        .gpio_mask = 0x27f,
++        .gpio_value = 0x202,
++    },
++};
++
++/* After the link: a bus 0 -> 1 bridge window and the ANS endpoint */
++static int setup_endpoint(void)
++{
++    u64 root = cfg_addr(0);
++
++    link_up = true;
++
++    u32 window = (BAR_PCI >> 16) & 0xfff0;
++    write32(root + 0x18, 0x00010100);
++    write32(root + 0x20, window << 16 | window);
++    set32(root + 0x04, 0x6);
++
++    u64 ep = cfg_addr(1);
++    u32 ids = read32(ep);
++    if ((ids & 0xffff) != 0x106b) {
++        printf("apcie-nvme: unexpected endpoint 0x%08x\n", ids);
++        return -1;
++    }
++
++    write32(ep + 0x10, BAR_PCI | 0x4);
++    write32(ep + 0x14, 0);
++    set32(ep + 0x04, 0x6);
++    mask32(ep + 0x0c, 0xff00, 0x4000);
++    u32 ltr = find_ext_cap(ep, 0x18);
++    if (ltr)
++        write32(ep + ltr + 4, ANS_LTR_MAX_LATENCY);
++    u32 l1ss = find_ext_cap(ep, 0x1e);
++    if (l1ss) {
++        write32(ep + l1ss + 0x0c, 0);
++        write32(ep + l1ss + 0x08, soc->l1ss_ctl1);
++    }
++    return 0;
++}
++
++static int setup_nvmmu(void)
++{
++    tcbs = dma_zalloc(NVMMU_MAX_REQS * NVMMU_TCB_BYTES);
++    tcb_table = dma_zalloc(16 * SZ_16K);
++    sgls = dma_zalloc(NVMMU_MAX_REQS * NVMMU_MAX_PAGES * sizeof(u32));
++    if (!tcbs || !tcb_table || !sgls)
++        return -1;
++
++    if (soc->nvmmu_inv_fifo) {
++        /* iOS's S8003 order: FIFO drained, SART off, TCB table, then base */
++        if (wait32(port_base + S8003_PORT_NVMMU_INV_FIFO, BIT(0), BIT(0), 20000, "NVMMU FIFO"))
++            return -1;
++        write32(nvmmu_base + NVMMU_SART_CTRL, 0);
++        write64_lo_hi(nvmmu_base + NVMMU_TCB_TABLE, (u64)tcb_table);
++        write64_lo_hi(nvmmu_base + NVMMU_TCB_BASE, (u64)tcbs);
++    } else {
++        write64_lo_hi(nvmmu_base + NVMMU_TCB_BASE, (u64)tcbs);
++        write64_lo_hi(nvmmu_base + NVMMU_TCB_TABLE, (u64)tcb_table);
++    }
++    write32(nvmmu_base + NVMMU_TCB_CTRL, NVMMU_TCB_CTRL_INIT);
++    if (wait32(nvmmu_base + NVMMU_TCB_CTRL, soc->nvmmu_init_busy, 0, 250000, "NVMMU init"))
++        return -1;
++
++    u32 end = ALIGN_UP(NVMMU_IOVA + hmb_size, SZ_1M);
++    write32(nvmmu_base + NVMMU_SART_VA_BASE, NVMMU_IOVA - 0x80000000);
++    write32(nvmmu_base + NVMMU_SART_VA_END, end - 0x80100000);
++    write32(nvmmu_base + NVMMU_SART_PA_BASE, hmb_base >> 20);
++    write32(nvmmu_base + NVMMU_SART_CTRL, 1);
++    return 0;
++}
++
++/* Page count last: a non-zero count is what makes the TCB valid. */
++static u64 tcb_map(u32 tag, void *buf, bool to_memory)
++{
++    u32 *tcb = tcbs + tag * (NVMMU_TCB_BYTES / 4);
++    u32 *sgl = sgls + tag * NVMMU_MAX_PAGES;
++    u64 sgl_addr = (u64)sgl;
++
++    sgl[0] = (u64)buf >> 12;
++    dc_civac_range(sgl, sizeof(u32));
++    memset(tcb, 0, NVMMU_TCB_BYTES);
++    tcb[0] = to_memory ? NVMMU_TCB_WRITE : NVMMU_TCB_READ;
++    tcb[2] = (u64)buf >> 12;
++    tcb[4] = sgl_addr;
++    tcb[5] = sgl_addr >> 32;
++    dc_civac_range(tcb, NVMMU_TCB_BYTES);
++    dma_wmb();
++    tcb[1] = 1;
++    dc_civac_range(tcb, NVMMU_TCB_BYTES);
++    return FLATDMA_BASE + tag * FLATDMA_STRIDE;
++}
++
++static void tcb_retire(u32 tag)
++{
++    u32 *tcb = tcbs + tag * (NVMMU_TCB_BYTES / 4);
++
++    tcb[1] = 0;
++    dc_civac_range(tcb, NVMMU_TCB_BYTES);
++    memset(tcb, 0, NVMMU_TCB_BYTES);
++    dc_civac_range(tcb, NVMMU_TCB_BYTES);
++    if (soc->nvmmu_inv_fifo &&
++        wait32(port_base + S8003_PORT_NVMMU_INV_FIFO, BIT(0), BIT(0), 20000, "NVMMU FIFO"))
++        return;
++    write32(nvmmu_base + NVMMU_TCB_CTRL, tag);
++}
++
++/*
++ * S5L8960X DART, 4 KiB pages, 32-bit IOVA: four 1 GiB TTBRs, two levels,
++ * tables and leaves pa | 3 (io-pgtable-dart). The same L1 table sits behind
++ * TTBR 2 (absolute IOVA) and TTBR 0 (IOVA relative to the 0x80000000
++ * window), since it is not settled which one the bridge hands over.
++ */
++static int setup_dart(void)
++{
++    int node = adt_path_offset(adt, DART_PATH);
++    u64 reflector[2] = {0};
++    u32 fetch = 0, diag = 0;
++
++    dart_l1 = dma_zalloc(SZ_4K);
++    dart_l2 = dma_zalloc(SZ_4K);
++    if (node < 0 || !dart_l1 || !dart_l2)
++        return -1;
++    ADT_GETPROP_ARRAY(adt, node, "error-reflector", reflector);
++    ADT_GETPROP(adt, node, "fetch-config", &fetch);
++    ADT_GETPROP(adt, node, "diag-config", &diag);
++
++    dart_l1[0] = (u64)dart_l2 | DART_PTE_VALID;
++    dc_civac_range(dart_l1, SZ_4K);
++
++    u32 ttbr = ((u64)dart_l1 >> 12) | DART_TTBR_VALID;
++    mask32(dart_base + DART_TCR, 0xff, 0);
++    for (int i = 0; i < 4; i++)
++        write32(dart_base + DART_TTBR(i), (i == 0 || i == 2) ? ttbr : 0);
++    if (reflector[0])
++        write32(dart_base + DART_ERROR_REFLECTOR, reflector[0] >> 12);
++    mask32(dart_base + DART_TCR, 0xff, DART_TCR_TRANSLATE);
++    if (fetch)
++        write32(dart_base + DART_FETCH_CONFIG, fetch);
++    if (diag)
++        write32(dart_base + DART_DIAG_CONFIG, diag);
++    write32(dart_base + DART_STREAM_COMMAND, DART_STREAM_COMMAND_SELECT0 | DART_STREAM_COMMAND_INVAL);
++    if (wait32(dart_base + DART_STREAM_COMMAND, DART_STREAM_COMMAND_BUSY, 0, 100000, "DART invalidate"))
++        return -1;
++    write32(dart_base + DART_ERROR, read32(dart_base + DART_ERROR));
++    return 0;
++}
++
++static u64 dart_map_page(int index, void *page)
++{
++    u64 iova = QUEUE_IOVA + index * SZ_4K;
++
++    dart_l2[(iova >> 12) & 511] = (u64)page | DART_PTE_VALID;
++    dc_civac_range(dart_l2, SZ_4K);
++    return iova;
++}
++
++static int alloc_queue(struct queue *q, u8 qid, int index)
++{
++    memset(q, 0, sizeof(*q));
++    q->sq = dma_zalloc(SZ_4K);
++    q->cq = dma_zalloc(SZ_4K);
++    if (!q->sq || !q->cq)
++        return -1;
++    q->qid = qid;
++    q->phase = 1;
++    dart_map_page(index, q->sq);
++    dart_map_page(index + 1, q->cq);
++    return 0;
++}
++
++static u64 queue_iova(int index)
++{
++    return QUEUE_IOVA + index * SZ_4K;
++}
++
++/* Only these opcodes exist in this driver: no write path. */
++static bool submit(struct queue *q, struct nvme_sqe *cmd)
++{
++    cmd->cid = ++q->cid;
++    q->sq[q->sq_tail] = *cmd;
++    dc_civac_range(&q->sq[q->sq_tail], sizeof(*cmd));
++    dma_wmb();
++    q->sq_tail = (q->sq_tail + 1) % QUEUE_DEPTH;
++    write32(BAR_CPU + NVME_DOORBELL + 2 * q->qid * doorbell_stride, q->sq_tail);
++
++    u64 timeout = timeout_calculate(COMMAND_TIMEOUT);
++    struct nvme_cqe cqe;
++    while (true) {
++        dc_civac_range(&q->cq[q->cq_head], sizeof(cqe));
++        dma_rmb();
++        memcpy(&cqe, &q->cq[q->cq_head], sizeof(cqe));
++        if ((cqe.status & 1) == q->phase)
++            break;
++        if (timeout_expired(timeout)) {
++            printf("apcie-nvme: opcode 0x%x: no completion (CSTS 0x%x)\n", cmd->opcode,
++                   read32(BAR_CPU + NVME_CSTS));
++            return false;
++        }
++    }
++
++    q->cq_head = (q->cq_head + 1) % QUEUE_DEPTH;
++    if (!q->cq_head)
++        q->phase ^= 1;
++    write32(BAR_CPU + NVME_DOORBELL + (2 * q->qid + 1) * doorbell_stride, q->cq_head);
++
++    if (cqe.status >> 1) {
++        printf("apcie-nvme: opcode 0x%x failed: status 0x%x\n", cmd->opcode, cqe.status >> 1);
++        return false;
++    }
++    return true;
++}
++
++static bool flatdma_read_cmd(struct queue *q, struct nvme_sqe *cmd, u32 tag, void *buf)
++{
++    dc_civac_range(buf, SZ_4K);
++    cmd->flags = NVME_FLAG_FLATDMA;
++    cmd->prp1 = tcb_map(tag, buf, true);
++    bool ok = submit(q, cmd);
++    tcb_retire(tag);
++    dc_civac_range(buf, SZ_4K);
++    return ok;
++}
++
++static int enable_controller(void)
++{
++    /* 32-bit accesses only: the BAR is behind the PCIe bridge */
++    u64 cap = read32(BAR_CPU + NVME_CAP) | (u64)read32(BAR_CPU + NVME_CAP + 4) << 32;
++    u32 hmb_req = read32(BAR_CPU + ANS_REG_HMB_SIZE_REQ);
++
++    if (!hmb_req || hmb_req > hmb_size) {
++        printf("apcie-nvme: HMB request 0x%x does not fit 0x%lx\n", hmb_req, hmb_size);
++        return -1;
++    }
++    doorbell_stride = 4 << ((cap >> 32) & 0xf);
++
++    write32(BAR_CPU + NVME_CC, 0);
++    if (wait32(BAR_CPU + NVME_CSTS, NVME_CSTS_RDY | NVME_CSTS_CFS, 0, 2000000, "controller disable"))
++        return -1;
++    for (u32 tag = 0; tag < NVMMU_MAX_REQS; tag++)
++        tcb_retire(tag);
++    write32(BAR_CPU + ANS_REG_INIT, 0);
++    write64_lo_hi(BAR_CPU + ANS_REG_HMB_BASE, NVMMU_IOVA);
++    write32(BAR_CPU + ANS_REG_HMB_SIZE, hmb_size); /* Linux passes the whole carve-out */
++    read32(BAR_CPU + ANS_REG_HMB_SIZE);
++
++    if (setup_dart() || alloc_queue(&adminq, 0, 0) || alloc_queue(&ioq, 1, 2))
++        return -1;
++
++    write32(BAR_CPU + NVME_AQA, (QUEUE_DEPTH - 1) << 16 | (QUEUE_DEPTH - 1));
++    write64_lo_hi(BAR_CPU + NVME_ASQ, queue_iova(0));
++    write64_lo_hi(BAR_CPU + NVME_ACQ, queue_iova(1));
++    write32(BAR_CPU + NVME_CC, NVME_CC_EN | NVME_CC_IO_QES);
++    controller_on = true;
++
++    u64 timeout = timeout_calculate(ENABLE_TIMEOUT);
++    while (true) {
++        u32 csts = read32(BAR_CPU + NVME_CSTS);
++        if (csts & NVME_CSTS_CFS) {
++            printf("apcie-nvme: controller fatal after enable (DART error 0x%x)\n",
++                   read32(dart_base + DART_ERROR));
++            return -1;
++        }
++        if (csts & NVME_CSTS_RDY)
++            return 0;
++        if (timeout_expired(timeout)) {
++            printf("apcie-nvme: controller enable timeout (CSTS 0x%x)\n", csts);
++            return -1;
++        }
++    }
++}
++
++static int create_io_queues(void)
++{
++    identify_buf = memalign(SZ_4K, SZ_4K);
++    if (!identify_buf)
++        return -1;
++
++    struct nvme_sqe cmd = {0};
++    cmd.opcode = NVME_ADMIN_IDENTIFY;
++    cmd.nsid = 1;
++    cmd.cdw10 = 0; /* namespace */
++    if (!flatdma_read_cmd(&adminq, &cmd, TAG_IDENTIFY, identify_buf))
++        return -1;
++    const u8 *ns = identify_buf;
++    u8 lbads = ns[128 + 4 * (ns[26] & 0xf) + 2];
++    if (lbads != 12) {
++        printf("apcie-nvme: namespace 1 block size %d, need 4096\n", 1 << lbads);
++        return -1;
++    }
++
++    memset(&cmd, 0, sizeof(cmd));
++    cmd.opcode = NVME_ADMIN_CREATE_CQ;
++    cmd.prp1 = queue_iova(3);
++    cmd.cdw10 = (QUEUE_DEPTH - 1) << 16 | 1;
++    cmd.cdw11 = 1; /* physically contiguous, no interrupts */
++    if (!submit(&adminq, &cmd))
++        return -1;
++
++    memset(&cmd, 0, sizeof(cmd));
++    cmd.opcode = NVME_ADMIN_CREATE_SQ;
++    cmd.prp1 = queue_iova(2);
++    cmd.cdw10 = (QUEUE_DEPTH - 1) << 16 | 1;
++    cmd.cdw11 = 1 << 16 | 1;
++    return submit(&adminq, &cmd) ? 0 : -1;
++}
++
++static void stop_controller(void)
++{
++    struct nvme_sqe cmd = {0};
++
++    if ((read32(BAR_CPU + NVME_CSTS) & (NVME_CSTS_RDY | NVME_CSTS_CFS)) == NVME_CSTS_RDY &&
++        initialized) {
++        cmd.opcode = NVME_ADMIN_DELETE_SQ;
++        cmd.cdw10 = 1;
++        submit(&adminq, &cmd);
++        memset(&cmd, 0, sizeof(cmd));
++        cmd.opcode = NVME_ADMIN_DELETE_CQ;
++        cmd.cdw10 = 1;
++        submit(&adminq, &cmd);
++    }
++
++    /* iBoot's stop: SHN=01, SHST complete, EN=0, RDY=0 */
++    if (!(read32(BAR_CPU + NVME_CSTS) & NVME_CSTS_CFS)) {
++        mask32(BAR_CPU + NVME_CC, NVME_CC_SHN, FIELD_PREP(NVME_CC_SHN, NVME_CC_SHN_NORM));
++        wait32(BAR_CPU + NVME_CSTS, NVME_CSTS_SHST, FIELD_PREP(NVME_CSTS_SHST, NVME_CSTS_SHST_OK),
++               10000000, "shutdown");
++    }
++    clear32(BAR_CPU + NVME_CC, NVME_CC_EN);
++    wait32(BAR_CPU + NVME_CSTS, NVME_CSTS_RDY, 0, 10000000, "disable after shutdown");
++    for (u32 tag = 0; tag < NVMMU_MAX_REQS; tag++)
++        tcb_retire(tag);
++}
++
++/*
++ * Leave the port as Linux finds it after power-on reset. A link-down event
++ * left pending in PORT_IRQSTAT storms Linux's port 0 interrupt, so mask
++ * before the link goes down and clear while the port is still powered.
++ */
++static void port_down(void)
++{
++    if (link_up)
++        clear32(cfg_addr(1) + 0x04, 0x4);
++    write32(port_base + PORT_IRQMASK, 0xffffffff);
++    clear32(port_base + PORT_LTSSMCTL, BIT(0));
++    gpio_output(perst_pin, 0);
++    write32(nvmmu_base + NVMMU_SART_CTRL, 0);
++    mask32(dart_base + DART_TCR, 0xff, 0);
++    for (int i = 0; i < 4; i++)
++        write32(dart_base + DART_TTBR(i), 0);
++    udelay(10000);
++    write32(port_base + PORT_IRQSTAT, read32(port_base + PORT_IRQSTAT));
++    clear32(rc_base + RC_PORT0_CTL1, BIT(0)); /* reference clock */
++    udelay(60);
++    clear32(rc_base + RC_PORT0_PWR, BIT(0));
++    clear32(rc_base + RC_PORT0_CTL0, BIT(0));
++}
++
++static void free_all(void)
++{
++    free(adminq.sq);
++    free(adminq.cq);
++    free(ioq.sq);
++    free(ioq.cq);
++    free(dart_l1);
++    free(dart_l2);
++    free(tcbs);
++    free(tcb_table);
++    free(sgls);
++    free(identify_buf);
++    memset(&adminq, 0, sizeof(adminq));
++    memset(&ioq, 0, sizeof(ioq));
++    dart_l1 = dart_l2 = NULL;
++    tcbs = tcb_table = sgls = NULL;
++    identify_buf = NULL;
++}
++
++void apcie_nvme_shutdown(void)
++{
++    if (!powered)
++        return;
++    if (controller_on)
++        stop_controller();
++    port_down();
++    pmgr_adt_power_disable(APCIE_PATH);
++    free_all();
++    powered = link_up = controller_on = initialized = false;
++    printf("apcie-nvme: shut down\n");
++}
++
++bool apcie_nvme_init(void)
++{
++    if (initialized)
++        return true;
++
++    int node = adt_path_offset(adt, APCIE_PATH);
++    soc = NULL;
++    for (size_t i = 0; node >= 0 && i < ARRAY_SIZE(apcie_socs); i++)
++        if (adt_is_compatible(adt, node, apcie_socs[i].compatible))
++            soc = &apcie_socs[i];
++    if (!soc || read_adt() < 0)
++        return false;
++
++    /* Nothing in apcie may be read before it is powered: that faults. */
++    if (pmgr_adt_power_enable(APCIE_PATH) < 0) {
++        printf("apcie-nvme: failed to power apcie\n");
++        return false;
++    }
++    powered = true;
++
++    if (soc->setup_common() || soc->setup_link() || setup_endpoint() || setup_nvmmu() ||
++        enable_controller() ||
++        create_io_queues()) {
++        apcie_nvme_shutdown();
++        return false;
++    }
++
++    initialized = true;
++    printf("apcie-nvme: initialized\n");
++    return true;
++}
++
++bool apcie_nvme_read(u64 lba, void *buffer)
++{
++    if (!initialized || ((u64)buffer & (SZ_4K - 1)))
++        return false;
++
++    struct nvme_sqe cmd = {0};
++    cmd.opcode = NVME_CMD_READ;
++    cmd.nsid = 1;
++    cmd.cdw10 = lba;
++    cmd.cdw11 = lba >> 32;
++    cmd.cdw12 = 0; /* one 4 KiB block */
++    return flatdma_read_cmd(&ioq, &cmd, TAG_READ, buffer);
++}
+diff --git a/src/apcie_nvme.h b/src/apcie_nvme.h
+new file mode 100644
+index 0000000..6d3a3ff
+--- /dev/null
++++ b/src/apcie_nvme.h
+@@ -0,0 +1,11 @@
++/* SPDX-License-Identifier: MIT */
++#ifndef APCIE_NVME_H
++#define APCIE_NVME_H
++
++#include "types.h"
++
++bool apcie_nvme_init(void);
++void apcie_nvme_shutdown(void);
++bool apcie_nvme_read(u64 lba, void *buffer);
++
++#endif
+diff --git a/src/chainload.c b/src/chainload.c
+index 1dd7c68..6e419c5 100644
+--- a/src/chainload.c
++++ b/src/chainload.c
+@@ -120,13 +120,13 @@ int chainload_load(const char *spec, char **vars, size_t var_cnt)
+     size_t size;
+     int ret;
+ 
+-    if (!nvme_init()) {
+-        printf("chainload: NVME init failed\n");
++    if (!main_storage_init()) {
++        printf("chainload: storage init failed\n");
+         return -1;
+     }
+ 
+     ret = rust_load_image(spec, &image, &size);
+-    nvme_shutdown();
++    main_storage_shutdown();
+     if (ret < 0)
+         return ret;
+ 
+diff --git a/src/utils.c b/src/utils.c
+index feeca69..5def0d2 100644
+--- a/src/utils.c
++++ b/src/utils.c
+@@ -5,6 +5,7 @@
+ 
+ #include "adt.h"
+ #include "ans1.h"
++#include "apcie_nvme.h"
+ #include "cpu_regs.h"
+ #include "iodev.h"
+ #include "nvme.h"
+@@ -17,6 +18,7 @@
+ enum storage_type {
+     STORAGE_TYPE_ANS1 = 1,
+     STORAGE_TYPE_ANS23,
++    STORAGE_TYPE_APCIE,
+ };
+ 
+ bool is_mac;
+@@ -305,7 +307,13 @@ bool main_storage_init(void)
+     int ans_node = adt_path_offset(adt, "/arm-io/ans");
+ 
+     if (ans_node < 0) {
+-        /* A9/A9X/A10/A10X */
++        /* A9/A9X/A10/A10X: ANS is an NVMe endpoint behind apcie */
++        int apcie_node = adt_path_offset(adt, "/arm-io/apcie");
++        if (apcie_node >= 0 && (adt_is_compatible(adt, apcie_node, "apcie,t8010") ||
++                                adt_is_compatible(adt, apcie_node, "apcie,s8003"))) {
++            storage_type = STORAGE_TYPE_APCIE;
++            return apcie_nvme_init();
++        }
+         printf("Storage: storage not supported!\n");
+         return false;
+     }
+@@ -329,6 +337,8 @@ bool main_storage_read(u64 lba, u64 *bfr)
+             return ans1_read_main_storage(lba, bfr);
+         case STORAGE_TYPE_ANS23:
+             return nvme_read(1, lba, bfr);
++        case STORAGE_TYPE_APCIE:
++            return apcie_nvme_read(lba, bfr);
+         default:
+             __builtin_unreachable();
+     }
+@@ -346,6 +356,9 @@ void main_storage_shutdown(void)
+         case STORAGE_TYPE_ANS23:
+             nvme_shutdown();
+             break;
++        case STORAGE_TYPE_APCIE:
++            apcie_nvme_shutdown();
++            break;
+         default:
+             __builtin_unreachable();
+     }
+@@ -362,6 +375,9 @@ bool main_storage_flush(void)
+             return true;
+         case STORAGE_TYPE_ANS23:
+             return nvme_flush(1);
++        case STORAGE_TYPE_APCIE:
++            /* read-only: nothing to flush */
++            return true;
+         default:
+             __builtin_unreachable();
+     }
