@@ -34,6 +34,16 @@ def identity():
 
 
 class NFSStaging(unittest.TestCase):
+    def test_board_compatibility_comes_from_the_selected_device(self):
+        for profile, compatible in (('j71b', 'apple,j71b'), ('j171', 'apple,j171'),
+                                    ('d10', 'apple,d10')):
+            root = identity()
+            root['profile'] = profile
+            with self.subTest(profile=profile):
+                parsed, compatibles = stage.identity(json.dumps(root).encode())
+                self.assertEqual(parsed['profile'], profile)
+                self.assertEqual(compatibles, [compatible])
+
     def test_receipt_binds_exact_bytes_and_known_profile(self):
         root = identity()
         parsed, compatibles = stage.identity(json.dumps(root).encode())
@@ -84,6 +94,8 @@ class NFSStaging(unittest.TestCase):
             self.assertFalse((output / 'rootfs/bin/busybox').exists())
             self.assertEqual(result['network']['NFS_IDENTITY_SHA256'], hashlib.sha256(blob).hexdigest())
             self.assertEqual(result['network']['NFS_HANDOFF'], 'manual')
+            self.assertEqual(result['network']['NFS_CLIENT_MODULES'], 'no')
+            self.assertEqual(result['network']['NFS_KEEP_RESCUE'], 'no')
             for target in stage.SCRIPTS.values():
                 path = output / target if target == 'init' else output / 'rootfs' / target
                 self.assertTrue(os.access(path, os.X_OK), target)
@@ -96,6 +108,58 @@ class NFSStaging(unittest.TestCase):
                     stage.stage(receipt=receipt, busybox=busybox, output=base / 'bad',
                                 server='10.61.0.1', address='10.61.0.2/30', export='/n61-root', port=32061)
                 self.assertFalse((base / 'bad').exists())
+
+    def test_stage_copies_only_nfs_modules_and_transitive_dependencies(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            root = identity()
+            release = root['kernel_release']
+            receipt, busybox, kernel = base / 'identity.json', base / 'busybox', base / 'kernel'
+            receipt.write_text(json.dumps(root))
+            busybox.write_bytes(elf())
+            kernel.mkdir()
+            (kernel / 'kernel.release').write_text(release + '\n')
+            (kernel / 'Image.gz').write_bytes(b'kernel image')
+            modules = kernel / 'lib/modules' / release
+            modules.mkdir(parents=True)
+            deps = {
+                'kernel/fs/nfs/nfs.ko': ['kernel/net/sunrpc/sunrpc.ko', 'kernel/fs/lockd/lockd.ko'],
+                'kernel/fs/nfs/nfsv4.ko': ['kernel/fs/nfs/nfs.ko', 'kernel/net/sunrpc/sunrpc.ko'],
+                'kernel/net/sunrpc/sunrpc.ko': [],
+                'kernel/fs/lockd/lockd.ko': ['kernel/fs/nfs_common/grace.ko'],
+                'kernel/fs/nfs_common/grace.ko': [],
+                'kernel/fs/nfs/filelayout/nfs_layout_nfsv41_files.ko': ['kernel/fs/nfs/nfsv4.ko'],
+            }
+            for name in deps:
+                (modules / name).parent.mkdir(parents=True, exist_ok=True)
+                (modules / name).write_bytes(name.encode())
+            metadata = ''.join(name + ':' + ''.join(' ' + d for d in dependencies) + '\n'
+                               for name, dependencies in deps.items())
+            (modules / 'modules.dep').write_text(metadata)
+            output = base / 'ram'
+            result = stage.stage(receipt=receipt, busybox=busybox, output=output,
+                                 server='10.61.0.1', address='10.61.0.2/30',
+                                 export='/root', port=32061, kernel_dir=kernel,
+                                 keep_rescue=True)
+            expected = set(deps) - {'kernel/fs/nfs/filelayout/nfs_layout_nfsv41_files.ko'}
+            self.assertEqual(set(result['kernel']['modules']), expected)
+            self.assertEqual(result['network']['NFS_CLIENT_MODULES'], 'yes')
+            self.assertEqual(result['network']['NFS_KEEP_RESCUE'], 'yes')
+            staged = output / 'rootfs/lib/modules' / release
+            self.assertEqual({p.relative_to(staged).as_posix() for p in staged.rglob('*.ko')}, expected)
+            self.assertNotIn('nfs_layout', (staged / 'modules.dep').read_text())
+            self.assertEqual(result['kernel']['image_sha256'], hashlib.sha256(b'kernel image').hexdigest())
+
+            (kernel / 'kernel.release').write_text('wrong-release\n')
+            with self.assertRaisesRegex(ValueError, 'release differs'):
+                stage.nfs_modules(kernel, release)
+            (kernel / 'kernel.release').write_text(release + '\n')
+            (modules / 'kernel/fs/nfs_common/grace.ko').unlink()
+            with self.assertRaisesRegex(ValueError, 'Missing kernel module'):
+                stage.nfs_modules(kernel, release)
+            (modules / 'modules.dep').write_text(metadata + '../outside.ko:\n')
+            with self.assertRaisesRegex(ValueError, 'Unsafe kernel module path'):
+                stage.nfs_modules(kernel, release)
 
 
 class NFSRuntimeValidation(unittest.TestCase):
@@ -184,6 +248,23 @@ class NFSRuntimeValidation(unittest.TestCase):
         result = subprocess.run(['sh', str(HERE / 'handoff')], capture_output=True, text=True, timeout=5)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('requires PID 1', result.stderr)
+
+    def test_post_handoff_root_shell_is_opt_in(self):
+        source = (HERE / 'handoff').read_text()
+        block = source[source.index('if [ "${NFS_KEEP_RESCUE:-no}" = yes ]; then'):
+                       source.index('# Keep an NFS-rooted interface')]
+        target = self.base / 'systemd'
+        block = block.replace('/run/systemd/system', str(target))
+        unit = target / 'orchard-acm-rescue.service'
+        wants = target / 'sysinit.target.wants/orchard-acm-rescue.service'
+        env = dict(os.environ)
+        env.pop('NFS_KEEP_RESCUE', None)
+        subprocess.run(['/bin/sh', '-eu', '-c', block], env=env, check=True)
+        self.assertFalse(unit.exists())
+        env['NFS_KEEP_RESCUE'] = 'yes'
+        subprocess.run(['/bin/sh', '-eu', '-c', block], env=env, check=True)
+        self.assertIn('Restart=always', unit.read_text())
+        self.assertTrue(wants.is_symlink())
 
     def test_handoff_mount_tracking_works_without_a_mountpoint_applet(self):
         source = (HERE / 'handoff').read_text()

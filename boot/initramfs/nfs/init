@@ -32,6 +32,12 @@ ip address add "$NFS_ADDRESS" dev usb0
 ip link set usb0 up
 /run/orchard/rescue/busybox sh /run/orchard/rescue/acm-rescue &
 echo "$!" > /run/orchard/rescue.pid
+if [ "${NFS_CLIENT_MODULES:-no}" = yes ]; then
+    # The root is not available yet; these modules and their dependencies
+    # were staged from the same kernel build into the RAM filesystem.
+    modprobe nfs
+    modprobe nfsv4
+fi
 echo "$NFS_PROFILE: USB network ready; NFS root $NFS_ROOT_ID."
 if [ "$NFS_HANDOFF" = auto ]; then
     touch /run/orchard/nfs-handoff

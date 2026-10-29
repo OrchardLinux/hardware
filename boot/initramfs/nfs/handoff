@@ -43,8 +43,9 @@ touch /run/orchard/nfs-handoff-attempted
 options="vers=4.0,proto=tcp,port=$NFS_PORT,addr=$NFS_SERVER,hard,timeo=50,retrans=2"
 timeout -s KILL 60 mount -t nfs4 -o "$options" "$NFS_SERVER:$NFS_EXPORT" /newroot
 /sbin/orchard-nfs-validate /newroot
-mkdir -p /run/systemd/system/sysinit.target.wants
-cat > /run/systemd/system/orchard-acm-rescue.service <<'UNIT'
+if [ "${NFS_KEEP_RESCUE:-no}" = yes ]; then
+    mkdir -p /run/systemd/system/sysinit.target.wants
+    cat > /run/systemd/system/orchard-acm-rescue.service <<'UNIT'
 [Unit]
 Description=Orchard physical USB RAM rescue
 DefaultDependencies=no
@@ -59,7 +60,8 @@ RestartSec=1
 TimeoutStopSec=2
 KillMode=control-group
 UNIT
-ln -s ../orchard-acm-rescue.service /run/systemd/system/sysinit.target.wants/orchard-acm-rescue.service
+    ln -s ../orchard-acm-rescue.service /run/systemd/system/sysinit.target.wants/orchard-acm-rescue.service
+fi
 # Keep an NFS-rooted interface outside NetworkManager's DHCP/reconnection policy.
 mkdir -p /run/NetworkManager/conf.d
 cat > /run/NetworkManager/conf.d/90-orchard-nfs.conf <<'NETWORK'
@@ -76,7 +78,7 @@ exec /usr/lib/systemd/systemd
 INIT
 chmod 755 /run/orchard/rescue/systemd-init
 echo ready > /run/orchard/nfs-handoff-state
-# Stop the pre-handoff shell; systemd starts its RAM-owned replacement.
+# Stop the pre-handoff shell; systemd starts a replacement only if requested.
 if [ -f /run/orchard/rescue.pid ]; then
     rescue_retired=true
     rescue=$(cat /run/orchard/rescue.pid)

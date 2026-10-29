@@ -4,7 +4,7 @@ import argparse
 import hashlib
 import ipaddress
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import shlex
 import shutil
@@ -88,20 +88,80 @@ def network(server, address, export, port):
             'NFS_PORT': str(port), 'NFS_HOST_MAC': mac(host), 'NFS_DEVICE_MAC': mac(guest.ip)}
 
 
+def nfs_modules(kernel, release):
+    """Select the NFSv4 client and its recorded module dependencies."""
+    kernel = Path(kernel)
+    if (kernel / 'kernel.release').read_text().strip() != release:
+        raise ValueError('Kernel release differs from the root identity')
+    image = kernel / 'Image.gz'
+    if not image.is_file() or image.is_symlink():
+        raise ValueError('Kernel image is missing or linked')
+    directory = kernel / 'lib/modules' / release
+    if not directory.is_dir() or directory.is_symlink():
+        raise ValueError('Kernel module tree is missing or linked')
+    metadata = directory / 'modules.dep'
+    if not metadata.is_file() or metadata.is_symlink():
+        raise ValueError('Kernel module dependencies are missing or linked')
+
+    def module_name(value):
+        path = PurePosixPath(value)
+        if (not value or path.is_absolute() or any(p in ('', '.', '..') for p in value.split('/')) or
+                not re.fullmatch(r'[A-Za-z0-9_./+-]+\.ko', value)):
+            raise ValueError('Unsafe kernel module path')
+        return path.as_posix()
+
+    dependencies = {}
+    for line in metadata.read_text().splitlines():
+        name, separator, rest = line.partition(':')
+        if not separator:
+            raise ValueError('Invalid kernel module dependency entry')
+        name = module_name(name)
+        if name in dependencies:
+            raise ValueError('Duplicate kernel module dependency entry')
+        dependencies[name] = [module_name(item) for item in rest.split()]
+
+    roots = ('kernel/fs/nfs/nfs.ko', 'kernel/fs/nfs/nfsv4.ko')
+    selected, pending = set(), list(roots)
+    while pending:
+        name = pending.pop()
+        if name in selected:
+            continue
+        if name not in dependencies:
+            raise ValueError('Missing NFS module dependency: ' + name)
+        selected.add(name)
+        pending.extend(dependencies[name])
+
+    files = {}
+    for name in sorted(selected):
+        source = directory
+        for part in PurePosixPath(name).parts:
+            source = source / part
+            if source.is_symlink():
+                raise ValueError('Linked kernel module refused: ' + name)
+        if not source.is_file():
+            raise ValueError('Missing kernel module: ' + name)
+        files[name] = source
+    depfile = ''.join(name + ':' + ''.join(' ' + item for item in dependencies[name]) + '\n'
+                      for name in sorted(selected))
+    return image, files, depfile
+
+
 def stage(*, receipt, busybox, output, server, address, export, port,
-          function='ecm', handoff='manual'):
+          function='ecm', handoff='manual', kernel_dir=None, keep_rescue=False):
     receipt, busybox, output = Path(receipt), Path(busybox), Path(output)
     blob = receipt.read_bytes()
     root, compatible = identity(blob)
     binary = static_busybox(busybox)
     values = network(server, address, export, port)
-    if function not in ('ecm', 'ncm') or handoff not in ('manual', 'auto'):
+    if function not in ('ecm', 'ncm') or handoff not in ('manual', 'auto') or type(keep_rescue) is not bool:
         raise ValueError('Unsupported USB function or handoff policy')
+    modules = nfs_modules(kernel_dir, root['kernel_release']) if kernel_dir is not None else None
     values.update(NFS_PROFILE=root['profile'], NFS_ARCHITECTURE=root['architecture'],
                   NFS_KERNEL_RELEASE=root['kernel_release'], NFS_ROOT_ID=root['root_id'],
                   NFS_IDENTITY_SHA256=hashlib.sha256(blob).hexdigest(),
                   NFS_COMPATIBLE=' '.join(compatible), NFS_FUNCTION=function,
-                  NFS_HANDOFF=handoff)
+                  NFS_HANDOFF=handoff, NFS_CLIENT_MODULES='yes' if modules else 'no',
+                  NFS_KEEP_RESCUE='yes' if keep_rescue else 'no')
     if output.exists() or output.is_symlink():
         raise ValueError('Output already exists; choose a fresh RAM root')
     output.mkdir(parents=True)
@@ -117,8 +177,22 @@ def stage(*, receipt, busybox, output, server, address, export, port,
     config += ''.join(name + '=' + shlex.quote(value) + '\n' for name, value in sorted(values.items()))
     (output / 'rootfs/etc/orchard/nfs.conf').write_text(config)
     (output / 'rootfs/etc/orchard/nfs.conf').chmod(0o600)
-    return {'schema': 1, 'kind': 'orchard.nfs-runtime', 'root': root, 'network': values,
-            'busybox_sha256': hashlib.sha256(binary).hexdigest()}
+    result = {'schema': 1, 'kind': 'orchard.nfs-runtime', 'root': root, 'network': values,
+              'busybox_sha256': hashlib.sha256(binary).hexdigest()}
+    if modules:
+        image, files, depfile = modules
+        destination = output / 'rootfs/lib/modules' / root['kernel_release']
+        destination.mkdir(parents=True)
+        hashes = {}
+        for name, source in files.items():
+            target = destination / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, target)
+            hashes[name] = hashlib.sha256(target.read_bytes()).hexdigest()
+        (destination / 'modules.dep').write_text(depfile)
+        result['kernel'] = {'image_sha256': hashlib.sha256(image.read_bytes()).hexdigest(),
+                            'modules': hashes}
+    return result
 
 
 def main():
@@ -130,6 +204,8 @@ def main():
     parser.add_argument('--port', type=int, required=True)
     parser.add_argument('--function', choices=('ecm', 'ncm'), default='ecm')
     parser.add_argument('--handoff', choices=('manual', 'auto'), default='manual')
+    parser.add_argument('--kernel-dir', type=Path, help='staged matching kernel with modular NFS client')
+    parser.add_argument('--keep-rescue', action='store_true', help='keep the physical root shell after handoff')
     args = parser.parse_args()
     try:
         result = stage(**vars(args))
