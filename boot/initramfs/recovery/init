@@ -22,8 +22,10 @@ ip address add 172.16.42.1/30 dev usb0
 ip link set usb0 up
 udhcpd -f /etc/udhcpd.conf &
 echo "${board#apple,} recovery: USB serial ready; provision an SSH key before SSH starts."
+# Respawn unconditionally: a USB re-enumeration hangs up the shell, which then
+# exits non-zero, and serial is the only way to provision SSH.
 (
-    while getty -n -l /bin/sh ttyGS0 115200 vt100; do sleep 1; done
+    while true; do getty -n -l /bin/sh ttyGS0 115200 vt100; sleep 1; done
 ) &
 # Only PID 1 may retire the RAM userspace. A separate writer must first install
 # and verify a new sibling root, then arm this one-shot request in /run.

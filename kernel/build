@@ -78,16 +78,18 @@ snapshot() {
 }
 
 # Tree the patch series produces, built in a temporary index without
-# touching any file.
+# touching any file. It runs in $(...), where set -e does not apply, so
+# every step must fail the function explicitly.
 desired_tree() {
-  local index="$work/desired-index.$$"
+  local index="$work/desired-index.$$" patch tree
   rm -f "$index"
-  GIT_INDEX_FILE=$index git -C "$source" read-tree HEAD
+  GIT_INDEX_FILE=$index git -C "$source" read-tree HEAD || return
   for patch in "${patches[@]}"; do
-    GIT_INDEX_FILE=$index git -C "$source" apply --cached "$patch"
+    GIT_INDEX_FILE=$index git -C "$source" apply --cached "$patch" || { rm -f "$index"; return 1; }
   done
-  GIT_INDEX_FILE=$index git -C "$source" write-tree
+  tree=$(GIT_INDEX_FILE=$index git -C "$source" write-tree) || { rm -f "$index"; return 1; }
   rm -f "$index"
+  printf '%s\n' "$tree"
 }
 
 apply_patches() {
@@ -129,7 +131,7 @@ else
     echo 'Kernel patches changed; applying only the difference to the tree...'
     # Only files whose content changes are written, so the others keep their
     # timestamps and make recompiles just what the new series changes.
-    desired=$(desired_tree)
+    desired=$(desired_tree) || { echo 'The new kernel patch series does not apply; the tree is unchanged' >&2; exit 1; }
     git -C "$source" diff --binary "$(cat "$prepared")" "$desired" |
       git -C "$source" apply --whitespace=nowarn -
     [[ $(snapshot) == "$desired" ]] || { echo 'Kernel tree update did not produce the patch series' >&2; exit 1; }

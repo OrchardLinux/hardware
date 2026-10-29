@@ -1,0 +1,82 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Thu, 29 Oct 2026 04:57:23 -0700
+Subject: [PATCH] wifi: brcmfmac: Disable features a firmware build advertises
+ but lacks
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Apple's BCM4355 firmware answers the "p2p" iovar, so brcmfmac enables
+P2P, but it fails "p2p_da_override" with -52 and every P2P device
+creation fails at startup:
+
+  brcmf_p2p_set_firmware: failed to update device address ret -52
+  brcmf_p2p_create_p2pdev: set p2p_disc error
+  brcmf_cfg80211_add_iface: add iface p2p-dev-wld0 type 10 failed: err=-52
+
+Add a table of features to disable per firmware ID, next to the
+existing override table, and list the iPad 5 and iPad 6 builds. Apple
+uses AWDL rather than Wi-Fi P2P.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from OrchardLinux/hardware#6 0002 (J71t ledger 4.6), the
+ feature.c part only, moved ahead of the iPad 5 as the J71b RAM test
+ notes ask; adds the J71b FWID 01-d0cb7703 (iPadOS 17.7.11).]
+Signed-off-by: Dalton Alexandre <alley.nightly_0b@icloud.com>
+---
+ .../broadcom/brcm80211/brcmfmac/feature.c     | 31 +++++++++++++++++++
+ 1 file changed, 31 insertions(+)
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/feature.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/feature.c
+index 488364ef8..3e140019f 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/feature.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/feature.c
+@@ -104,6 +104,36 @@ static const struct brcmf_feat_fwfeat brcmf_feat_fwfeat_map[] = {
+ 	{ "01-d2cbb8fd", BIT(BRCMF_FEAT_MONITOR_FMT_HW_RX_HDR) },
+ };
+ 
++/* Features a given firmware build advertises but can't actually do */
++static const struct brcmf_feat_fwfeat brcmf_feat_fwfeat_disable_map[] = {
++	/*
++	 * Apple BCM4355 firmware answers the "p2p" iovar but fails
++	 * "p2p_da_override" with -52, so every P2P device creation fails.
++	 * Apple uses AWDL, not Wi-Fi P2P.
++	 */
++	/* iOS 16 C0 "FearA" (iPad 5), 9.44.205.0.3.50.46 */
++	{ "01-9787ef4d", BIT(BRCMF_FEAT_P2P) },
++	/* iPadOS 17.7 C1 (iPad 6), 9.30.503.2.3.50.99 */
++	{ "01-d0cb7703", BIT(BRCMF_FEAT_P2P) },
++};
++
++static void brcmf_feat_firmware_disables(struct brcmf_pub *drv)
++{
++	const struct brcmf_feat_fwfeat *e;
++	int i, j;
++
++	for (i = 0; i < ARRAY_SIZE(brcmf_feat_fwfeat_disable_map); i++) {
++		e = &brcmf_feat_fwfeat_disable_map[i];
++		if (strcmp(e->fwid, drv->fwver))
++			continue;
++		for (j = 0; j < BRCMF_FEAT_LAST; j++)
++			if (e->feat_flags & drv->feat_flags & BIT(j))
++				brcmf_info("firmware %s: disabling feature %s\n",
++					   e->fwid, brcmf_feat_names[j]);
++		drv->feat_flags &= ~e->feat_flags;
++	}
++}
++
+ static void brcmf_feat_firmware_overrides(struct brcmf_pub *drv)
+ {
+ 	const struct brcmf_feat_fwfeat *e;
+@@ -343,6 +373,7 @@ void brcmf_feat_attach(struct brcmf_pub *drvr)
+ 
+ 	brcmf_feat_wlc_version_overrides(drvr);
+ 	brcmf_feat_firmware_overrides(drvr);
++	brcmf_feat_firmware_disables(drvr);
+ 
+ 	brcmf_fwvid_feat_attach(ifp);
+ 
+-- 
+2.56.0
+

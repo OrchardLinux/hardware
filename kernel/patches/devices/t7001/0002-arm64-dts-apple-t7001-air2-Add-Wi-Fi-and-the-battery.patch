@@ -1,0 +1,146 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Martin=20Pu=C5=A1k=C3=A1=C4=8D?= <martin@icebear.sk>
+Date: Thu, 29 Oct 2026 17:18:23 +0800
+Subject: [PATCH] arm64: dts: apple: t7001-air2: Add Wi-Fi and the battery
+ gauge
+
+Wire the iPad Air 2's BCM4350 on PCIe port 1, powered through a fixed
+regulator on PMIC GPIO 3 (REG_ON) with its device-wake line, and the
+battery gauge on UART5's HDQ line. Each model names its Wi-Fi module for
+brcmfmac's firmware selection: rieslinga on the J81, rieslingb on the
+J82 (ADT module-instance). m1n1 fills the MAC address through the wifi0
+alias.
+
+[Orchard: from mattonik/ipad-nixos b94d42f kernel/patches/0006-t7001-air2-enable-uart5-battery.patch, 0052-pcie-apple-t7000-j81-reg-on.patch, 0090-t7001-air2-pcie-dart-options-and-wifi-node.patch, handed to Orchard by micro23 (ipadair2-omarchy 7ea2b2b); REG_ON as a regulator on the D2207 GPIO instead of a PMIC register write from the PCIe driver, device-wake on the endpoint for pwrctrl, the gauge on the w1 HDQ master, no zero MAC placeholder.]
+Signed-off-by: Martin Puškáč <martin@icebear.sk>
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/arm64/boot/dts/apple/t7001-air2.dtsi | 69 +++++++++++++++++++++++
+ arch/arm64/boot/dts/apple/t7001-j81.dts   |  4 ++
+ arch/arm64/boot/dts/apple/t7001-j82.dts   |  4 ++
+ 3 files changed, 77 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/t7001-air2.dtsi b/arch/arm64/boot/dts/apple/t7001-air2.dtsi
+index fb000852d..637744c30 100644
+--- a/arch/arm64/boot/dts/apple/t7001-air2.dtsi
++++ b/arch/arm64/boot/dts/apple/t7001-air2.dtsi
+@@ -10,6 +10,10 @@
+ / {
+ 	chassis-type = "tablet";
+ 
++	aliases {
++		wifi0 = &wifi0;
++	};
++
+ 	chosen {
+ 		#address-cells = <2>;
+ 		#size-cells = <2>;
+@@ -68,6 +72,20 @@
+ 
+ 		/* To be filled by loader */
+ 	};
++
++	battery_info: battery {
++		compatible = "simple-battery";
++		charge-full-design-microamp-hours = <7340000>;
++	};
++
++	/* Wi-Fi REG_ON is D2207 GPIO 3. */
++	wlan_vdd: regulator-wlan-vdd {
++		compatible = "regulator-fixed";
++		regulator-name = "wlan-vdd";
++		gpio = <&pmu_gpio 3 GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++		off-on-delay-us = <100000>;
++	};
+ };
+ 
+ &serial0 {
+@@ -83,6 +101,14 @@
+ 		#address-cells = <1>;
+ 		#size-cells = <1>;
+ 
++		pmu_gpio: gpio {
++			compatible = "apple,d2207-pmic-gpio";
++			gpio-controller;
++			#gpio-cells = <2>;
++			/* Only Wi-Fi REG_ON (3) is used; the other lines stay as iBoot left them. */
++			gpio-reserved-ranges = <0 3>, <4 17>;
++		};
++
+ 		rtc@5c0 {
+ 			compatible = "apple,arabela-pmic-rtc", "apple,amber-pmic-rtc";
+ 			reg = <0x5c0 0x10>;
+@@ -111,3 +137,46 @@
+ 		};
+ 	};
+ };
++
++&serial5 {
++	pinctrl-0 = <&uart5_pins>;
++	pinctrl-names = "default";
++	status = "okay";
++
++	onewire {
++		compatible = "ti,hdq-uart";
++
++		battery: fuel-gauge {
++			compatible = "ti,bq27545-hdq";
++			monitored-battery = <&battery_info>;
++		};
++	};
++};
++
++&pcie_dart1 {
++	status = "okay";
++};
++
++&pcie {
++	iommu-map = <0x100 &pcie_dart1 0 0x0 0x80000000 0x0 0x3ffff000 1>;
++	iommu-map-mask = <0xff00>;
++	status = "okay";
++
++	pci@1,0 {
++		device_type = "pci";
++		reg = <0x800 0x0 0x0 0x0 0x0>;
++		bus-range = <1 1>;
++		reset-gpios = <&pinctrl 179 GPIO_ACTIVE_LOW>;
++		max-link-speed = <1>;
++		#address-cells = <3>;
++		#size-cells = <2>;
++		ranges;
++
++		wifi0: wifi@0,0 {
++			compatible = "pci14e4,43a3";
++			reg = <0x10000 0x0 0x0 0x0 0x0>;
++			device-wake-gpios = <&pinctrl 165 GPIO_ACTIVE_HIGH>;
++			vdd-supply = <&wlan_vdd>;
++		};
++	};
++};
+diff --git a/arch/arm64/boot/dts/apple/t7001-j81.dts b/arch/arm64/boot/dts/apple/t7001-j81.dts
+index ca90dc0c8..ede4205b2 100644
+--- a/arch/arm64/boot/dts/apple/t7001-j81.dts
++++ b/arch/arm64/boot/dts/apple/t7001-j81.dts
+@@ -12,3 +12,7 @@
+ 	compatible = "apple,j81", "apple,t7001", "apple,arm-platform";
+ 	model = "Apple iPad Air 2 (Wi-Fi)";
+ };
++
++&wifi0 {
++	brcm,board-type = "apple,rieslinga";
++};
+diff --git a/arch/arm64/boot/dts/apple/t7001-j82.dts b/arch/arm64/boot/dts/apple/t7001-j82.dts
+index d9fd16f48..8668e2527 100644
+--- a/arch/arm64/boot/dts/apple/t7001-j82.dts
++++ b/arch/arm64/boot/dts/apple/t7001-j82.dts
+@@ -12,3 +12,7 @@
+ 	compatible = "apple,j82", "apple,t7001", "apple,arm-platform";
+ 	model = "Apple iPad Air 2 (Cellular)";
+ };
++
++&wifi0 {
++	brcm,board-type = "apple,rieslingb";
++};

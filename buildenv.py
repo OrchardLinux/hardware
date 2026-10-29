@@ -25,12 +25,20 @@ def native():
     return False
 
 
+# Podman's names for host machines it can build for.
+HOST_ARCHES = {'x86_64': 'amd64', 'amd64': 'amd64', 'aarch64': 'arm64', 'arm64': 'arm64'}
+
+
 def build(image, containerfile, context, arch=None):
     if native():
         if arch not in (None, 'arm64'):
             raise ValueError('Native builds require ARM64 inputs')
         print('Using provisioned native environment: ' + identity(image), flush=True)
     else:
+        # Always name the architecture: recipes share base images such as
+        # debian:bookworm, and an arm64 recipe re-points that local tag, which
+        # a host-architecture build would otherwise silently inherit.
+        arch = arch or HOST_ARCHES.get(platform.machine().lower())
         argv = ['podman', 'build'] + (['--arch', arch] if arch else [])
         subprocess.run([*argv, '-f', str(containerfile), '-t', image, str(context)], check=True)
 

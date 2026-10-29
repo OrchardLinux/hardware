@@ -18,4 +18,6 @@ fi
     > /run/recovery/ssh_host_ed25519_key.pub
 echo 'SSH host public key (pin this from the USB serial connection):'
 cat /run/recovery/ssh_host_ed25519_key.pub
-exec /usr/sbin/dropbear -F -E -s -g -j -k -P /run/recovery/dropbear.pid -r "$hostkey" -p 172.16.42.1:22
+# -W: Dropbear's default 24 KiB receive window halves USB transfers (5.7 vs
+# 12.4 MB/s for an install stream on J71b); 4 MiB keeps the link full.
+exec /usr/sbin/dropbear -F -E -s -g -j -k -W 4194304 -P /run/recovery/dropbear.pid -r "$hostkey" -p 172.16.42.1:22

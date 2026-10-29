@@ -12,6 +12,7 @@ Add its compatible. Its PMU event block is not described yet, so like
 the D2333 it is not an interrupt controller.
 
 [Orchard: from mattonik/ipad-nixos b94d42f kernel/patches/0052-pcie-apple-t7000-j81-reg-on.patch, handed to Orchard by micro23 (ipadair2-omarchy 7ea2b2b); 0052 wrote the D2207 GPIO 3 configuration register from the PCIe host driver through an apple,reg-on-pmic phandle; the PMIC GPIOs are described here as a GPIO controller instead]
+Signed-off-by: Martin Puškáč <martin@icebear.sk>
 Co-developed-by: Henrik Klee <henrik@goat-code.com>
 Signed-off-by: Henrik Klee <henrik@goat-code.com>
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

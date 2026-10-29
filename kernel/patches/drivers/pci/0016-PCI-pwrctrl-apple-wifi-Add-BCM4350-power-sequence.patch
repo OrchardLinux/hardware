@@ -16,6 +16,7 @@ DEVICE_WAKE, rolling VDD back if that fails. Power-off already
 deasserts DEVICE_WAKE before VDD.
 
 [Orchard: from mattonik/ipad-nixos b94d42f kernel/patches/0052-pcie-apple-t7000-j81-reg-on.patch, 0067-j81-wifi-deep-sleep-and-device-wake-toggles.patch, handed to Orchard by micro23 (ipadair2-omarchy 7ea2b2b); the PCIe host's direct D2207 register write becomes the endpoint's vdd-supply, and the device-wake test option becomes the default for BCM4350. DEVICE_WAKE is now asserted before link training, where 0067 asserted it after link-up]
+Signed-off-by: Martin Puškáč <martin@icebear.sk>
 Co-developed-by: Henrik Klee <henrik@goat-code.com>
 Signed-off-by: Henrik Klee <henrik@goat-code.com>
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
