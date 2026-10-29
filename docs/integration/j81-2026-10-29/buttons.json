@@ -1,0 +1,24 @@
+{
+  "phase": "complete",
+  "bytes": 8256,
+  "events": 344,
+  "keys": {
+    "172": [
+      0,
+      1
+    ],
+    "116": [
+      0,
+      1
+    ],
+    "115": [
+      0,
+      1
+    ],
+    "114": [
+      0,
+      1
+    ]
+  },
+  "all_four_buttons_press_and_release": true
+}
