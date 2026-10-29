@@ -24,6 +24,7 @@ the error reflector, fetch and diag configuration from the device tree
 are already shared with the other S5L8960X DARTs.
 
 [Orchard: from mattonik/ipad-nixos b94d42f kernel/patches/0081-apple-dart-s5l8960x-ios-pte-format.patch, 0085-apple-dart-h1b-apple-init-order.patch, 0088-io-pgtable-dart-ios-leaf-bits.patch, 0089-apple-dart-j81-options-from-device-tree.patch, handed to Orchard by micro23 (ipadair2-omarchy 7ea2b2b); per-compatible hw data instead of the apple,ios-pte/apple,pci-alias DT properties and module parameters; the entry format is the existing S5L8960X quirk; protection bits kept by default; the device-name match, PCI IOVA window/rebase and alias mapping, fault walk and debugfs dump dropped]
+Signed-off-by: Martin Puškáč <martin@icebear.sk>
 Co-developed-by: Henrik Klee <henrik@goat-code.com>
 Signed-off-by: Henrik Klee <henrik@goat-code.com>
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

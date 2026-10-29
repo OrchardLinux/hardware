@@ -23,6 +23,7 @@ The D2207 PMU event block is not handled; the D2207 has no interrupt
 controller here.
 
 [Orchard: from mattonik/ipad-nixos b94d42f kernel/patches/0052-pcie-apple-t7000-j81-reg-on.patch, handed to Orchard by micro23 (ipadair2-omarchy 7ea2b2b); register map and level bit from 0052 and research/j81-d2207-gpio-register-correction.md, moved from the PCIe host driver into the PMIC GPIO driver; mode field, input register and line count read from the public iOS 10.0 T8010 AppleD2207PMU (userlandkernel/ios-unstripped-kexts 96ca2b7), the binary Martin's notes cite]
+Signed-off-by: Martin Puškáč <martin@icebear.sk>
 Co-developed-by: Henrik Klee <henrik@goat-code.com>
 Signed-off-by: Henrik Klee <henrik@goat-code.com>
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
