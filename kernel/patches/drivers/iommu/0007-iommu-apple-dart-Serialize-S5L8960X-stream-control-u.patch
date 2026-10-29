@@ -1,0 +1,69 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <henrik@goat-code.com>
+Date: Thu, 29 Oct 2026 15:51:30 +0800
+Subject: [PATCH] iommu: apple-dart: Serialize S5L8960X stream control updates
+
+The S5L8960X DART packs the control bytes of its four streams into one
+register, and its write_tcr replaces one byte with a read-modify-write.
+Streams of different groups attach independently, so two attaches on one
+DART can interleave and one stream's update can undo the other's.
+
+Take a lock around the read-modify-write. It is a lock of its own: the
+iOS-order translation setup already calls write_tcr under dart->lock.
+Return instead of writing when the stream ID is out of range.
+
+Reported-by: Josh Slaughter <josh@clicksandmortarwebsites.com>
+Closes: https://github.com/OrchardLinux/linux/pull/1
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/iommu/apple-dart.c | 16 ++++++++++++++--
+ 1 file changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/iommu/apple-dart.c b/drivers/iommu/apple-dart.c
+index 9a476dbab..3ed0500e0 100644
+--- a/drivers/iommu/apple-dart.c
++++ b/drivers/iommu/apple-dart.c
+@@ -226,6 +226,8 @@ struct apple_dart {
+ 	int num_clks;
+ 
+ 	spinlock_t lock;
++	/* S5L8960X: the packed per-stream control register */
++	spinlock_t tcr_lock;
+ 
+ 	u32 ias;
+ 	u32 oas;
+@@ -401,14 +403,23 @@ static u32 apple_dart_s5l8960x_read_tcr(struct apple_dart *dart, u32 sid)
+ static void apple_dart_s5l8960x_write_tcr(struct apple_dart *dart, u32 sid, u32 val)
+ {
+ 	u32 shift = sid * DART_S5L8960X_TCR_BITS_PER_STREAM;
++	unsigned long flags;
+ 	u32 tcr;
+ 
+-	WARN_ON(sid >= DART_S5L8960X_MAX_STREAMS);
+-	tcr = readl(dart->regs + dart->hw->tcr);
++	if (WARN_ON(sid >= DART_S5L8960X_MAX_STREAMS))
++		return;
+ 
++	/*
++	 * The four streams share this register, and streams of different
++	 * groups attach independently: serialize the read-modify-write. Some
++	 * callers hold dart->lock, so it takes a lock of its own.
++	 */
++	spin_lock_irqsave(&dart->tcr_lock, flags);
++	tcr = readl(dart->regs + dart->hw->tcr);
+ 	tcr &= ~(0xff << shift);
+ 	tcr |= (val & 0xff) << shift;
+ 	writel(tcr, dart->regs + dart->hw->tcr);
++	spin_unlock_irqrestore(&dart->tcr_lock, flags);
+ }
+ 
+ static u32 apple_dart_t8020_read_tcr(struct apple_dart *dart, u32 sid)
+@@ -1660,6 +1671,7 @@ static int apple_dart_probe(struct platform_device *pdev)
+ 	dart->dev = dev;
+ 	dart->hw = of_device_get_match_data(dev);
+ 	spin_lock_init(&dart->lock);
++	spin_lock_init(&dart->tcr_lock);
+ 
+ 	dart->regs = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
+ 	if (IS_ERR(dart->regs))
