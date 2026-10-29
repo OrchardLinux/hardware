@@ -27,6 +27,7 @@ def package(directory, output, device='j71b', platform=None):
         raise ValueError('Platform device trees are missing')
     for name in ('kernel/Image.gz', *(() if platform else (dtb,)), 'kernel/kernel.release',
                  'boot/busybox', 'boot/dropbear', 'boot/dropbearkey',
+                 'boot/wpa_supplicant', 'boot/wpa_cli', 'boot/iw',
                  'quiet/m1n1.bin', 'quiet/pongo.bin'):
         receipt(directory / name)
     if not any((directory / 'kernel/lib/modules').rglob('*.ko')):

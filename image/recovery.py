@@ -13,6 +13,7 @@ HERE = ROOT / 'boot/initramfs/recovery'
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('loader', 'kernel', 'dtb', 'busybox', 'dropbear', 'dropbearkey',
+                 'wpa-supplicant', 'wpa-cli', 'iw',
                  'base', 'base-receipt', 'modules-dir', 'policy-dir', 'output'):
         parser.add_argument('--' + name, type=Path, required=True)
     purpose = parser.add_mutually_exclusive_group(required=True)
@@ -42,6 +43,8 @@ def main():
         subprocess.run([sys.executable, '-m', 'orchard_hardware.image.prepare_runtime',
                         '--busybox', str(args.busybox), '--dropbear', str(args.dropbear),
                         '--dropbearkey', str(args.dropbearkey),
+                        '--wpa-supplicant', str(args.wpa_supplicant),
+                        '--wpa-cli', str(args.wpa_cli), '--iw', str(args.iw),
                         '--base', str(args.base), '--base-receipt', str(args.base_receipt),
                         '--modules-dir', str(args.modules_dir), *purpose_args,
                         '--policy-dir', str(args.policy_dir), '--output', str(stage / 'root'), *cleanup_args], check=True)

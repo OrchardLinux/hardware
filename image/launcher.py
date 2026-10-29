@@ -174,8 +174,8 @@ def main():
     catalogue.write_text(json.dumps({'schema':1,'profile':'j71b','installations':records},indent=2)+'\n')
     files=inputs['files']
     command=[sys.executable,'-m','orchard_hardware.image.recovery']
-    for key in ('loader','kernel','dtb','busybox','dropbear','dropbearkey'):
-        command+=['--'+key,files[key]['path']]
+    for key in ('loader','kernel','dtb','busybox','dropbear','dropbearkey','wpa_supplicant','wpa_cli','iw'):
+        command+=['--'+key.replace('_','-'),files[key]['path']]
     command+=['--base',str(args.base),'--base-receipt',str(args.base_receipt),
               '--modules-dir',str(modules),'--policy-dir',str(policies),
               '--launcher-catalogue',str(catalogue),'--launcher-release',args.release,
