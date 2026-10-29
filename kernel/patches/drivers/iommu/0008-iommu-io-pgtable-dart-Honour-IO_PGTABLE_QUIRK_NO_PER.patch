@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <henrik@goat-code.com>
+Date: Thu, 29 Oct 2026 16:53:40 +0800
+Subject: [PATCH] iommu/io-pgtable-dart: Honour IO_PGTABLE_QUIRK_NO_PERMS
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+IO_PGTABLE_QUIRK_NO_PERMS asks a format to ignore IOMMU_READ and
+IOMMU_WRITE and map everything with full access. The DART format didn't
+implement it, so a caller couldn't ask for leaves without the DART
+"no read" and "no write" bits.
+
+The A8X (T7000) PCIe DART was brought up with leaves that carry no
+protection bits, matching what iOS's AppleS5L8960XDART writes. Support
+the generic quirk so the DART driver can select that format per SoC
+instead of through a format-private flag. Without the quirk nothing
+changes.
+
+Reported-by: Martin Puškáč <martin@icebear.sk>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/iommu/io-pgtable-dart.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/drivers/iommu/io-pgtable-dart.c b/drivers/iommu/io-pgtable-dart.c
+index f5a375fa3..9c0b81a57 100644
+--- a/drivers/iommu/io-pgtable-dart.c
++++ b/drivers/iommu/io-pgtable-dart.c
+@@ -218,6 +218,9 @@ static dart_iopte dart_prot_to_pte(struct dart_io_pgtable *data,
+ {
+ 	dart_iopte pte = 0;
+ 
++	if (data->iop.cfg.quirks & IO_PGTABLE_QUIRK_NO_PERMS)
++		prot |= IOMMU_READ | IOMMU_WRITE;
++
+ 	if (data->iop.fmt == APPLE_DART) {
+ 		pte |= APPLE_DART1_PTE_PROT_SP_DIS;
+ 		if (!(prot & IOMMU_WRITE))

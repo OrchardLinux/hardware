@@ -1,0 +1,47 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <henrik@goat-code.com>
+Date: Thu, 29 Oct 2026 16:57:48 +0800
+Subject: [PATCH] PCI: apple-h9p: Read apple,msi-doorbell as a single cell
+
+The binding defines apple,msi-doorbell as uint32, and the T8010 device
+trees write it as one cell. The driver reads it with
+of_property_read_u64(), which fails with -EOVERFLOW on a four-byte
+property, so the driver has always used its built-in default. That
+default happens to equal the T8010 value, which hid the mismatch.
+
+Read the property as the binding defines it. The T8010 device trees
+give 0xbffff000, the same as the default, so nothing changes there; a
+SoC with a different doorbell can now describe it.
+
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/pci/controller/pcie-apple-h9p.c | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/pci/controller/pcie-apple-h9p.c b/drivers/pci/controller/pcie-apple-h9p.c
+index bc70fef7e..3d7a23ab1 100644
+--- a/drivers/pci/controller/pcie-apple-h9p.c
++++ b/drivers/pci/controller/pcie-apple-h9p.c
+@@ -1999,6 +1999,7 @@ static int apple_h9p_pcie_probe(struct platform_device *pdev)
+ 	struct device *dev = &pdev->dev;
+ 	struct pci_host_bridge *bridge;
+ 	struct apple_h9p_pcie *pcie;
++	u32 doorbell;
+ 	int ret;
+ 
+ 	bridge = devm_pci_alloc_host_bridge(dev, sizeof(*pcie));
+@@ -2118,10 +2119,9 @@ static int apple_h9p_pcie_probe(struct platform_device *pdev)
+ 		pcie->pwrctrl_powered = true;
+ 	}
+ 
+-	ret = of_property_read_u64(dev->of_node, "apple,msi-doorbell",
+-				   &pcie->msi_doorbell);
+-	if (ret)
+-		pcie->msi_doorbell = H9P_DEFAULT_MSI_DOORBELL;
++	pcie->msi_doorbell = H9P_DEFAULT_MSI_DOORBELL;
++	if (!of_property_read_u32(dev->of_node, "apple,msi-doorbell", &doorbell))
++		pcie->msi_doorbell = doorbell;
+ 
+ 	ret = apple_h9p_pcie_setup_msi(pcie);
+ 	if (ret)

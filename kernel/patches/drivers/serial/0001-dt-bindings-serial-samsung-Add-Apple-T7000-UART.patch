@@ -1,0 +1,48 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <henrik@goat-code.com>
+Date: Thu, 29 Oct 2026 16:59:16 +0800
+Subject: [PATCH] dt-bindings: serial: samsung: Add Apple T7000 UART
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The A8 and A8X UARTs have the sampling-factor field that the T8010
+match data programs: on the iPad Air 2, writing (16 - f) << 16 | d to
+UBRDIV gives 24 MHz / (f * (d + 1)) for f from 16 down to 4, so that
+3 Mbaud is reachable for its Bluetooth UART with f = 8, d = 0. The
+oversampling formula of the T8010 match data is the same, and the
+register layout is otherwise the S5L one.
+
+Add an apple,t7000-uart compatible with apple,t8010-uart and
+apple,s5l-uart as fallbacks, so that A8/A8X UARTs get the T8010 baud
+rate programming without a driver change.
+
+Martin's version selects the mode with a board-level DT property,
+apple,baud-factor-select, in ipad-nixos b94d42f
+kernel/patches/0092-samsung-tty-apple-s5l-sampling-factor-baud.patch
+(measurements in research/2026-10-11-uart3-register-capture.md,
+rounds 8 and 9). The mode is a property of the UART block, so it is
+selected by compatible here.
+
+Reported-by: Martin Puškáč <martin@icebear.sk>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ Documentation/devicetree/bindings/serial/samsung_uart.yaml | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/serial/samsung_uart.yaml b/Documentation/devicetree/bindings/serial/samsung_uart.yaml
+index df763d5ae..806b60e21 100644
+--- a/Documentation/devicetree/bindings/serial/samsung_uart.yaml
++++ b/Documentation/devicetree/bindings/serial/samsung_uart.yaml
+@@ -31,6 +31,10 @@ properties:
+       - items:
+           - const: apple,t8010-uart
+           - const: apple,s5l-uart
++      - items:
++          - const: apple,t7000-uart
++          - const: apple,t8010-uart
++          - const: apple,s5l-uart
+       - items:
+           - const: samsung,exynos2200-uart
+           - const: google,gs101-uart

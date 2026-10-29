@@ -1,0 +1,84 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <henrik@goat-code.com>
+Date: Thu, 29 Oct 2026 16:57:14 +0800
+Subject: [PATCH] wifi: brcmfmac: pcie: Read the BCM4350 OTP
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Apple boards select their NVRAM by board type plus the module, vendor
+and version from the radio's OTP. brcmf_pcie_read_otp() doesn't know
+the BCM4350, used in the iPad Air 2, so only the bare board type was
+tried and the board's NVRAM had to be installed under a generic name.
+
+On the BCM4350 the OTP sits behind ChipCommon like on the BCM4355 and
+BCM4364. Its size comes from the ChipCommon capabilities: the 40 nm OTP
+holds (CC_CAP_OTPSIZE + 1) Kbit, shadowed from offset 0x800. A capture
+from an iPad Air 2 (ChipCommon rev 47, size encoding 5, 384 words) has
+Apple's system-vendor record at 0x8c0, as on the other Apple chips, with
+the complete module/vendor/version tuple and "s=C2". Read from 0x8c0 to
+the end of the OTP.
+
+Unlike the other chips in this function the BCM4350 is also used on
+non-Apple boards, whose OTP has no Apple record. A failed parse there
+isn't an error: keep the default firmware selection instead of failing
+the probe. An OTP size of zero means there is no OTP.
+
+This replaces a separate PCI driver that captured the OTP shadow so the
+host could pick the NVRAM.
+
+[Orchard: replaces mattonik/ipad-nixos b94d42f kernel/patches/0061-pcie-apple-t7000-bcm-probe.patch, 0062-pcie-apple-t7000-bcm-shadow-capture.patch, handed to Orchard by micro23 (ipadair2-omarchy 7ea2b2b); OTP layout from research/j81-bcm4350-otp-source-audit.md and research/2026-10-06-bcm4350-otp-parser-result.md]
+Reported-by: Martin Puškáč <martin@icebear.sk>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../broadcom/brcm80211/brcmfmac/pcie.c        | 24 ++++++++++++++++++-
+ 1 file changed, 23 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/pcie.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/pcie.c
+index 1f3e7021b..d7c6a402f 100644
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/pcie.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/pcie.c
+@@ -2050,12 +2050,29 @@ static int brcmf_pcie_read_otp(struct brcmf_pciedev_info *devinfo)
+ {
+ 	const struct pci_dev *pdev = devinfo->pdev;
+ 	struct brcmf_bus *bus = dev_get_drvdata(&pdev->dev);
+-	u32 coreid, base, words, idx, sromctl;
++	u32 coreid, base, words, idx, sromctl, otpsize;
++	bool optional = false;
+ 	u16 *otp;
+ 	struct brcmf_core *core;
+ 	int ret;
+ 
+ 	switch (devinfo->ci->chip) {
++	case BRCM_CC_4350_CHIP_ID:
++		/*
++		 * The 40 nm OTP holds (CC_CAP_OTPSIZE + 1) Kbit and is
++		 * shadowed in ChipCommon from 0x800; Apple's records start
++		 * at 0x8c0. The BCM4350 is used on non-Apple boards too,
++		 * whose OTP has no Apple record, so don't fail without one.
++		 */
++		otpsize = (devinfo->ci->cc_caps & CC_CAP_OTPSIZE) >>
++			  CC_CAP_OTPSIZE_SHIFT;
++		if (!otpsize)
++			return 0;
++		coreid = BCMA_CORE_CHIPCOMMON;
++		base = 0x8c0;
++		words = (otpsize + 1) * 1024 / 16 - (0x8c0 - 0x800) / 2;
++		optional = true;
++		break;
+ 	case BRCM_CC_4355_CHIP_ID:
+ 		coreid = BCMA_CORE_CHIPCOMMON;
+ 		base = 0x8c0;
+@@ -2128,6 +2145,11 @@ static int brcmf_pcie_read_otp(struct brcmf_pciedev_info *devinfo)
+ 	ret = brcmf_pcie_parse_otp(devinfo, (u8 *)otp, 2 * words);
+ 	kfree(otp);
+ 
++	if (ret && optional) {
++		brcmf_dbg(PCIE, "No Apple OTP record, using default firmware\n");
++		return 0;
++	}
++
+ 	return ret;
+ }
+ 

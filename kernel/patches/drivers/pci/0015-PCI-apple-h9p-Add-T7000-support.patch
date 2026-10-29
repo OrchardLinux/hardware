@@ -1,0 +1,335 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Martin=20Pu=C5=A1k=C3=A1=C4=8D?= <martin@icebear.sk>
+Date: Thu, 29 Oct 2026 16:59:59 +0800
+Subject: [PATCH] PCI: apple-h9p: Add T7000 support
+
+The A8/A8X (T7000, T7001) PCIe root complex is an earlier version of the
+H9P block: the root ports sit at the same ECAM offsets, the shared
+root-complex window starts with one 0x80-byte block per port at 0x100,
+and the per-port window has the LTSSM enable at +0x80, the event status
+and mask at +0x100/+0x104, the MSI configuration at +0x124 and the MSI
+vector base at +0x128, with 32 vectors split into four eight-vector
+port slices. The H9P MSI domain, port parsing, PERST# handling, port
+interrupts and pwrctrl integration therefore apply unchanged.
+
+The bring-up differs. Add a T7000 port sequence that follows iOS 8.1
+(_enablePortHardware() and enableGated()) as recovered and validated on
+an iPad Air 2 (J81):
+
+ - enable the port in the shared window: link enable off, internal reset
+   on, refclk on with automatic aux-clock disable, 100 us, link enable
+   on, internal reset bit 8 off, link control 3 (written twice);
+ - set the root port's target link speed to max-link-speed, or Gen1 if
+   the device tree gives none, when the port advertises that speed;
+ - apply the three dbi-overrides with the DBI read-only write enable
+   set, then the three apcie-config-tunables, each as an unconditional
+   read-modify-write;
+ - program the port event mask and status and the port's MSI slice;
+ - release PERST#, wait PCIE_RESET_CONFIG_WAIT_MS, start the LTSSM, and
+   wait up to 1 s for Data Link Layer Link Active. A timeout is reported
+   and leaves the port to enumeration, like a T8010 link failure.
+
+T7000 has no common bring-up step, so setup_common becomes optional.
+The port comes from the device tree's root-port child, PERST# from its
+reset-gpios, and endpoint power from pwrctrl. No T8010 behaviour
+changes.
+
+[Orchard: from mattonik/ipad-nixos b94d42f kernel/patches/0016-pcie-apple-t7000-compile-only-skeleton.patch, 0040-pcie-apple-t7000-tuning-baseline-test.patch, 0041-pcie-apple-t7000-dbi-ecam-read-test.patch, 0042-pcie-apple-t7000-dbi-tunables-write-test.patch, 0043-pcie-apple-t7000-link-state-probe-test.patch, 0044-pcie-apple-t7000-link-wait-write-test.patch, 0045-pcie-apple-t7000-link-speed-write-test.patch, 0053-pcie-apple-t7000-link-wait-dllla.patch, 0054-pcie-apple-t7000-clean-up.patch, 0056-pcie-apple-t7000-derive-msi-port-values.patch, 0057-pcie-apple-t7000-msi-domain.patch, handed to Orchard by micro23 (ipadair2-omarchy 7ea2b2b); rewritten as a T7000 variant of pcie-apple-h9p.c instead of a separate driver: the port comes from DT instead of a fixed port 1, the per-port window is mapped exclusively by name (the DART node must not cover it), the H9P MSI domain and port interrupts replace the driver's own, Wi-Fi power and device-wake move to pwrctrl (0052, 0067), and the debug dumps, debugfs and test parameters (0066, 0067) are dropped; the 10/100 us delays use usleep_range()]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/pci/controller/Kconfig          |   9 +-
+ drivers/pci/controller/pcie-apple-h9p.c | 191 +++++++++++++++++++++++-
+ 2 files changed, 190 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/pci/controller/Kconfig b/drivers/pci/controller/Kconfig
+index ce1130834..41b293316 100644
+--- a/drivers/pci/controller/Kconfig
++++ b/drivers/pci/controller/Kconfig
+@@ -55,7 +55,7 @@ config PCIE_APPLE
+ 	  If unsure, say Y if you have an Apple Silicon system.
+ 
+ config PCIE_APPLE_H9P
+-	bool "Apple A10 PCIe controller"
++	bool "Apple A8/A8X and A10 PCIe controller"
+ 	depends on ARCH_APPLE || COMPILE_TEST
+ 	depends on OF
+ 	depends on PCI_MSI
+@@ -64,9 +64,10 @@ config PCIE_APPLE_H9P
+ 	select PCI_PWRCTRL
+ 	help
+ 	  Say Y here if you want to enable PCIe controller support on Apple
+-	  A10 SoCs. The controller provides the root ports used by internal
+-	  NVMe storage and Wi-Fi devices and handles their link setup, MSI
+-	  routing, and storage-specific DMA translation.
++	  A8/A8X (T7000/T7001) and A10 (T8010) SoCs. The controller provides
++	  the root ports used by internal NVMe storage and Wi-Fi devices and
++	  handles their link setup, MSI routing, and storage-specific DMA
++	  translation.
+ 
+ config PCI_VERSATILE
+ 	bool "ARM Versatile PB PCI controller"
+diff --git a/drivers/pci/controller/pcie-apple-h9p.c b/drivers/pci/controller/pcie-apple-h9p.c
+index 3d7a23ab1..15593b6ef 100644
+--- a/drivers/pci/controller/pcie-apple-h9p.c
++++ b/drivers/pci/controller/pcie-apple-h9p.c
+@@ -1,6 +1,6 @@
+ // SPDX-License-Identifier: GPL-2.0
+ /*
+- * PCIe host bridge driver for Apple H9P/T8010 SoCs.
++ * PCIe host bridge driver for Apple H9P/T8010 and A8/A8X (T7000) SoCs.
+  *
+  * The controller exposes an ECAM-compatible root complex after the SoC-specific
+  * power, clock and PHY sequence has brought a port out of reset. The hardware
+@@ -171,6 +171,41 @@
+ 
+ #define H9P_DEFAULT_MSI_DOORBELL	0xbffff000ULL
+ 
++/*
++ * A8/A8X (T7000) root complex. The shared "rc" window holds one 0x80-byte
++ * block per port starting at 0x100 and one link register per port at 0x820;
++ * the "portN" windows are the same block as on T8010. Offsets, values and
++ * delays are those of iOS 8.1's _enablePortHardware() and enableGated()
++ * and of the J81 ADT's apcie tunables; bits without a decoded meaning
++ * are named after their register.
++ */
++#define T7000_RC_PORT_REFCLK(port)	(0x0100 + (port) * H9P_RC_PORT_STRIDE)
++#define T7000_RC_PORT_REFCLK_EN		BIT(0)
++#define T7000_RC_PORT_REFCLK_AUXCLK_AUTO_DIS	BIT(20)
++#define T7000_RC_PORT_RESET(port)	(0x0108 + (port) * H9P_RC_PORT_STRIDE)
++#define T7000_RC_PORT_RESET_ASSERT	BIT(0)
++#define T7000_RC_PORT_RESET_BIT8	BIT(8)
++#define T7000_RC_PORT_CTL_10C(port)	(0x010c + (port) * H9P_RC_PORT_STRIDE)
++#define T7000_RC_PORT_CTL_10C_BIT0	BIT(0)
++#define T7000_RC_PORT_LINK_EN(port)	(0x0118 + (port) * H9P_RC_PORT_STRIDE)
++#define T7000_RC_PORT_LINK_EN_BIT	BIT(0)
++#define T7000_RC_PORT_LINK_CTL(port)	(0x0820 + (port) * 0x0040)
++#define T7000_RC_PORT_LINK_CTL_INIT	3
++
++/*
++ * Gate for the dbi-overrides, in the root port's config space. Offset and bit
++ * match DesignWare's MISC_CONTROL_1 DBI_RO_WR_EN.
++ */
++#define T7000_CFG_DBI_RO_WR		0x08bc
++#define T7000_CFG_DBI_RO_WR_EN		BIT(0)
++
++#define T7000_PORT_CTL_114		0x0114
++#define T7000_PORT_IRQMASK_INIT		0xff70afff
++#define T7000_PORT_IRQSTAT_INIT		0x008f5000
++
++#define T7000_LINK_ACTIVE_POLL_US	5000
++#define T7000_LINK_ACTIVE_TIMEOUT_US	1000000
++
+ struct apple_h9p_pcie;
+ 
+ struct apple_h9p_tunable {
+@@ -238,6 +273,23 @@ static const struct apple_h9p_tunable h9p_port_tunables[] = {
+ 	{ 0x0140, 0x0073ffff, 0x00704c4b },
+ };
+ 
++/*
++ * Serialized per root port as dbi-overrides, relative to the root port's
++ * config space; written with the DBI read-only write enable set.
++ */
++static const struct apple_h9p_tunable t7000_dbi_overrides[] = {
++	{ 0x0024, 0x00000001, 0x00000001 },
++	{ 0x007c, 0x00000400, 0x00000000 },
++	{ 0x0b44, 0x00000003, 0x00000002 },
++};
++
++/* Serialized per root port as apcie-config-tunables. */
++static const struct apple_h9p_tunable t7000_port_tunables[] = {
++	{ 0x0090, 0x000000ff, 0x00000028 },
++	{ 0x0130, 0x00000003, 0x00000003 },
++	{ 0x0134, 0x00000001, 0x00000001 },
++};
++
+ struct apple_h9p_nvmmu {
+ 	struct apple_h9p_pcie *pcie;
+ 	void __iomem *base;
+@@ -273,8 +325,10 @@ enum apple_h9p_port_result {
+ /*
+  * SoC (and, for J172, board) differences.
+  *
+- * @setup_common: root complex bring-up, once, before any port
++ * @setup_common: root complex bring-up, once, before any port (optional)
+  * @setup_port: power up one root port and train its link
++ * @default_link_speed: target link speed of a root port without
++ *	max-link-speed (used by T7000)
+  * @has_clocks: the controller takes "aux" and "ref" clocks
+  * @has_phy: the controller has "phy" and "phy-ip" register windows
+  * @has_nvmmu: the storage port has an NVMMU ("nvmmu" window and interrupt)
+@@ -286,6 +340,7 @@ struct apple_h9p_hw {
+ 	int (*setup_common)(struct apple_h9p_pcie *pcie);
+ 	int (*setup_port)(struct apple_h9p_pcie *pcie, unsigned int port,
+ 			  enum apple_h9p_port_result *result);
++	u8 default_link_speed;
+ 	bool has_clocks;
+ 	bool has_phy;
+ 	bool has_nvmmu;
+@@ -1697,6 +1752,121 @@ static int apple_t8010_setup_common(struct apple_h9p_pcie *pcie)
+ 	return 0;
+ }
+ 
++/* Read-modify-write every entry, as iOS does, even when it already matches. */
++static void apple_t7000_write_tunables(void __iomem *base,
++				       const struct apple_h9p_tunable *tunables,
++				       unsigned int count)
++{
++	unsigned int i;
++
++	for (i = 0; i < count; i++) {
++		void __iomem *addr = base + tunables[i].offset;
++
++		h9p_writel_flush((readl(addr) & ~tunables[i].mask) |
++				 tunables[i].value, addr);
++	}
++}
++
++static void apple_t7000_enable_rc_port(struct apple_h9p_pcie *pcie,
++				       unsigned int port)
++{
++	void __iomem *rc = pcie->base_rc;
++
++	h9p_rmw(rc + T7000_RC_PORT_LINK_EN(port), T7000_RC_PORT_LINK_EN_BIT, 0);
++	h9p_rmw(rc + T7000_RC_PORT_RESET(port), 0, T7000_RC_PORT_RESET_ASSERT);
++	usleep_range(10, 20);
++	h9p_rmw(rc + T7000_RC_PORT_CTL_10C(port), T7000_RC_PORT_CTL_10C_BIT0, 0);
++	h9p_rmw(rc + T7000_RC_PORT_REFCLK(port), 0, T7000_RC_PORT_REFCLK_EN);
++	h9p_rmw(rc + T7000_RC_PORT_REFCLK(port), 0,
++		T7000_RC_PORT_REFCLK_AUXCLK_AUTO_DIS);
++	/* iOS waits t-refclk-to-perst (100 us) after enabling the refclk. */
++	usleep_range(100, 200);
++	h9p_rmw(rc + T7000_RC_PORT_LINK_EN(port), 0, T7000_RC_PORT_LINK_EN_BIT);
++	h9p_rmw(rc + T7000_RC_PORT_RESET(port), T7000_RC_PORT_RESET_BIT8, 0);
++	writel(T7000_RC_PORT_LINK_CTL_INIT, rc + T7000_RC_PORT_LINK_CTL(port));
++	/* enableGated() repeats the last _enablePortHardware() write. */
++	writel(T7000_RC_PORT_LINK_CTL_INIT, rc + T7000_RC_PORT_LINK_CTL(port));
++}
++
++static int apple_t7000_setup_port(struct apple_h9p_pcie *pcie, unsigned int port,
++				  enum apple_h9p_port_result *result)
++{
++	struct device *dev = pcie->dev;
++	void __iomem *config = pcie->base_config + port * H9P_CFG_PORT_STRIDE;
++	void __iomem *base = pcie->base_port[port];
++	u32 speed, dbi;
++	u16 lnksta;
++	u64 cap;
++	int ret;
++
++	*result = APPLE_H9P_PORT_READY;
++
++	ret = gpiod_direction_output(pcie->perst[port], 1);
++	if (ret)
++		return dev_err_probe(dev, ret,
++				     "failed to assert port %u PERST#\n", port);
++
++	apple_t7000_enable_rc_port(pcie, port);
++
++	/* iOS applies the port's maximum-link-speed to Link Control 2. */
++	cap = apple_h9p_read_pci_cap(pcie, port << 3, PCI_CAP_ID_EXP);
++	if (cap) {
++		pcie->pcie_cap[port] = cap;
++		speed = pcie->max_link_speed[port] ?:
++			pcie->hw->default_link_speed;
++		if (readl(config + cap + PCI_EXP_LNKCAP2) & BIT(speed))
++			h9p_rmww(config + cap + PCI_EXP_LNKCTL2,
++				 PCI_EXP_LNKCTL2_TLS, speed);
++	}
++
++	dbi = readl(config + T7000_CFG_DBI_RO_WR);
++	writel(dbi | T7000_CFG_DBI_RO_WR_EN, config + T7000_CFG_DBI_RO_WR);
++	apple_t7000_write_tunables(config, t7000_dbi_overrides,
++				   ARRAY_SIZE(t7000_dbi_overrides));
++	h9p_writel_flush(dbi, config + T7000_CFG_DBI_RO_WR);
++
++	apple_t7000_write_tunables(base, t7000_port_tunables,
++				   ARRAY_SIZE(t7000_port_tunables));
++
++	/* enableGated()'s tail: port events, then the port's MSI slice. */
++	h9p_writel_flush(0, base + T7000_PORT_CTL_114);
++	h9p_writel_flush(T7000_PORT_IRQMASK_INIT, base + H9P_PORT_IRQMASK);
++	h9p_writel_flush(T7000_PORT_IRQSTAT_INIT, base + H9P_PORT_IRQSTAT);
++	/* MSI enable with 2^3 vectors, the same value as H9P_PORT_PWRCTL_INIT. */
++	h9p_writel_flush(H9P_PORT_PWRCTL_INIT, base + H9P_PORT_PWRCTL);
++	h9p_writel_flush(port * 0x10001 * H9P_MSI_PER_PORT,
++			 base + H9P_PORT_MSIVECBASE);
++
++	ret = gpiod_direction_output(pcie->perst[port], 0);
++	if (ret)
++		return dev_err_probe(dev, ret,
++				     "failed to deassert port %u PERST#\n", port);
++	msleep(PCIE_RESET_CONFIG_WAIT_MS);
++
++	h9p_rmw(base + H9P_PORT_LTSSMCTL, 0, H9P_PORT_LTSSM_ENABLE);
++
++	/*
++	 * The port window has no decoded link-state register, so wait for the
++	 * root port's Data Link Layer Link Active bit. If the port cannot
++	 * report it, leave the result to enumeration.
++	 */
++	if (!cap ||
++	    !(readl(config + cap + PCI_EXP_LNKCAP) & PCI_EXP_LNKCAP_DLLLARC))
++		return 0;
++
++	ret = readw_poll_timeout(config + cap + PCI_EXP_LNKSTA, lnksta,
++				 lnksta & PCI_EXP_LNKSTA_DLLLA,
++				 T7000_LINK_ACTIVE_POLL_US,
++				 T7000_LINK_ACTIVE_TIMEOUT_US);
++	if (ret) {
++		dev_warn(dev, "port %u link did not become active (lnksta=%#x)\n",
++			 port, lnksta);
++		*result = APPLE_H9P_PORT_LINK_FAILED;
++	}
++
++	return 0;
++}
++
+ static int apple_h9p_prepare_phy_ports(struct apple_h9p_pcie *pcie)
+ {
+ 	unsigned int port;
+@@ -2102,9 +2272,11 @@ static int apple_h9p_pcie_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		return ret;
+ 
+-	ret = pcie->hw->setup_common(pcie);
+-	if (ret)
+-		return ret;
++	if (pcie->hw->setup_common) {
++		ret = pcie->hw->setup_common(pcie);
++		if (ret)
++			return ret;
++	}
+ 
+ 	ret = apple_h9p_prepare_phy_ports(pcie);
+ 	if (ret)
+@@ -2133,6 +2305,12 @@ static int apple_h9p_pcie_probe(struct platform_device *pdev)
+ 	return pci_host_common_init(pdev, bridge, &apple_h9p_pcie_ecam_ops);
+ }
+ 
++static const struct apple_h9p_hw apple_h9p_hw_t7000 = {
++	.setup_port = apple_t7000_setup_port,
++	/* The only speed validated on T7001; J81's port 1 is Gen1-limited. */
++	.default_link_speed = H9P_LINK_SPEED_2_5GT,
++};
++
+ static const struct apple_h9p_hw apple_h9p_hw_t8010 = {
+ 	.setup_common = apple_t8010_setup_common,
+ 	.setup_port = apple_t8010_setup_port,
+@@ -2155,6 +2333,7 @@ static const struct apple_h9p_hw apple_h9p_hw_j172 = {
+ static const struct of_device_id apple_h9p_pcie_of_match[] = {
+ 	{ .compatible = "apple,j172-pcie", .data = &apple_h9p_hw_j172 },
+ 	{ .compatible = "apple,t8010-pcie", .data = &apple_h9p_hw_t8010 },
++	{ .compatible = "apple,t7000-pcie", .data = &apple_h9p_hw_t7000 },
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(of, apple_h9p_pcie_of_match);
+@@ -2169,5 +2348,5 @@ static struct platform_driver apple_h9p_pcie_driver = {
+ };
+ module_platform_driver(apple_h9p_pcie_driver);
+ 
+-MODULE_DESCRIPTION("Apple H9P/T8010 PCIe host bridge driver");
++MODULE_DESCRIPTION("Apple H9P/T8010 and T7000 PCIe host bridge driver");
+ MODULE_LICENSE("GPL");
