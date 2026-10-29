@@ -253,8 +253,9 @@ class N61TouchPolicy(unittest.TestCase):
         driver = files['drivers/input/touchscreen/apple_z2.c']
         self.assertIn('APPLE_Z2_CAL_PROX = 9', driver)
         self.assertIn('"apple,z2-prox-cal-blob"', driver)
-        self.assertIn('N61 requires explicit analog/core supplies and clock', driver)
         binding = postimages(BINDING)['Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml']
+        for supply in ('ana-supply', 'core-supply', 'clocks'):
+            self.assertIn('        - ' + supply, binding)
         self.assertNotIn('apple,boot-power-preserved', binding)
         self.assertIn('maxItems: 1024', binding)
         patch = (ROOT / 'boot/m1n1/patches/orchard/0003-Forward-touchscreen-proximity-calibration.patch').read_text()
@@ -317,12 +318,11 @@ class N61TouchPower(unittest.TestCase):
         patch = ROOT / 'kernel/patches/drivers/regulator/0002-regulator-apple-add-n61-touch.patch'
         cls.files = postimages(patch)
         regulator = cls.files['drivers/regulator/apple-pmic-touch-regulator.c']
+        shared = postimages(ROOT / 'kernel/patches/import/pauli1go/0064-regulator-add-Apple-PMIC-touchscreen-supply-driver.patch')
+        shared = shared['drivers/regulator/apple-pmic-touch-regulator.c']
         actual = '\n'.join([
-            function(regulator, 'static int apple_chestnut_touch_ldo_enable('),
-            function(regulator, 'static int apple_chestnut_touch_ldo_is_enabled('),
-            function(regulator, 'static const struct regulator_ops apple_chestnut_touch_ldo_ops') + ';',
             function(regulator, 'static const struct regulator_desc apple_d2186_touch_core') + ';',
-            function(regulator, 'static const struct regulator_desc apple_chestnut_touch_ldo =') + ';',
+            function(shared, 'static const struct regulator_desc apple_chestnut_touch_hv =') + ';',
         ])
         program = r'''
 #include <assert.h>
@@ -340,10 +340,10 @@ struct regulator_ops {
 struct regulator_desc {
     const char *name; const struct regulator_ops *ops;
     int type, owner; unsigned enable_reg, enable_mask, enable_val, disable_val;
+    unsigned enable_time, off_on_delay;
 };
 struct regmap { unsigned value, calls, fail, reg; };
 struct regulator_dev { struct regmap *map; const struct regulator_desc *desc; };
-static struct regmap *rdev_get_regmap(struct regulator_dev *r) { return r->map; }
 static int regmap_update_bits(struct regmap *r, unsigned reg, unsigned mask, unsigned value)
 {
     r->calls++;
@@ -364,7 +364,11 @@ static int regulator_enable_regmap(struct regulator_dev *r)
 static int regulator_disable_regmap(struct regulator_dev *r)
 { return regmap_update_bits(r->map,r->desc->enable_reg,r->desc->enable_mask,r->desc->disable_val); }
 static int regulator_is_enabled_regmap(struct regulator_dev *r)
-{ return (r->map->value&r->desc->enable_mask)==r->desc->enable_val; }
+{
+    unsigned value;
+    int error=regmap_read(r->map,r->desc->enable_reg,&value);
+    return error?error:(value&r->desc->enable_mask)==r->desc->enable_val;
+}
 static const struct regulator_ops apple_pmic_touch_regulator_ops={
     regulator_enable_regmap,regulator_disable_regmap,regulator_is_enabled_regmap
 };
@@ -375,16 +379,17 @@ int main(int argc, char **argv)
 {
     unsigned initial;
     struct regmap map={0};
-    struct regulator_dev r={&map,&apple_chestnut_touch_ldo};
+    struct regulator_dev r={&map,&apple_chestnut_touch_hv};
     assert(argc==2);
     if(!strcmp(argv[1],"chestnut")) {
+        assert(r.desc->enable_time==1000 && r.desc->off_on_delay==1000);
         for(initial=0;initial<256;initial++) {
             map=(struct regmap){.value=initial};
             assert(r.desc->ops->enable(&r)==0);
-            assert(map.value==(initial|0x17) && map.reg==5);
+            assert(map.value==(initial|0x10) && map.reg==5 && map.calls==1);
             assert(r.desc->ops->is_enabled(&r)==1);
             assert(r.desc->ops->disable(&r)==0);
-            assert(map.value==((initial|7)&~0x10));
+            assert(map.value==(initial&~0x10U));
             assert(r.desc->ops->is_enabled(&r)==0);
         }
         map=(struct regmap){.value=0x0f};
@@ -395,8 +400,6 @@ int main(int argc, char **argv)
     if(!strcmp(argv[1],"failures")) {
         map=(struct regmap){.value=0x0f,.fail=1};
         assert(r.desc->ops->enable(&r)==-EIO && map.calls==1 && map.value==0x0f);
-        map=(struct regmap){.value=0x0f,.fail=2};
-        assert(r.desc->ops->enable(&r)==-EIO && map.calls==2 && map.value==0x0f);
         map=(struct regmap){.value=0xff,.fail=1};
         assert(r.desc->ops->is_enabled(&r)==-EIO);
         return 0;
@@ -423,7 +426,7 @@ int main(int argc, char **argv)
     def test_chestnut_preserves_every_unowned_bit_and_lcd_baseline(self):
         subprocess.run([self.binary, 'chestnut'], check=True)
 
-    def test_regmap_failures_stop_before_touch_enable(self):
+    def test_touch_switch_propagates_regmap_failures(self):
         subprocess.run([self.binary, 'failures'], check=True)
 
     def test_d2186_owns_only_ldo14_at_the_exact_register(self):
@@ -434,6 +437,8 @@ int main(int argc, char **argv)
         board = files['arch/arm64/boot/dts/apple/t7000-n61.dts']
         self.assertIn('ana-supply = <&touch_ana>', board)
         self.assertIn('core-supply = <&touch_core>', board)
+        self.assertIn('touch_ana: regulator-touch-hv', board)
+        self.assertIn('compatible = "apple,chestnut-touch-hv-regulator"', board)
         touch = re.search(r'touchscreen: touchscreen@0 \{(.*?)\n\t\};', board, re.S)[1]
         self.assertIn('status = "okay"', touch)
         self.assertIn('reg = <0x27>', board)

@@ -5,6 +5,8 @@ Subject: [PATCH] dt-bindings: clock: apple: Add T7000 touch clock
 
 Describe the T7000 touchscreen PMGR gate and divider.
 
+Signed-off-by: Shayne Legault <8741557+shaynelegault@users.noreply.github.com>
+
 ---
 diff --git a/Documentation/devicetree/bindings/clock/apple,t8010-touch-clock.yaml b/Documentation/devicetree/bindings/clock/apple,t8010-touch-clock.yaml
 --- a/Documentation/devicetree/bindings/clock/apple,t8010-touch-clock.yaml

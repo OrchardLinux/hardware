@@ -5,6 +5,8 @@ Subject: [PATCH] clk: apple: Add T7000 touch clock
 
 The T7000 touch clock uses the existing PMGR gate and divider operations. Match the T7000 compatible and retain the T8010 operations.
 
+Signed-off-by: Shayne Legault <8741557+shaynelegault@users.noreply.github.com>
+
 ---
 diff --git a/drivers/clk/clk-apple-t8010-touch.c b/drivers/clk/clk-apple-t8010-touch.c
 --- a/drivers/clk/clk-apple-t8010-touch.c

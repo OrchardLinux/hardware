@@ -23,20 +23,20 @@ class N61Data(unittest.TestCase):
         self.assertEqual(self.device['kernel'], {'platform': 'apple-4k', 'dtb': 't7000-n61'})
         self.assertEqual(self.device['boot'], {'methods': ['checkm8-pongo']})
 
-    def test_observed_ram_nfs_and_touch_keep_installation_experimental(self):
+    def test_observed_minimal_boot_and_touch_keep_installation_experimental(self):
         self.assertIs(self.device['support']['install'], False)
         self.assertEqual(self.device['support']['status'], 'experimental')
-        for name in ('usb_serial', 'usb_network'):
-            self.assertIs(self.device['support'][name], True)
+        self.assertIs(self.device['support']['usb_serial'], True)
+        self.assertIs(self.device['support']['usb_network'], False)
         self.assertIs(self.device['support']['wifi'], False)
         expected = dict.fromkeys(data.features(), 'missing')
         expected.update(display='working', touch='working', battery='untested', backlight='untested', buttons='untested')
         self.assertEqual(self.device['features'], expected)
         caveats = ' '.join(self.device['support']['caveats'])
-        self.assertIn('other builds need their own physical checks', caveats)
+        self.assertIn('minimal-boot RAM image', caveats)
         self.assertIn('PongoOS 2.6.3-e98323f8', caveats)
-        self.assertIn('Physical taps and swipes worked on both recorded boots', caveats)
-        self.assertIn('vertical edges and on-screen keyboard entry', caveats)
+        self.assertIn('evdev contacts and releases', caveats)
+        self.assertIn('earlier desktop results are recorded as history', caveats)
         self.assertIn('Bluetooth, Wi-Fi and internal storage are unqualified', caveats)
 
     def test_touch_recipe_selects_the_pinned_n61_gen1_profile(self):

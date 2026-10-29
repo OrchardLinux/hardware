@@ -28,17 +28,17 @@ recipe = "firmware.json"
 install = false
 status = "experimental"
 caveats = [
-  "A recorded kernel, loader and private USB/NFS desktop combination reached the desktop twice using PongoOS 2.6.3-e98323f8 bundled with palera1n 2.4; other builds need their own physical checks.",
-  "Physical taps and swipes worked on both recorded boots; the first covered the panel's vertical edges and on-screen keyboard entry.",
+  "The minimal-boot RAM image reached the USB serial shell with a visible framebuffer console using PongoOS 2.6.3-e98323f8 bundled with palera1n 2.4.",
+  "Physical taps and swipes produced evdev contacts and releases after loading apple_z2 with the private recipe-matched firmware; earlier desktop results are recorded as history in docs/n61-bringup.md.",
   "Bluetooth, Wi-Fi and internal storage are unqualified; installation remains disabled.",
 ]
 wifi = false
-usb_serial = true # The first N61 RAM boot reached the physical USB shell.
-usb_network = true # ECM carried the NFS-rooted Arch desktop and SSH on N61.
+usb_serial = true # The minimal-boot ACM shell accepted commands on the phone.
+usb_network = false # minimal-boot exercises USB ACM; ECM needs a separate runtime test.
 
 [features]
-display = "working" # Linux framebuffer console was visible on the LCD.
-touch = "working" # Physical evdev contacts/releases reached the Arch compositor.
+display = "working" # The minimal-boot framebuffer console was visible on the LCD.
+touch = "working" # Taps and swipes produced raw evdev contacts/releases in minimal-boot.
 wifi = "missing"
 bluetooth = "missing"
 storage = "missing"

@@ -49,7 +49,7 @@ known steps need only a hardware update.
 N61's iOS 12.5.1 (16H22) `N61.mtprops` selects `C1F59,1`. Its Z2 data
 packet stores the full payload-word count and has no `Firmware Config`.
 Step `z2fw-from-mtprops@3` follows the
-[Corellium Gen1 bootstrap](https://github.com/corellium/projectsandcastle/blob/03db9c6ae04141eb940f3b9f56d446f50d57fadf/hx-touchd/mtfw/mtfw.c#L169-L219),
+[Corellium Gen1 bootstrap](https://github.com/corellium/projectsandcastle/blob/083c2d2b07f94c8114cbe7110e1d205906ab8c54/hx-touchd/mtfw/mtfw.c#L169-L219),
 with calibration records at the original SysCfg load positions. Provider 9
 reads `prox-calibration`; provider 0 reads `multi-touch-calibration`.
 N61 bounds them to the observed 128 and 1024 bytes respectively.

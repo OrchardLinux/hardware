@@ -1,9 +1,11 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Shayne Legault <8741557+shaynelegault@users.noreply.github.com>
 Date: Thu, 29 Oct 2026 11:46:47 -0600
-Subject: [PATCH] arm64: dts: apple: Wire N61 touch power and clock
+Subject: [PATCH] arm64: dts: apple: t7000: Wire N61 touch power and clock
 
 Describe the PMGR touch clock, N61 touch supplies and touchscreen child. The loader supplies per-unit calibration through the touchscreen alias.
+
+Signed-off-by: Shayne Legault <8741557+shaynelegault@users.noreply.github.com>
 
 ---
 diff --git a/arch/arm64/boot/dts/apple/t7000-pmgr.dtsi b/arch/arm64/boot/dts/apple/t7000-pmgr.dtsi
@@ -29,7 +31,7 @@ diff --git a/arch/arm64/boot/dts/apple/t7000-pmgr.dtsi b/arch/arm64/boot/dts/app
 diff --git a/arch/arm64/boot/dts/apple/t7000-n61.dts b/arch/arm64/boot/dts/apple/t7000-n61.dts
 --- a/arch/arm64/boot/dts/apple/t7000-n61.dts
 +++ b/arch/arm64/boot/dts/apple/t7000-n61.dts
-@@ -14,10 +14,50 @@
+@@ -14,10 +14,49 @@
  
  	aliases {
  		spi2 = &spi2;
@@ -53,7 +55,6 @@ diff --git a/arch/arm64/boot/dts/apple/t7000-n61.dts b/arch/arm64/boot/dts/apple
 +		firmware-name = "apple/n61-fwstart.z2fw";
 +		touchscreen-size-x = <750>;
 +		touchscreen-size-y = <1334>;
-+		/* Physical taps and swipes passed the experimental N61 NFS boot. */
 +		status = "okay";
 +	};
  };
@@ -74,8 +75,8 @@ diff --git a/arch/arm64/boot/dts/apple/t7000-n61.dts b/arch/arm64/boot/dts/apple
 +		compatible = "apple,chestnut-pmic";
 +		reg = <0x27>;
 +
-+		touch_ana: regulator-touch-ana {
-+			compatible = "apple,chestnut-touch-ldo-regulator";
++		touch_ana: regulator-touch-hv {
++			compatible = "apple,chestnut-touch-hv-regulator";
 +			regulator-name = "n61-touch-ana";
 +		};
 +	};

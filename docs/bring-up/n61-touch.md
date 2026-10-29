@@ -42,9 +42,11 @@ retains experimental status with installation disabled.
 | Core supply | D2186 at I2C0 address `0x74`, register `0x0085`, bit 1 |
 | Analog supply | Chestnut at I2C0 address `0x27`, register `0x05`, bit 4 |
 
-Chestnut enables dependency bits 0 through 2 before the touch supply. Shutdown
-clears only the touch bit so the display keeps its shared supplies. The T7000
-clock uses the existing divider and gate operations. Startup enables analog and
+N61 reuses `chestnut-touch-hv` for the analog supply, including its 1000 us
+enable time and off/on delay. The regulator changes register `0x05` bit 4.
+The display's boot path leaves the shared boost and Sage rails enabled;
+their bits 0 through 2 retain that state across touch enable and shutdown.
+The T7000 clock uses the existing divider and gate operations. Startup enables analog and
 core power, settles chip select, starts the clock, performs the pre-reset
 exchanges and releases reset before checking synchronous ROM readiness.
 

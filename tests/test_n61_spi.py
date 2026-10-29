@@ -99,8 +99,8 @@ class N61SPIConfig(unittest.TestCase):
                     return controller[start:index + 1]
             raise ValueError('Incomplete native SPI block')
 
-        start = controller.index('\tuse_descriptor = spi->hw->legacy_descriptor')
-        end = controller.index('\tif (!spi->hw->legacy_descriptor)', start)
+        start = controller.index('\tuse_descriptor = spi->hw->has_descriptor_dma')
+        end = controller.index('\n\treg_write(spi, APPLE_SPI_RXCNT', start)
         selection = controller[start:end]
         program = r'''
 #include <assert.h>
@@ -120,7 +120,7 @@ typedef uint32_t u32;
 struct spi_device { unsigned mode; };
 struct spi_transfer { unsigned unused; };
 struct apple_spi_hw {
-    bool legacy_status,legacy_descriptor; unsigned min_clk_div; u32 default_word_delay;
+    bool legacy_status,has_descriptor_dma; unsigned min_clk_div; u32 default_word_delay;
 };
 struct apple_spi { const struct apple_spi_hw *hw; u32 word_delay; };
 static unsigned descriptor_calls,old_config_calls,prepared_descriptor;
@@ -156,7 +156,7 @@ int main(int argc,char **argv)
     static const unsigned counts[]={1,2,8,16,17,16384,32768};
     assert(argc==2);
     if(!strcmp(argv[1],"t7000")) {
-        assert(spi.hw->legacy_status && !spi.hw->legacy_descriptor);
+        assert(spi.hw->legacy_status && !spi.hw->has_descriptor_dma);
         for(mode=0;mode<4;mode++) for(bits=8;bits<=16;bits+=8) {
             device.mode=mode;
             for(index=0;index<sizeof(counts)/sizeof(counts[0]);index++) {
@@ -173,7 +173,7 @@ int main(int argc,char **argv)
     }
     if(!strcmp(argv[1],"t8010")) {
         spi.hw=&apple_spi_hw_t8010;
-        assert(spi.hw->legacy_status && spi.hw->legacy_descriptor);
+        assert(spi.hw->legacy_status && spi.hw->has_descriptor_dma);
         assert(select_config(&spi,&device,&transfer,16,8)==0x401e);
         assert(prepared_descriptor && descriptor_calls==1 && old_config_calls==1);
         assert(select_config(&spi,&device,&transfer,17,8)==0x104018);
@@ -198,7 +198,7 @@ int main(int argc,char **argv)
         subprocess.run([self.binary, 't8010'], check=True)
 
     def test_dma_allocation_remains_gated_to_the_descriptor_backend(self):
-        self.assertIn('if (spi->hw->legacy_descriptor) {\n\t\tctlr->dma_tx =', self.controller)
+        self.assertIn('if (spi->hw->has_descriptor_dma) {\n\t\tctlr->dma_tx =', self.controller)
 
 
 if __name__ == '__main__':

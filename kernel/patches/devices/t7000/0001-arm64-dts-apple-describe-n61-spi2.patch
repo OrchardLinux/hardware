@@ -1,11 +1,13 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Shayne Legault <8741557+shaynelegault@users.noreply.github.com>
 Date: Thu, 29 Oct 2026 11:46:47 -0600
-Subject: [PATCH] arm64: dts: apple: Describe N61 SPI2
+Subject: [PATCH] arm64: dts: apple: t7000: Describe N61 SPI2
 
 Describe the T7000 SPI2 register range, interrupt, power domain and clock. Enable the bus and GPIO chip select for N61. The bus remains disabled on other T7000 boards.
 
 The values agree with the public N61 ADT reference at https://github.com/SoMainline/adt_collection/blob/768d800c46140c9ba39a372d097fa49f7197a66d/a8/n61.adt.
+
+Signed-off-by: Shayne Legault <8741557+shaynelegault@users.noreply.github.com>
 
 ---
 diff --git a/arch/arm64/boot/dts/apple/t7000.dtsi b/arch/arm64/boot/dts/apple/t7000.dtsi

@@ -7,6 +7,8 @@ T7000 uses a legacy FIFO configuration with its own mode and word-size fields. S
 
 N61 mode 0 and 8-bit transfers use 0x4018, then 0x4038 with PIO enabled.
 
+Signed-off-by: Shayne Legault <8741557+shaynelegault@users.noreply.github.com>
+
 ---
 diff --git a/drivers/spi/spi-apple.c b/drivers/spi/spi-apple.c
 --- a/drivers/spi/spi-apple.c
@@ -23,7 +25,7 @@ diff --git a/drivers/spi/spi-apple.c b/drivers/spi/spi-apple.c
  
  struct apple_spi_hw {
  	bool legacy_status;
-+	bool legacy_descriptor;
++	bool has_descriptor_dma;
  	unsigned int min_clk_div;
  	u32 default_word_delay;
  };
@@ -32,7 +34,7 @@ diff --git a/drivers/spi/spi-apple.c b/drivers/spi/spi-apple.c
  		reg_write(spi, APPLE_SPI_IF_FIFO, ~0);
  		reg_write(spi, APPLE_SPI_WORD_DELAY, spi->word_delay);
 -		reg_write(spi, APPLE_SPI_CFG, APPLE_SPI_CFG_T8010_BASE);
-+		reg_write(spi, APPLE_SPI_CFG, spi->hw->legacy_descriptor ?
++		reg_write(spi, APPLE_SPI_CFG, spi->hw->has_descriptor_dma ?
 +			  APPLE_SPI_CFG_T8010_BASE : APPLE_SPI_CFG_T7000_BASE);
  		return;
  	}
@@ -59,12 +61,12 @@ diff --git a/drivers/spi/spi-apple.c b/drivers/spi/spi-apple.c
  static u32 apple_spi_t8010_config(struct spi_device *device,
  				  unsigned int bits_per_word,
  				  bool use_descriptor)
-@@ -663,15 +681,23 @@
+@@ -663,15 +681,18 @@
  		return ret;
  	speed_hz = clk_get_rate(spi->clk) / div;
  
 -	use_descriptor = apple_spi_t8010_uses_descriptor(t, words);
-+	use_descriptor = spi->hw->legacy_descriptor &&
++	use_descriptor = spi->hw->has_descriptor_dma &&
 +			 apple_spi_t8010_uses_descriptor(t, words);
  	reg_write(spi, APPLE_SPI_CLKDIV, div);
  	reg_write(spi, APPLE_SPI_WORD_DELAY,
@@ -72,33 +74,28 @@ diff --git a/drivers/spi/spi-apple.c b/drivers/spi/spi-apple.c
  	apple_spi_t8010_prepare_xfer(spi, use_descriptor);
  
 -	cfg = apple_spi_t8010_config(device, bits_per_word, use_descriptor);
-+	cfg = spi->hw->legacy_descriptor ?
++	cfg = spi->hw->has_descriptor_dma ?
 +		apple_spi_t8010_config(device, bits_per_word, use_descriptor) :
 +		apple_spi_t7000_config(device, bits_per_word);
  	if (use_descriptor)
  		cfg &= ~(APPLE_SPI_T8010_DESC_CFG_DEFAULT | BIT(0));
-+	if (!spi->hw->legacy_descriptor)
-+		dev_dbg(&device->dev,
-+			"T7000 PIO cfg=%#x div=%u word-delay=%u words=%u bpw=%u\n",
-+			(u32)(cfg | APPLE_SPI_CFG_T8010_PIOEN), div, spi->word_delay,
-+			words, bits_per_word);
  
  	reg_write(spi, APPLE_SPI_RXCNT, words);
  	reg_write(spi, APPLE_SPI_TXCNT, words);
-@@ -984,7 +1010,7 @@
+@@ -984,7 +1005,7 @@
  	ctlr->flags |= SPI_CONTROLLER_GPIO_SS;
  	ctlr->auto_runtime_pm = true;
  
 -	if (spi->hw->legacy_status) {
-+	if (spi->hw->legacy_descriptor) {
++	if (spi->hw->has_descriptor_dma) {
  		ctlr->dma_tx = dma_request_chan(&pdev->dev, "tx");
  		if (IS_ERR(ctlr->dma_tx)) {
  			ret = PTR_ERR(ctlr->dma_tx);
-@@ -1019,7 +1045,13 @@
+@@ -1019,7 +1040,13 @@
  
  static const struct apple_spi_hw apple_spi_hw_t8010 = {
  	.legacy_status = true,
-+	.legacy_descriptor = true,
++	.has_descriptor_dma = true,
  	.min_clk_div = 2,
 +};
 +
@@ -108,7 +105,7 @@ diff --git a/drivers/spi/spi-apple.c b/drivers/spi/spi-apple.c
  };
  
  static const struct apple_spi_hw apple_spi_hw_default = {
-@@ -1027,6 +1059,7 @@
+@@ -1027,6 +1054,7 @@
  };
  
  static const struct of_device_id apple_spi_of_match[] = {

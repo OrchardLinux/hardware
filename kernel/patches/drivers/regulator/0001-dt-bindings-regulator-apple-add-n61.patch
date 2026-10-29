@@ -3,7 +3,10 @@ From: Shayne Legault <8741557+shaynelegault@users.noreply.github.com>
 Date: Thu, 29 Oct 2026 11:46:46 -0600
 Subject: [PATCH] dt-bindings: regulator: apple: Add N61 touch supplies
 
-Describe the D2186 core and Chestnut analog touch supply compatibles.
+Describe the D2186 LDO14 touchscreen core supply. N61 uses the existing
+Chestnut high-voltage supply compatible for its analog rail.
+
+Signed-off-by: Shayne Legault <8741557+shaynelegault@users.noreply.github.com>
 
 ---
 diff --git a/Documentation/devicetree/bindings/regulator/apple,pmic-touch-regulator.yaml b/Documentation/devicetree/bindings/regulator/apple,pmic-touch-regulator.yaml
@@ -18,12 +21,11 @@ diff --git a/Documentation/devicetree/bindings/regulator/apple,pmic-touch-regula
    PMICs. The compatible identifies both the PMIC and the physical supply;
    register layout is an implementation detail of the regulator driver.
  
-@@ -22,6 +22,8 @@
+@@ -22,6 +22,7 @@
      enum:
        - apple,adelyn-touch-core-regulator
        - apple,chestnut-touch-hv-regulator
 +      - apple,d2186-touch-core-regulator
-+      - apple,chestnut-touch-ldo-regulator
  
  required:
    - compatible

@@ -5,6 +5,8 @@ Subject: [PATCH] dt-bindings: spi: apple: Add T7000 compatible
 
 Document the T7000 controller compatible used by the iPhone 6 SPI bus.
 
+Signed-off-by: Shayne Legault <8741557+shaynelegault@users.noreply.github.com>
+
 ---
 diff --git a/Documentation/devicetree/bindings/spi/apple,spi.yaml b/Documentation/devicetree/bindings/spi/apple,spi.yaml
 --- a/Documentation/devicetree/bindings/spi/apple,spi.yaml

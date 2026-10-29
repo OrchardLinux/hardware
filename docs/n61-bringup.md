@@ -41,6 +41,45 @@ size, then inspect CPU and storage inventories. Keep internal storage inactive
 during qualification. The RAM shell grants root access to its physical USB
 host.
 
+## Minimal-boot qualification
+
+The descriptor's working features come from the RAM experiment. On 2026-10-29,
+hardware `f714359636b04b21448bb3aa7f38e86fe27651e5` and CLI
+`2e11638b0a1921c6c6ce5bb99d4c96209932f911` produced a `minimal-boot` image
+with the recipe-matched private touch firmware and the complete module tree.
+Its payload SHA-256 was
+`c38daf6b601e00c01a4e1c21c7b1a3ae5927e405a57ce72a721e86729df1b1ad`.
+The physical USB shell reported 4 KiB pages, CPUs `0-1` and a 750 by 1334
+framebuffer. The owner saw the Linux console on the phone.
+
+After `modprobe apple_z2`, physical taps and swipes produced 1,496 evdev
+events, including 9 contact starts and 10 releases during the capture window,
+at x=3..747 and y=15..1333. These observations support the display and touch
+flags. USB ACM carries the shell; the descriptor leaves USB networking
+disabled pending a separate test with this hardware revision. Bluetooth,
+Wi-Fi and internal storage remain unqualified. The PR records the exact
+producer revision and artifact hashes for each later physical test.
+
+For a touch test, copy `examples/minimal-boot`, stage the privately extracted
+firmware at `rootfs/lib/firmware/apple/n61-fwstart.z2fw`, and build with the
+matching kernel, loader and complete module tree:
+
+```sh
+python -m orchard_cli build <minimal-boot-copy> --hardware <hardware-checkout> \
+  --device n61 --cache <cache> --kernel-dir <kernel-output> \
+  --loader <m1n1.bin> --pongo <Pongo.bin> --busybox <busybox> --modules
+python -m orchard_cli run <minimal-boot-copy> --yes
+```
+
+From the physical serial shell, record the boot UUID, `uname -r`,
+`KernelPageSize` from `/proc/self/smaps`, `/sys/devices/system/cpu/online`,
+and `/sys/class/graphics/fb0/virtual_size`. Load `apple_z2`, find the
+`iPhone 6 Touchscreen` event device in `/proc/bus/input/devices`, then capture
+that device while tapping and swiping. Retain the raw input events and
+`dmesg` with the build hashes. Internal storage stays inactive during this test.
+
+## Earlier NFS desktop tests
+
 On 2026-10-29, the reconciled kernel and private NFS desktop reached the Arch
 and Omarchy desktop on two tethered boots. The owner confirmed touch on both;
 the first captured y=26..1322 on the 0..1333 axis and entered `n61` through

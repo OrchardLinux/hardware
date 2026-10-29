@@ -9,6 +9,8 @@ existing touchscreen0 alias path and keep the same missing/syscfg-reference
 handling as the other calibration providers. The firmware container names
 the property at runtime; no unit-specific bytes enter the shared recipe.
 
+Signed-off-by: Shayne Legault <8741557+shaynelegault@users.noreply.github.com>
+
 ---
 diff --git a/src/kboot.c b/src/kboot.c
 --- a/src/kboot.c
