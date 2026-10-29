@@ -1,0 +1,202 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Thu, 29 Oct 2026 04:55:03 +0800
+Subject: [PATCH] arm64: dts: apple: s8003: Add the display pipe and
+ temperature sensors
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Describe the A9 display pipe (ADT disp0, "adbe0,s8000") for the KMS
+driver that adopts iBoot's running mode, disabled for the boards that
+drive an eDP panel through it to enable. It has no iommus: the pipe
+reads through dart-disp0, which iBoot leaves in bypass.
+
+Add the S8003 SOC and TCC temperature sensors with thermal zones on the
+three sensors validated on hardware (SOC0, SOC1, TCC2). The trips are
+margins below the 100 C alarm iBoot programs: passive at 80 C, which
+throttles the CPU cluster through cpufreq, hot at 90 C and critical at
+100 C, polled every 100 ms.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux e40d2403 (J71t ledger 11.1, 13.1, 14.1); the display node uses the integrated apple,s8000-display-pipe binding instead of the "observer" node with a memory-region (m1n1 already leaves the boot framebuffer out of RAM), and moves from the J71t include into s8003.dtsi; thermal zones renamed to the *-thermal pattern with map* cooling maps]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/arm64/boot/dts/apple/s8003.dtsi | 147 +++++++++++++++++++++++++++
+ 1 file changed, 147 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/s8003.dtsi b/arch/arm64/boot/dts/apple/s8003.dtsi
+index 77a1e8959..da6469f82 100644
+--- a/arch/arm64/boot/dts/apple/s8003.dtsi
++++ b/arch/arm64/boot/dts/apple/s8003.dtsi
+@@ -8,6 +8,7 @@
+  */
+ 
+ #include "s800-0-3.dtsi"
++#include <dt-bindings/thermal/thermal.h>
+ 
+ / {
+ 	twister_opp: opp-table {
+@@ -60,7 +61,46 @@
+ 	};
+ };
+ 
++&cpu0 {
++	#cooling-cells = <2>;
++};
++
++&cpu1 {
++	#cooling-cells = <2>;
++};
++
+ &{/soc} {
++	/*
++	 * ADT disp0 ("adbe0,s8000"). The pipe reads through dart-disp0,
++	 * which iBoot leaves in bypass and which stays undescribed.
++	 */
++	disp0: display-controller@206200000 {
++		compatible = "apple,s8000-display-pipe";
++		reg = <0x2 0x06200000 0x0 0x100000>,
++		      <0x2 0x06400000 0x0 0x8000>,
++		      <0x2 0x06440000 0x0 0x8000>,
++		      <0x2 0x06480000 0x0 0x8000>,
++		      <0x2 0x064c0000 0x0 0x8000>,
++		      <0x2 0x06500000 0x0 0x1c>;
++		interrupt-parent = <&aic>;
++		interrupts = <AIC_IRQ 140 IRQ_TYPE_LEVEL_HIGH>,
++			     <AIC_IRQ 143 IRQ_TYPE_LEVEL_HIGH>,
++			     <AIC_IRQ 144 IRQ_TYPE_LEVEL_HIGH>,
++			     <AIC_IRQ 145 IRQ_TYPE_LEVEL_HIGH>,
++			     <AIC_IRQ 146 IRQ_TYPE_LEVEL_HIGH>;
++		power-domains = <&ps_disp0>, <&ps_dp>;
++		status = "disabled";
++	};
++
++	/* ADT tempsensor,s8000 (AppleT700XTempSensor): SOC and TCC blocks */
++	s8003_thermal: thermal-sensor@20e0c0000 {
++		compatible = "apple,s8003-thermal";
++		reg = <0x2 0x0e0c0000 0x0 0x1000>,
++		      <0x2 0x02230000 0x0 0x1000>;
++		reg-names = "soc", "tcc";
++		#thermal-sensor-cells = <1>;
++	};
++
+ 	/*
+ 	 * error-reflector, fetch-config and diag-config are the ADT
+ 	 * dart-apcie0/1 values, which iOS programs at every DART init.
+@@ -179,6 +219,113 @@
+ 	};
+ };
+ 
++/ {
++	/*
++	 * Trips are margins below the 100 C alarm iBoot programs, not iOS's
++	 * skin temperature policy.
++	 */
++	thermal-zones {
++		soc0-thermal {
++			polling-delay-passive = <100>;
++			polling-delay = <100>;
++			thermal-sensors = <&s8003_thermal 0>;
++
++			trips {
++				soc0_passive: passive {
++					temperature = <80000>;
++					hysteresis = <5000>;
++					type = "passive";
++				};
++
++				hot {
++					temperature = <90000>;
++					hysteresis = <5000>;
++					type = "hot";
++				};
++
++				critical {
++					temperature = <100000>;
++					hysteresis = <0>;
++					type = "critical";
++				};
++			};
++
++			cooling-maps {
++				map0 {
++					trip = <&soc0_passive>;
++					cooling-device = <&cpu0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++				};
++			};
++		};
++
++		soc1-thermal {
++			polling-delay-passive = <100>;
++			polling-delay = <100>;
++			thermal-sensors = <&s8003_thermal 1>;
++
++			trips {
++				soc1_passive: passive {
++					temperature = <80000>;
++					hysteresis = <5000>;
++					type = "passive";
++				};
++
++				hot {
++					temperature = <90000>;
++					hysteresis = <5000>;
++					type = "hot";
++				};
++
++				critical {
++					temperature = <100000>;
++					hysteresis = <0>;
++					type = "critical";
++				};
++			};
++
++			cooling-maps {
++				map0 {
++					trip = <&soc1_passive>;
++					cooling-device = <&cpu0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++				};
++			};
++		};
++
++		tcc2-thermal {
++			polling-delay-passive = <100>;
++			polling-delay = <100>;
++			thermal-sensors = <&s8003_thermal 5>;
++
++			trips {
++				tcc2_passive: passive {
++					temperature = <80000>;
++					hysteresis = <5000>;
++					type = "passive";
++				};
++
++				hot {
++					temperature = <90000>;
++					hysteresis = <5000>;
++					type = "hot";
++				};
++
++				critical {
++					temperature = <100000>;
++					hysteresis = <0>;
++					type = "critical";
++				};
++			};
++
++			cooling-maps {
++				map0 {
++					trip = <&tcc2_passive>;
++					cooling-device = <&cpu0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
++				};
++			};
++		};
++	};
++};
++
+ /*
+  * The A9 was made by two separate fabs on two different process
+  * nodes: Samsung made the S8000 (APL0898) on 14nm and TSMC made

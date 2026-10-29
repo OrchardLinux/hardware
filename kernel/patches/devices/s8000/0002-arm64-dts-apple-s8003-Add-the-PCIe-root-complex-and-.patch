@@ -1,0 +1,189 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Thu, 29 Oct 2026 04:54:48 +0800
+Subject: [PATCH] arm64: dts: apple: s8003: Add the PCIe root complex and its
+ DARTs
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The TSMC A9 has the H8P PCIe root complex with the same PHY as T8010:
+port 0 carries the ANS storage controller (x2, Gen2), port 1 the Wi-Fi
+module. Describe the root complex, the storage root port and the two
+DARTs behind ports 0 and 1, all disabled for the boards to enable.
+
+The DART windows come from the ADT dart-apcie0/1 vm-offset and vm-size
+and sit in the five-cell iommu-map specifier. Each DART is in the link
+power domain of its port and gets the ADT error reflector, fetch-config
+and diag-config, which iOS programs at every DART init. The root
+complex takes its seven ADT clock gates as named power domains and no
+clocks. The NVMe host-memory buffer is the loader-filled nvme-hmb
+reserved-memory node, added to the shared A9 file as on T8010.
+
+The storage port keeps ASPM L0s and L1 off: iOS only enables L1
+together with an L1SS, LTR and CLKREQ# setup that isn't done here.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux 28da4f83, ea4ca97c, a8505d91, e40d2403 (J71t ledger 14.3, 1.5, 1.6); DART windows in the five-cell iommu-map instead of apple,dma-range; no tunable, lane-cfg or nvme-mode properties (match data now, 2.4-2.6), num-lanes on the storage port instead; no clocks, as the binding has it for S8003; DARTs moved from s800-0-3.dtsi to s8003.dtsi, S8000's root complex isn't described]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../arm64/boot/dts/apple/s800-0-3-common.dtsi |   6 +-
+ arch/arm64/boot/dts/apple/s8003.dtsi          | 119 ++++++++++++++++++
+ 2 files changed, 124 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/apple/s800-0-3-common.dtsi b/arch/arm64/boot/dts/apple/s800-0-3-common.dtsi
+index ad3111798..354533f26 100644
+--- a/arch/arm64/boot/dts/apple/s800-0-3-common.dtsi
++++ b/arch/arm64/boot/dts/apple/s800-0-3-common.dtsi
+@@ -12,6 +12,7 @@
+ / {
+ 	aliases {
+ 		ausbphy0 = &ausbphy0;
++		nvme-hmb = &nvme_hmb; /* Used by loader */
+ 		serial0 = &serial0;
+ 	};
+ 
+@@ -40,7 +41,10 @@
+ 		#size-cells = <2>;
+ 		ranges;
+ 
+-		/* To be filled by loader */
++		nvme_hmb: nvme-hmb@0 {
++			reg = <0 0 0 0>; /* To be filled by loader */
++			no-map;
++		};
+ 	};
+ };
+ 
+diff --git a/arch/arm64/boot/dts/apple/s8003.dtsi b/arch/arm64/boot/dts/apple/s8003.dtsi
+index 79df5c783..77a1e8959 100644
+--- a/arch/arm64/boot/dts/apple/s8003.dtsi
++++ b/arch/arm64/boot/dts/apple/s8003.dtsi
+@@ -60,6 +60,125 @@
+ 	};
+ };
+ 
++&{/soc} {
++	/*
++	 * error-reflector, fetch-config and diag-config are the ADT
++	 * dart-apcie0/1 values, which iOS programs at every DART init.
++	 */
++	pcie0_dart0: iommu@601008000 {
++		compatible = "apple,s8000-dart", "apple,s5l8960x-dart";
++		reg = <0x6 0x01008000 0x0 0x4000>;
++		#iommu-cells = <5>;
++		interrupt-parent = <&aic>;
++		interrupts = <AIC_IRQ 245 IRQ_TYPE_LEVEL_HIGH>;
++		power-domains = <&ps_pcie_link0>;
++		apple,error-reflector = /bits/ 64 <0x20fffc000>;
++		apple,fetch-config = <0x000e0303>;
++		apple,diag-config = <0x00000100>;
++		status = "disabled";
++	};
++
++	pcie0_dart1: iommu@602008000 {
++		compatible = "apple,s8000-dart", "apple,s5l8960x-dart";
++		reg = <0x6 0x02008000 0x0 0x4000>;
++		#iommu-cells = <5>;
++		interrupt-parent = <&aic>;
++		interrupts = <AIC_IRQ 248 IRQ_TYPE_LEVEL_HIGH>;
++		power-domains = <&ps_pcie_link1>;
++		apple,error-reflector = /bits/ 64 <0x20fffc000>;
++		apple,fetch-config = <0x000e0303>;
++		apple,diag-config = <0x00000100>;
++		status = "disabled";
++	};
++
++	/*
++	 * The TSMC part has the same PCIe PHY ("phy-ip" block) as T8010.
++	 * The S8000's root complex has no phy-ip region and isn't described.
++	 */
++	pcie0: pcie@610000000 {
++		compatible = "apple,s8003-pcie";
++		device_type = "pci";
++
++		reg = <0x6 0x10000000 0x0 0x1000000>,
++		      <0x6 0x00000000 0x0 0x8000>,
++		      <0x6 0x00008000 0x0 0x4000>,
++		      <0x6 0x0a000000 0x0 0x40000>,
++		      <0x6 0x01000000 0x0 0x4000>,
++		      <0x6 0x02000000 0x0 0x4000>,
++		      <0x6 0x03000000 0x0 0x4000>,
++		      <0x6 0x04000000 0x0 0x4000>,
++		      <0x6 0x01004000 0x0 0x4000>;
++		reg-names = "config", "rc", "phy", "phy-ip",
++			    "port0", "port1", "port2", "port3",
++			    "nvmmu";
++
++		interrupt-parent = <&aic>;
++		interrupts = <AIC_IRQ 244 IRQ_TYPE_LEVEL_HIGH>,
++			     <AIC_IRQ 247 IRQ_TYPE_LEVEL_HIGH>,
++			     <AIC_IRQ 250 IRQ_TYPE_LEVEL_HIGH>,
++			     <AIC_IRQ 253 IRQ_TYPE_LEVEL_HIGH>,
++			     <AIC_IRQ 246 IRQ_TYPE_EDGE_RISING>;
++		interrupt-names = "port0", "port1", "port2", "port3",
++				  "nvmmu";
++
++		msi-controller;
++		msi-parent = <&pcie0>;
++		msi-ranges = <&aic AIC_IRQ 256 IRQ_TYPE_EDGE_RISING 32>;
++		apple,msi-doorbell = <0xbffff000>;
++		apple,nvmmu-iova = <0xbc000000>;
++		apple,nvme-hmb = <&nvme_hmb>;
++
++		/*
++		 * DART windows from the ADT dart-apcie0/1 vm-offset and
++		 * vm-size. The root complex decodes 0x40000000 (NVMMU
++		 * FlatDMA), 0x80000000 (DART), 0xbc000000 (NVMMU SART) and
++		 * 0xbffff000 (MSI) inbound; no dma-ranges, as one ending below
++		 * RAM would empty ZONE_DMA/DMA32.
++		 */
++		iommu-map = <0x100 &pcie0_dart0 0 0x0 0x80000000 0x0 0x3c000000 1>,
++			    <0x200 &pcie0_dart1 0 0x0 0x80000000 0x0 0x3ffff000 1>;
++		iommu-map-mask = <0xff00>;
++
++		#address-cells = <3>;
++		#size-cells = <2>;
++		#interrupt-cells = <1>;
++		interrupt-controller;
++		bus-range = <0x00 0x0f>;
++		ranges = <0x03000000 0x0 0xc0000000
++			  0x7 0xc0000000 0x0 0x40000000>;
++
++		/* ADT apcie clock-gates: pcie, pcie_aux, pcie_ref, pcie_link0..3 */
++		power-domains = <&ps_pcie>, <&ps_pcie_aux>, <&ps_pcie_ref>,
++				<&ps_pcie_link0>, <&ps_pcie_link1>,
++				<&ps_pcie_link2>, <&ps_pcie_link3>;
++		power-domain-names = "core", "aux", "ref", "link0", "link1",
++				     "link2", "link3";
++		status = "disabled";
++
++		/*
++		 * Storage. PERST# from the ADT pci-bridge0 function-perst;
++		 * CLKREQ# stays in its peripheral function.
++		 */
++		pci@0,0 {
++			device_type = "pci";
++			reg = <0x0 0x0 0x0 0x0 0x0>;
++			reset-gpios = <&pinctrl_ap 160 GPIO_ACTIVE_LOW>;
++			num-lanes = <2>;
++			max-link-speed = <2>;
++			/*
++			 * iOS pairs ASPM L1 with an L1SS, LTR and CLKREQ#
++			 * setup that isn't done here.
++			 */
++			aspm-no-l0s;
++			aspm-no-l1;
++
++			#address-cells = <3>;
++			#size-cells = <2>;
++			ranges;
++		};
++	};
++};
++
+ /*
+  * The A9 was made by two separate fabs on two different process
+  * nodes: Samsung made the S8000 (APL0898) on 14nm and TSMC made

@@ -1,0 +1,295 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 21:34:20 +0800
+Subject: [PATCH] thermal: Add Apple S8003 on-die temperature sensor driver
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The iPad 5 (J71t) has no SoC temperature readout under Linux, so the
+thermal core cannot throttle the CPUs before the hardware SoCHOT
+protection trips.
+
+Add a thermal sensor driver for the S8003 sensors, following iOS's
+AppleT700XTempSensor (AppleT700XTempSensor_start at 0xfffffff005f1a424,
+AppleT700XTempSensor_readQ6 at 0xfffffff005f1b938, J71t 20H350). A read
+freezes the sensor's accumulator, reads the result word (bit 31 valid,
+signed Q6 degrees Celsius) and the sample count, and restarts the
+accumulator. The driver never writes trim, CTL1/CTL2, alarm or SoCHOT
+registers, so the boot chain's calibration and hardware protections stay
+as iBoot set them.
+
+Only SOC0, SOC1 and TCC2 are registered. They match live readings on
+J71t (TCC2 about 71 C and SOC0/SOC1 about 60 C under sustained load);
+the mapping of the other three channels is not confirmed yet.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux f5ce1082 (J71t ledger 13.1) and
+ omarchy-ipad5 docs/power/overclock-round2.md; reduced to the three
+ validated sensors as thermal zones with the thermal hwmon bridge. The
+ 100 ms sampling worker is replaced by sampling in get_temp (at most
+ every 100 ms, the previous value kept in between); the raw hwmon
+ channels, the debugfs snapshot and the overclocking profile hooks
+ (apple_a9_thermal_revert, trip rewriting) are dropped.]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/thermal/Kconfig               |  13 ++
+ drivers/thermal/Makefile              |   1 +
+ drivers/thermal/apple_s8003_thermal.c | 212 ++++++++++++++++++++++++++
+ 3 files changed, 226 insertions(+)
+ create mode 100644 drivers/thermal/apple_s8003_thermal.c
+
+diff --git a/drivers/thermal/Kconfig b/drivers/thermal/Kconfig
+index 810eecced..dac319bb7 100644
+--- a/drivers/thermal/Kconfig
++++ b/drivers/thermal/Kconfig
+@@ -518,6 +518,19 @@ config KHADAS_MCU_FAN_THERMAL
+ 	  If you say yes here you get support for the FAN controlled
+ 	  by the Microcontroller found on the Khadas VIM boards.
+ 
++config APPLE_S8003_THERMAL
++	tristate "Apple S8003 on-die temperature sensors"
++	depends on ARCH_APPLE || COMPILE_TEST
++	depends on OF && THERMAL_OF
++	help
++	  Support for the on-die temperature sensors of the Apple A9
++	  (S8003) SoC, as used in the iPad 5. The sensors are exposed as
++	  thermal zone sensors described in the device tree, and through
++	  the thermal hwmon bridge. The driver keeps the calibration and
++	  the hardware alarm configuration the bootloader programmed.
++
++	  If built as a module, it will be called apple_s8003_thermal.
++
+ config LOONGSON2_THERMAL
+ 	tristate "Loongson-2 SoC series thermal driver"
+ 	depends on LOONGARCH || COMPILE_TEST
+diff --git a/drivers/thermal/Makefile b/drivers/thermal/Makefile
+index 3b249195c..406dffd8f 100644
+--- a/drivers/thermal/Makefile
++++ b/drivers/thermal/Makefile
+@@ -69,4 +69,5 @@ obj-y				+= spacemit/
+ obj-$(CONFIG_SPRD_THERMAL)	+= sprd_thermal.o
+ obj-$(CONFIG_KHADAS_MCU_FAN_THERMAL)	+= khadas_mcu_fan.o
+ obj-$(CONFIG_LOONGSON2_THERMAL)	+= loongson2_thermal.o
++obj-$(CONFIG_APPLE_S8003_THERMAL)	+= apple_s8003_thermal.o
+ obj-$(CONFIG_THERMAL_CORE_TESTING)	+= testing/
+diff --git a/drivers/thermal/apple_s8003_thermal.c b/drivers/thermal/apple_s8003_thermal.c
+new file mode 100644
+index 000000000..2695ed41e
+--- /dev/null
++++ b/drivers/thermal/apple_s8003_thermal.c
+@@ -0,0 +1,212 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Apple S8003 (A9) on-die temperature sensors.
++ *
++ * The register interface follows iOS's AppleT700XTempSensor ("tempsensor,
++ * s8000"): AppleT700XTempSensor_start at 0xfffffff005f1a424 and
++ * AppleT700XTempSensor_readQ6 at 0xfffffff005f1b938 in the J71t 20H350
++ * kernelcache. The hardware converts with the calibration the boot chain
++ * programs; this driver never writes the trim parameters, CTL1/CTL2, the
++ * alarm registers or the SoCHOT thresholds.
++ *
++ * Each sensor accumulates samples between a "start" (CTL0 set, bit 3) and a
++ * "freeze" (CTL0 clear, bit 3). A read freezes the accumulator, reads the
++ * result word (BK: bit 31 valid, signed Q6 degrees Celsius in the low bits)
++ * and the sample count, and starts the next interval, as iOS's timer
++ * callback does.
++ */
++
++#include <linux/bits.h>
++#include <linux/io.h>
++#include <linux/jiffies.h>
++#include <linux/mod_devicetable.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/platform_device.h>
++#include <linux/thermal.h>
++
++#include "thermal_hwmon.h"
++
++#define S8003_CTL0_ENABLE	BIT(0)
++#define S8003_CTL0_ACCUMULATE	BIT(3)
++#define S8003_BK_VALID		BIT(31)
++#define S8003_COUNT_OVERFLOW	BIT(31)
++/* Shorter intervals may not have accumulated a sample yet. */
++#define S8003_MIN_INTERVAL_MS	100
++
++enum s8003_page {
++	S8003_PAGE_SOC,		/* PMGR sensors */
++	S8003_PAGE_TCC,		/* ACC sensors */
++	S8003_PAGES,
++};
++
++/**
++ * struct s8003_sensor_desc - one sensor channel
++ * @page: register page
++ * @ctl_set: CTL0 set register
++ * @ctl_clear: CTL0 clear register
++ * @bk: result register
++ * @count: accumulated sample count
++ * @sign_bit: sign bit of the Q6 value (14 for sensor-accuracy 2, else 15)
++ */
++struct s8003_sensor_desc {
++	enum s8003_page page;
++	u16 ctl_set;
++	u16 ctl_clear;
++	u16 bk;
++	u16 count;
++	u8 sign_bit;
++};
++
++/*
++ * Sensor IDs are the hardware channels: SOC0..SOC2, then TCC0..TCC2.
++ * Only SOC0, SOC1 and TCC2 have been checked against live readings on
++ * J71t; the other three are not exposed until their mapping is.
++ */
++static const struct s8003_sensor_desc s8003_sensors[] = {
++	[0] = { S8003_PAGE_SOC, 0x000, 0x004, 0x018, 0x024, 14 },
++	[1] = { S8003_PAGE_SOC, 0x100, 0x104, 0x118, 0x124, 14 },
++	[5] = { S8003_PAGE_TCC, 0x200, 0x468, 0x220, 0x238, 15 },
++};
++
++struct s8003_thermal;
++
++struct s8003_sensor {
++	struct s8003_thermal *priv;
++	const struct s8003_sensor_desc *desc;
++	struct mutex lock;	/* serializes freeze, read and restart */
++	unsigned long sampled;	/* jiffies of the last valid sample */
++	int temp;		/* millidegrees Celsius */
++	bool valid;
++};
++
++struct s8003_thermal {
++	void __iomem *page[S8003_PAGES];
++	struct s8003_sensor sensor[ARRAY_SIZE(s8003_sensors)];
++};
++
++static int s8003_sample(struct s8003_sensor *s)
++{
++	const struct s8003_sensor_desc *d = s->desc;
++	void __iomem *base = s->priv->page[d->page];
++	u32 ctl, bk, count;
++	int temp;
++
++	writel(S8003_CTL0_ACCUMULATE, base + d->ctl_clear);
++	ctl = readl(base + d->ctl_set);
++	bk = readl(base + d->bk);
++	count = readl(base + d->count);
++	writel(S8003_CTL0_ACCUMULATE, base + d->ctl_set);
++
++	if (!(ctl & S8003_CTL0_ENABLE) || !(bk & S8003_BK_VALID) ||
++	    !count || (count & S8003_COUNT_OVERFLOW))
++		return -EAGAIN;
++
++	temp = sign_extend32(bk, d->sign_bit) * 1000 / 64;
++	/* Reject impossible codes; iOS substitutes 30 C instead. */
++	if (temp < -40000 || temp > 150000)
++		return -ERANGE;
++
++	s->temp = temp;
++	s->sampled = jiffies;
++	s->valid = true;
++	return 0;
++}
++
++static int s8003_get_temp(struct thermal_zone_device *tz, int *temp)
++{
++	struct s8003_sensor *s = thermal_zone_device_priv(tz);
++	int ret = 0;
++
++	mutex_lock(&s->lock);
++	if (!s->valid ||
++	    time_after_eq(jiffies, s->sampled +
++			  msecs_to_jiffies(S8003_MIN_INTERVAL_MS)))
++		ret = s8003_sample(s);
++	/* A too-short interval keeps the previous sample if there is one. */
++	if (ret == -EAGAIN && s->valid &&
++	    time_before(jiffies, s->sampled +
++			2 * msecs_to_jiffies(S8003_MIN_INTERVAL_MS)))
++		ret = 0;
++	if (!ret)
++		*temp = s->temp;
++	mutex_unlock(&s->lock);
++
++	return ret;
++}
++
++static const struct thermal_zone_device_ops s8003_thermal_ops = {
++	.get_temp = s8003_get_temp,
++};
++
++static int s8003_thermal_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct s8003_thermal *priv;
++	unsigned int i;
++	int ret;
++
++	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
++	if (!priv)
++		return -ENOMEM;
++
++	priv->page[S8003_PAGE_SOC] = devm_platform_ioremap_resource_byname(pdev, "soc");
++	if (IS_ERR(priv->page[S8003_PAGE_SOC]))
++		return PTR_ERR(priv->page[S8003_PAGE_SOC]);
++	priv->page[S8003_PAGE_TCC] = devm_platform_ioremap_resource_byname(pdev, "tcc");
++	if (IS_ERR(priv->page[S8003_PAGE_TCC]))
++		return PTR_ERR(priv->page[S8003_PAGE_TCC]);
++
++	for (i = 0; i < ARRAY_SIZE(s8003_sensors); i++) {
++		const struct s8003_sensor_desc *d = &s8003_sensors[i];
++		struct s8003_sensor *s = &priv->sensor[i];
++		struct thermal_zone_device *tz;
++
++		if (!d->bk)
++			continue;
++
++		s->priv = priv;
++		s->desc = d;
++		ret = devm_mutex_init(dev, &s->lock);
++		if (ret)
++			return ret;
++
++		/* Enable conversion and start accumulating, as iOS does. */
++		writel(S8003_CTL0_ENABLE | S8003_CTL0_ACCUMULATE,
++		       priv->page[d->page] + d->ctl_set);
++
++		tz = devm_thermal_of_zone_register(dev, i, s, &s8003_thermal_ops);
++		if (IS_ERR(tz)) {
++			if (PTR_ERR(tz) == -ENODEV)
++				continue;
++			return dev_err_probe(dev, PTR_ERR(tz),
++					     "failed to register sensor %u\n", i);
++		}
++
++		ret = devm_thermal_add_hwmon_sysfs(dev, tz);
++		if (ret)
++			dev_warn(dev, "failed to add hwmon for sensor %u: %d\n",
++				 i, ret);
++	}
++
++	return 0;
++}
++
++static const struct of_device_id s8003_thermal_of_match[] = {
++	{ .compatible = "apple,s8003-thermal" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, s8003_thermal_of_match);
++
++static struct platform_driver s8003_thermal_driver = {
++	.probe = s8003_thermal_probe,
++	.driver = {
++		.name = "apple-s8003-thermal",
++		.of_match_table = s8003_thermal_of_match,
++	},
++};
++module_platform_driver(s8003_thermal_driver);
++
++MODULE_DESCRIPTION("Apple S8003 on-die temperature sensors");
++MODULE_AUTHOR("Berkay Kösebay <brkosebay@users.noreply.github.com>");
++MODULE_LICENSE("GPL");

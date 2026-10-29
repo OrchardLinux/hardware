@@ -1,0 +1,68 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 21:36:07 +0800
+Subject: [PATCH] regulator: apple-pmic-touch: Add Angel touch analog supply
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The iPad 5 N1 touchscreen takes its analog supply from the Angel PMIC
+(D2365) function pmuL(0x21f). In iOS that is LDO index 31 with options 2
+(enable only, no voltage programming), and its table entry switches
+register 0x31c bit 0 through the PMIC's register map (iOS
+0xfffffff006bbe488, 0xfffffff006bbe388, 0xfffffff006bbcdd8).
+
+Add it as match data. The register and bit come from the iOS PMIC
+driver only; the ADT names the function, not the register.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux 28c4b7e3 (J71t ledger 8.8); his separate
+ apple-d2365-touch driver becomes match data of Paul Praschl's PMIC
+ touch regulator driver. Register 0x31c bit 0 is his value and still
+ unconfirmed by the ADT.]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../regulator/apple-pmic-touch-regulator.c    | 21 +++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/drivers/regulator/apple-pmic-touch-regulator.c b/drivers/regulator/apple-pmic-touch-regulator.c
+index 75cae4a84..b7dafb33a 100644
+--- a/drivers/regulator/apple-pmic-touch-regulator.c
++++ b/drivers/regulator/apple-pmic-touch-regulator.c
+@@ -32,6 +32,23 @@ static const struct regulator_desc apple_adelyn_touch_core = {
+ 	.off_on_delay = 1000,
+ };
+ 
++/*
++ * Angel (D2365, iPad 5) pmuL(0x21f): LDO index 31, enable-only, through
++ * register 0x31c bit 0 (iOS 0xfffffff006bbe488, 0xfffffff006bbe388,
++ * 0xfffffff006bbcdd8). The ADT names only the function, so the register
++ * and bit are not yet confirmed by a second source.
++ */
++static const struct regulator_desc apple_angel_touch_analog = {
++	.name = "angel-touch-analog",
++	.ops = &apple_pmic_touch_regulator_ops,
++	.type = REGULATOR_VOLTAGE,
++	.owner = THIS_MODULE,
++	.enable_reg = 0x31c,
++	.enable_mask = 0x01,
++	.enable_val = 0x01,
++	.disable_val = 0,
++};
++
+ static const struct regulator_desc apple_chestnut_touch_hv = {
+ 	.name = "chestnut-touch-hv",
+ 	.ops = &apple_pmic_touch_regulator_ops,
+@@ -76,6 +93,10 @@ static const struct of_device_id apple_pmic_touch_regulator_of_match[] = {
+ 		.compatible = "apple,adelyn-touch-core-regulator",
+ 		.data = &apple_adelyn_touch_core,
+ 	},
++	{
++		.compatible = "apple,angel-touch-analog-regulator",
++		.data = &apple_angel_touch_analog,
++	},
+ 	{
+ 		.compatible = "apple,chestnut-touch-hv-regulator",
+ 		.data = &apple_chestnut_touch_hv,

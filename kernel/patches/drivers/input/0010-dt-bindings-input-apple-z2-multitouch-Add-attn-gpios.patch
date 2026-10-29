@@ -1,0 +1,59 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Thu, 29 Oct 2026 05:17:39 +0800
+Subject: [PATCH] dt-bindings: input: apple,z2-multitouch: Add attn-gpios for
+ J71t
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The iPad 5 N1 driver reads the attention line (GPIO 65, active low) back
+as a GPIO: frames are read while it stays asserted, and an empty queue
+with the line still asserted is an error. Requesting it as an input also
+configures the pin as one. Allow an optional attn-gpios on the J71t
+touchscreen.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux e623b3c6, 39c86d64 (J71t ledger 8.1);
+ his apple,j71t-n1 binding's attn-gpios, restored on the z2 binding
+ after an independent comparison with his validated driver.]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../bindings/input/touchscreen/apple,z2-multitouch.yaml   | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml b/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml
+index 1f5801674..f42b596c2 100644
+--- a/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml
++++ b/Documentation/devicetree/bindings/input/touchscreen/apple,z2-multitouch.yaml
+@@ -29,6 +29,12 @@ properties:
+   reset-gpios:
+     maxItems: 1
+ 
++  attn-gpios:
++    maxItems: 1
++    description:
++      The controller's attention (interrupt) line, read back as a GPIO to
++      see whether reports are still pending
++
+   power-ana-gpios:
+     maxItems: 1
+ 
+@@ -204,6 +210,7 @@ allOf:
+     else:
+       properties:
+         ana-supply: false
++        attn-gpios: false
+   - if:
+       properties:
+         compatible:
+@@ -255,6 +262,7 @@ examples:
+             reg = <0>;
+             spi-max-frequency = <12048192>;
+             interrupts-extended = <&pinctrl_ap 65 IRQ_TYPE_EDGE_FALLING>;
++            attn-gpios = <&pinctrl_ap 65 GPIO_ACTIVE_LOW>;
+             reset-gpios = <&pinctrl_ap 75 GPIO_ACTIVE_LOW>;
+             power-ldo-gpios = <&pinctrl_ap 73 GPIO_ACTIVE_HIGH>;
+             ana-supply = <&touch_analog>;

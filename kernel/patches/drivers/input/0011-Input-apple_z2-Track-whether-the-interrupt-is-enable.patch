@@ -1,0 +1,147 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <henrik@goat-code.com>
+Date: Thu, 29 Oct 2026 05:17:49 +0800
+Subject: [PATCH] Input: apple_z2: Track whether the interrupt is enabled
+
+The interrupt is requested disabled, enabled during boot and disabled
+again by apple_z2_stop(). A boot that fails leaves it disabled, and the
+suspend or removal that follows disables it once more. After a failed
+resume the disable depth is therefore one too high, and the next
+successful boot leaves the interrupt masked.
+
+Keep track of whether the driver has the interrupt enabled and only
+change it when the state differs. Successful boots and stops behave as
+before.
+
+Found in an independent review of the iPad 5 (J71t) work (J71t ledger
+8.1), where a failed resume of the J71t variant hit it; the generic boot
+path has the same pattern.
+
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/input/touchscreen/apple_z2.c | 41 +++++++++++++++++++++-------
+ 1 file changed, 31 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/input/touchscreen/apple_z2.c b/drivers/input/touchscreen/apple_z2.c
+index a7be30e1e..ba02be80f 100644
+--- a/drivers/input/touchscreen/apple_z2.c
++++ b/drivers/input/touchscreen/apple_z2.c
+@@ -214,6 +214,7 @@ struct apple_z2 {
+ 	unsigned long last_wake;
+ 	bool wake_valid;
+ 	bool ana_enabled;
++	bool irq_on;
+ 	struct clk *clk;
+ 	struct input_dev *input_dev;
+ 	struct completion boot_irq;
+@@ -1811,6 +1812,26 @@ static void apple_z2_gen1_restore_irq_type(struct apple_z2 *z2)
+ 		z2->irq_type_changed = false;
+ }
+ 
++/*
++ * The interrupt is requested disabled. Track whether it is enabled, so that
++ * a boot that failed with it disabled is not disabled a second time.
++ */
++static void apple_z2_irq_on(struct apple_z2 *z2)
++{
++	if (z2->irq_on)
++		return;
++	z2->irq_on = true;
++	enable_irq(z2->spidev->irq);
++}
++
++static void apple_z2_irq_off(struct apple_z2 *z2)
++{
++	if (!z2->irq_on)
++		return;
++	z2->irq_on = false;
++	disable_irq(z2->spidev->irq);
++}
++
+ static irqreturn_t apple_z2_irq(int irq, void *data)
+ {
+ 	struct apple_z2 *z2 = data;
+@@ -2741,7 +2762,7 @@ static int apple_z2_n1_finish_boot(struct apple_z2 *z2)
+ 	if (error)
+ 		return error;
+ 
+-	enable_irq(z2->spidev->irq);
++	apple_z2_irq_on(z2);
+ 	return 0;
+ }
+ 
+@@ -2816,7 +2837,7 @@ static int apple_z2_send_firmware_blob(struct apple_z2 *z2, const u8 *data,
+ 
+ 	if (defer_irq_wait && z2->upload_irq_masked) {
+ 		z2->upload_irq_masked = false;
+-		enable_irq(z2->spidev->irq);
++		apple_z2_irq_on(z2);
+ 	}
+ 
+ 	if (!defer_irq_wait)
+@@ -3151,13 +3172,13 @@ static int apple_z2_upload_firmware(struct apple_z2 *z2)
+ 			if (error)
+ 				return error;
+ 			if (apple_z2_uses_ipad_protocol(z2)) {
+-				disable_irq(z2->spidev->irq);
++				apple_z2_irq_off(z2);
+ 				error = apple_z2_read_device_info_locked(z2);
+ 				/* J71b: stay masked until its first reports are read. */
+ 				if (apple_z2_is_j71b(z2))
+ 					z2->upload_irq_masked = true;
+ 				else
+-					enable_irq(z2->spidev->irq);
++					apple_z2_irq_on(z2);
+ 				if (error)
+ 					return error;
+ 			}
+@@ -3207,7 +3228,7 @@ static int apple_z2_upload_firmware(struct apple_z2 *z2)
+ 		error = apple_z2_gen1_set_level_irq(z2);
+ 	if (!error && apple_z2_is_j71b(z2) && z2->upload_irq_masked) {
+ 		z2->upload_irq_masked = false;
+-		enable_irq(z2->spidev->irq);
++		apple_z2_irq_on(z2);
+ 	}
+ 	mutex_unlock(&z2->io_lock);
+ 	if (error)
+@@ -3388,7 +3409,7 @@ static int apple_z2_boot(struct apple_z2 *z2)
+ 	}
+ 
+ 	reinit_completion(&z2->boot_irq);
+-	enable_irq(z2->spidev->irq);
++	apple_z2_irq_on(z2);
+ 	irq_enabled = true;
+ 	if (apple_z2_is_j71b(z2)) {
+ 		/* J71b boots on reset release; a pulse would restart it. */
+@@ -3426,7 +3447,7 @@ static int apple_z2_boot(struct apple_z2 *z2)
+ 	}
+ 
+ 	if (apple_z2_uses_ipad_protocol(z2) || apple_z2_is_iphone7_plus(z2)) {
+-		disable_irq(z2->spidev->irq);
++		apple_z2_irq_off(z2);
+ 		z2->upload_irq_masked = true;
+ 	}
+ 
+@@ -3440,10 +3461,10 @@ err_stop:
+ 	z2->booted = false;
+ 	if (z2->upload_irq_masked) {
+ 		z2->upload_irq_masked = false;
+-		enable_irq(z2->spidev->irq);
++		apple_z2_irq_on(z2);
+ 	}
+ 	if (irq_enabled)
+-		disable_irq(z2->spidev->irq);
++		apple_z2_irq_off(z2);
+ 	gpiod_set_value_cansleep(z2->reset_gpio, 1);
+ 	apple_z2_platform_power_off(z2);
+ 	apple_z2_reset_protocol(z2);
+@@ -3729,7 +3750,7 @@ static int apple_z2_probe(struct spi_device *spi)
+ 
+ static void apple_z2_stop(struct apple_z2 *z2)
+ {
+-	disable_irq(z2->spidev->irq);
++	apple_z2_irq_off(z2);
+ 	gpiod_direction_output(z2->reset_gpio, 1);
+ 	z2->booted = false;
+ 	apple_z2_platform_power_off(z2);

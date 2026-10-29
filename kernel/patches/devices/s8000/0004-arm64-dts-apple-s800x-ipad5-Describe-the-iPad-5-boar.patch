@@ -1,0 +1,442 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Thu, 29 Oct 2026 04:56:37 +0800
+Subject: [PATCH] arm64: dts: apple: s800x-ipad5: Describe the iPad 5 board
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Describe the iPad 5 hardware in the board file shared by J71s, J72s,
+J71t and J72t, which are wired the same:
+
+- Bluetooth (BCM4355C0) on UART3, powered from PMIC GPIO 13;
+- the BQ27540 battery gauge over HDQ on UART5;
+- the D2365 PMIC GPIO controller and the touch analog supply switch;
+- the N1 touchscreen on SPI3, with the touch clock, the analog supply
+  and the display-sync pin states;
+- the CT819 light sensor on i2c2 (m1n1 adds its calibration);
+- the Smart Cover hall sensors on PMIC GPIO 0 and 10, polled;
+- audio: the CS42L81 codec on SPI1, MCA0 through SmartIO DMA and a
+  simple-audio-card with speakers, headphones and both microphones;
+- the VXD decoder;
+- disp0 and dp kept powered, as the boot display depends on them.
+
+Storage and Wi-Fi sit behind the S8003's root complex. Their part
+(the PCIe ports, the BCM4355C0 endpoint with its REG_ON regulator on PMIC
+GPIO 14, the WLAN UART platform control and the display pipe) is in a
+section the S8003 boards enable, so that the S8000 boards build without
+the root complex.
+
+Board facts are from Berkay's J71t device tree (the J71t ADT), which
+match the J71s and J72t ADTs of the iPadOS 16.7.10 IPSW.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux e40d2403, c1636075, 2a31877a, 7fbe6da5, 6b8742d1, ea4ca97c (J71t ledger 14.1, 14.4, 4.2, 4.7, 8.3, 9.1, 9.4, 10.7); the J71t feature includes are merged into the shared board file; names and shapes follow the integrated bindings and the iPad 6 board (apple,j71t-touchscreen, ti,bq27540-hdq, Wi-Fi power as an endpoint vdd-supply instead of pwren-gpios); the Smart Cover reports SW_MACHINE_COVER instead of SW_LID; dropped the SEP node, the per-session sep-shmem, firmware/calibration file names (m1n1 provides calibration), the PMIC #size-cells rewrite (5.2) and the PMU event line and charger, which come with the shared event controller]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/arm64/boot/dts/apple/s800x-ipad5.dtsi | 351 ++++++++++++++++++++-
+ 1 file changed, 350 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/apple/s800x-ipad5.dtsi b/arch/arm64/boot/dts/apple/s800x-ipad5.dtsi
+index 972d84d6c..c427ce167 100644
+--- a/arch/arm64/boot/dts/apple/s800x-ipad5.dtsi
++++ b/arch/arm64/boot/dts/apple/s800x-ipad5.dtsi
+@@ -2,6 +2,11 @@
+ /*
+  * Apple iPad 5 common device tree
+  *
++ * J71s, J72s, J71t and J72t are wired the same; only J72t's Wi-Fi module
++ * differs. Storage and Wi-Fi sit behind the PCIe root complex, which is
++ * described for the S8003 only: the S8003 boards define S800X_IPAD5_PCIE
++ * before including this file.
++ *
+  * Copyright (c) 2022, Konrad Dybcio <konradybcio@kernel.org>
+  */
+ 
+@@ -11,6 +16,14 @@
+ / {
+ 	chassis-type = "tablet";
+ 
++	aliases {
++		als0 = &als;
++		bluetooth0 = &bluetooth;
++		serial3 = &serial3;
++		serial5 = &serial5;
++		touchscreen0 = &touchscreen;
++	};
++
+ 	gpio-keys {
+ 		compatible = "gpio-keys";
+ 
+@@ -40,21 +53,136 @@
+ 			linux,code = <KEY_VOLUMEUP>;
+ 		};
+ 	};
++
++	/*
++	 * Smart Cover hall sensors: PMIC GPIO 0 ("halleffect") and 10
++	 * ("halleffect1") in the ADT /buttons node. Which level means "cover
++	 * closed" isn't measured yet; active low is assumed. Reported as
++	 * SW_MACHINE_COVER, not as a lid switch, so that closing the cover
++	 * doesn't suspend the system. Each line is its own device, so that
++	 * one the PMIC keeps for itself can't take the other down.
++	 */
++	smart-cover {
++		compatible = "gpio-keys-polled";
++		poll-interval = <50>;
++		label = "iPad Smart Cover";
++
++		cover-switch {
++			label = "Smart Cover (PMIC GPIO 0)";
++			gpios = <&pmu_gpio 0 GPIO_ACTIVE_LOW>;
++			linux,input-type = <EV_SW>;
++			linux,code = <SW_MACHINE_COVER>;
++			debounce-interval = <50>;
++		};
++	};
++
++	smart-cover-aux {
++		compatible = "gpio-keys-polled";
++		poll-interval = <50>;
++		label = "iPad Smart Cover 2";
++
++		cover-switch {
++			label = "Smart Cover (PMIC GPIO 10)";
++			gpios = <&pmu_gpio 10 GPIO_ACTIVE_LOW>;
++			linux,input-type = <EV_SW>;
++			linux,code = <SW_MACHINE_COVER>;
++			debounce-interval = <50>;
++		};
++	};
++
++	/* ADT arm-io clock-frequencies of the spi1 and spi3 clock-ids */
++	spi1_nclk: clock-spi1-nclk {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++		clock-frequency = <61538461>;
++		clock-output-names = "spi1-nclk";
++	};
++
++	spi3_nclk: clock-spi3-nclk {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++		clock-frequency = <61538461>;
++		clock-output-names = "spi3-nclk";
++	};
++
++	/*
++	 * CS42L81 on SPI1 (control) and MCA0 (data): built-in speakers,
++	 * 3.5 mm headphones and the two built-in microphones (ADT
++	 * dmic1a-intmic and dmic1b-intmic).
++	 */
++	sound {
++		compatible = "simple-audio-card";
++		simple-audio-card,name = "iPad5 Speakers";
++		simple-audio-card,format = "i2s";
++		simple-audio-card,bitclock-master = <&codec_dai>;
++		simple-audio-card,frame-master = <&codec_dai>;
++		simple-audio-card,widgets = "Speaker", "Speakers",
++					    "Headphone", "Headphones",
++					    "Microphone", "Internal Mic";
++		simple-audio-card,routing = "Speakers", "SPKOUT",
++					    "Headphones", "HPOUT",
++					    "DMIC1A", "Internal Mic",
++					    "DMIC1B", "Internal Mic";
++		/*
++		 * The codec switches between HPOUT and SPKOUT on jack
++		 * insertion; these add user switches on top.
++		 */
++		simple-audio-card,pin-switches = "Speakers", "Headphones";
++
++		simple-audio-card,cpu {
++			sound-dai = <&mca0>;
++		};
++
++		codec_dai: simple-audio-card,codec {
++			sound-dai = <&cs42l81>;
++		};
++	};
+ };
+ 
+ &framebuffer0 {
+ 	power-domains = <&ps_disp0 &ps_dp>;
+ };
+ 
++/*
++ * The display pipe and the eDP link that the boot loader set up reset when
++ * these domains power off, and nothing brings the panel back up yet. Keep
++ * them on, also across suspend.
++ */
++&ps_disp0 {
++	apple,always-on;
++};
++
++&ps_dp {
++	apple,always-on;
++};
++
+ &i2c0 {
+ 	status = "okay";
+ 
+-	pmic@3c {
++	d2365_pmic: pmic@3c {
+ 		compatible = "apple,angel-pmic", "apple,i2c-pmic";
+ 		reg = <0x3c>;
+ 		#address-cells = <1>;
+ 		#size-cells = <1>;
+ 
++		/*
++		 * 0, 10: Smart Cover halls; 13: Bluetooth power enable;
++		 * 14: WLAN REG_ON.
++		 */
++		pmu_gpio: gpio {
++			compatible = "apple,d2365-pmic-gpio";
++			gpio-controller;
++			#gpio-cells = <2>;
++			gpio-reserved-ranges = <1 9>, <11 2>, <15 9>;
++		};
++
++		/*
++		 * The PMU event interrupt controller (event line AP GPIO 76,
++		 * active low) on pmu_gpio and the Lightning charger at 0x180,
++		 * with the Tristar at i2c0 0x1a, are described with the
++		 * shared D2365 event controller.
++		 */
++
+ 		rtc@500 {
+ 			compatible = "apple,angel-pmic-rtc", "apple,antigua-pmic-rtc";
+ 			reg = <0x500 0x10>;
+@@ -62,6 +190,12 @@
+ 			nvmem-cell-names = "rtc_offset";
+ 		};
+ 
++		/* D2365 register 0x31c bit 0 */
++		touch_analog: regulator-touch-analog {
++			compatible = "apple,angel-touch-analog-regulator";
++			regulator-name = "touch-analog";
++		};
++
+ 		nvmem@5000 {
+ 			compatible = "apple,pmic-nvmem";
+ 			reg = <0x5000 0x28>;
+@@ -78,3 +212,218 @@
+ 		};
+ 	};
+ };
++
++&i2c2 {
++	status = "okay";
++
++	/* m1n1 adds apple,als-calibration from the ADT */
++	als: light-sensor@39 {
++		compatible = "apple,ct819", "amstaos,tsl2581";
++		reg = <0x39>;
++		interrupts-extended = <&pinctrl_ap 71 IRQ_TYPE_LEVEL_LOW>;
++	};
++};
++
++/* The codec is wired to I2S switch pad 0 */
++&mca0 {
++	apple,i2s-switch = <&i2s_switch 0 0>;
++	status = "okay";
++};
++
++&pinctrl_ap {
++	battery_swi_pins: battery-swi-pins {
++		pinmux = <APPLE_PINMUX(2, 1)>;
++	};
++
++	bluetooth_uart3_pins: bluetooth-uart3-pins {
++		pinmux = <APPLE_PINMUX(88, 1)>,
++			 <APPLE_PINMUX(89, 1)>,
++			 <APPLE_PINMUX(90, 1)>,
++			 <APPLE_PINMUX(91, 1)>;
++	};
++
++	/* Display sync to the touch controller, in and out of its function */
++	touch_display_sync_active: touch-display-sync-active-pins {
++		pinmux = <APPLE_PINMUX(74, 2)>;
++	};
++
++	touch_display_sync_inactive: touch-display-sync-inactive-pins {
++		pinmux = <APPLE_PINMUX(74, 0)>;
++	};
++};
++
++&serial3 {
++	pinctrl-0 = <&bluetooth_uart3_pins>;
++	pinctrl-names = "default";
++	uart-has-rtscts;
++	status = "okay";
++
++	bluetooth: bluetooth {
++		compatible = "apple,j71t-bcm4355c0-bt", "brcm,bcm4355c0-bt";
++		current-speed = <115200>;
++		max-speed = <3000000>;
++		shutdown-gpios = <&pmu_gpio 13 GPIO_ACTIVE_HIGH>;
++		device-wakeup-gpios = <&pinctrl_ap 142 GPIO_ACTIVE_HIGH>;
++	};
++};
++
++&serial5 {
++	pinctrl-0 = <&battery_swi_pins>;
++	pinctrl-names = "default";
++	status = "okay";
++
++	onewire {
++		compatible = "ti,hdq-uart";
++
++		battery: fuel-gauge {
++			compatible = "ti,bq27540-hdq";
++		};
++	};
++};
++
++&sio {
++	status = "okay";
++};
++
++&spi1 {
++	clocks = <&spi1_nclk>;
++	/* ADT function-spi_cs0 */
++	cs-gpios = <&pinctrl_ap 16 GPIO_ACTIVE_LOW>;
++	status = "okay";
++
++	cs42l81: audio-codec@0 {
++		compatible = "cirrus,cs42l81";
++		reg = <0>;
++		spi-max-frequency = <1000000>;
++		clocks = <&mca0>;
++		clock-names = "mclk";
++		/* ADT function-spkr_mute */
++		mute-gpios = <&pinctrl_ap 64 GPIO_ACTIVE_LOW>;
++		/* ADT spkr-gain-db: -3.0 dB */
++		cirrus,speaker-max-gain = <(-300)>;
++		#sound-dai-cells = <0>;
++	};
++};
++
++&spi3 {
++	clocks = <&spi3_nclk>;
++	cs-gpios = <&pinctrl_ap 102 GPIO_ACTIVE_LOW>;
++	status = "okay";
++
++	touchscreen: touchscreen@0 {
++		compatible = "apple,j71t-touchscreen";
++		reg = <0>;
++		/* N1 selects 83 ns; the controller rounds up to divider 6 */
++		spi-max-frequency = <12048192>;
++		interrupts-extended = <&pinctrl_ap 65 IRQ_TYPE_EDGE_FALLING>;
++		reset-gpios = <&pinctrl_ap 75 GPIO_ACTIVE_LOW>;
++		power-ldo-gpios = <&pinctrl_ap 73 GPIO_ACTIVE_HIGH>;
++		ana-supply = <&touch_analog>;
++		clocks = <&touchclk>;
++		pinctrl-names = "display-sync-active", "display-sync-inactive";
++		pinctrl-0 = <&touch_display_sync_active>;
++		pinctrl-1 = <&touch_display_sync_inactive>;
++		touchscreen-size-x = <1536>;
++		touchscreen-size-y = <2048>;
++		/* Raw Y grows upward (corner taps on J71t) */
++		touchscreen-inverted-y;
++	};
++};
++
++&touchclk {
++	status = "okay";
++};
++
++&vxd {
++	status = "okay";
++};
++
++#ifdef S800X_IPAD5_PCIE
++
++/ {
++	aliases {
++		wifi0 = &wifi;
++	};
++
++	/* ADT uart2/wlan function-reg_on: PMIC GPIO 14 */
++	wlan_vdd: regulator-wlan-vdd {
++		compatible = "regulator-fixed";
++		regulator-name = "wlan-vdd";
++		gpio = <&pmu_gpio 14 GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++		startup-delay-us = <100000>;
++		off-on-delay-us = <100000>;
++	};
++};
++
++&disp0 {
++	status = "okay";
++};
++
++&pcie0_dart0 {
++	status = "okay";
++};
++
++&pcie0_dart1 {
++	status = "okay";
++};
++
++&pcie0 {
++	pinctrl-0 = <&wifi_clkreq_pins>;
++	pinctrl-names = "default";
++	status = "okay";
++
++	/* Wi-Fi. PERST# from the ADT pci-bridge1 function-perst. */
++	pci@1,0 {
++		device_type = "pci";
++		reg = <0x800 0x0 0x0 0x0 0x0>;
++		bus-range = <2 2>;
++		reset-gpios = <&pinctrl_ap 161 GPIO_ACTIVE_LOW>;
++		max-link-speed = <1>;
++		aspm-no-l0s;
++		aspm-no-l1;
++
++		#address-cells = <3>;
++		#size-cells = <2>;
++		ranges;
++
++		/* BCM4355C0 (14e4:43dc); bus 2 maps to pcie0_dart1 */
++		wifi: wifi@0,0 {
++			compatible = "pci14e4,43dc";
++			reg = <0x20000 0x0 0x0 0x0 0x0>;
++			/* ADT wlan interrupts <0x71 2> */
++			interrupts-extended = <&pinctrl_ap 113 IRQ_TYPE_EDGE_FALLING>;
++			interrupt-names = "host-wake";
++			apple,wlan-uart = <&wlan_uart2>;
++			/* ADT pci-bridge1 function-device_wake */
++			device-wake-gpios = <&pinctrl_ap 67 GPIO_ACTIVE_HIGH>;
++			vdd-supply = <&wlan_vdd>;
++			/* cfg80211's country goes to the firmware as <ISO code>/0 */
++			brcm,ccode-map-trivial;
++		};
++	};
++};
++
++&pinctrl_ap {
++	/*
++	 * Port 1 CLKREQ# (ADT pci-bridge1 function-clkreq) in its peripheral
++	 * function: iBoot doesn't set it up for Wi-Fi on a tethered boot.
++	 */
++	wifi_clkreq_pins: wifi-clkreq-pins {
++		pinmux = <APPLE_PINMUX(165, 1)>;
++	};
++
++	/* ADT uart2 function-tx and function-rts */
++	wlan_uart2_pins: wlan-uart2-pins {
++		pinmux = <APPLE_PINMUX(192, 1)>,
++			 <APPLE_PINMUX(194, 1)>;
++	};
++};
++
++&wlan_uart2 {
++	pinctrl-0 = <&wlan_uart2_pins>;
++	pinctrl-names = "default";
++	status = "okay";
++};
++
++#endif /* S800X_IPAD5_PCIE */

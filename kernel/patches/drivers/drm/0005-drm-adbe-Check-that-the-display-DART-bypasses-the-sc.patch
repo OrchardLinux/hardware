@@ -1,0 +1,214 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Thu, 29 Oct 2026 05:15:24 +0800
+Subject: [PATCH] drm: adbe: Check that the display DART bypasses the scanout
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The driver hands the pipe plain DMA addresses, which only reach memory
+if dart-disp0 passes them through untranslated. The plane base check
+(base == the boot framebuffer's low 32 bits) is also met by a
+translating stream that identity-maps the boot framebuffer, in which
+case new buffers would not be reachable.
+
+Restore the read-only check from the validated driver: before the
+simple-framebuffer is retired, read both dart-disp0 windows (the new
+"dart0"/"dart1" reg entries, mapped without being requested, never
+written). For every stream with the TCR translate bit set, walk its
+page tables for the live scanout page; if a stream maps it, or its
+tables cannot be read, refuse to probe and leave the display to
+simpledrm. A translating stream that does not map the scanout is not
+the pipe's and is ignored, as before. Without the DART entries the
+driver cannot check and does not probe.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux 71a3dfd5 (J71t ledger 11.1); the DART
+ windows come from the DT instead of hard-coded addresses, the per-
+ stream dev_info dump and the scratch-buffer linear-reach helper are
+ not carried.]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/gpu/drm/adbe/adbe_drv.c | 140 +++++++++++++++++++++++++++++++-
+ 1 file changed, 138 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/adbe/adbe_drv.c b/drivers/gpu/drm/adbe/adbe_drv.c
+index fdeac5415..2508e6531 100644
+--- a/drivers/gpu/drm/adbe/adbe_drv.c
++++ b/drivers/gpu/drm/adbe/adbe_drv.c
+@@ -22,8 +22,10 @@
+  * The pipe's bus is 32 bits wide with DRAM at bus address 0. iBoot leaves
+  * the display DART in bypass, so the plane base register holds the low 32
+  * bits of the boot framebuffer's physical address; the bus offset is taken
+- * from that live scanout. Scanout buffers are ordinary DMA allocations that
+- * must fall inside the same 4 GiB window.
++ * from that live scanout. Probe confirms the bypass by reading the DART,
++ * never writing it, and leaves the display to simpledrm otherwise.
++ * Scanout buffers are ordinary DMA allocations that must fall inside the
++ * same 4 GiB window.
+  */
+ 
+ #include <linux/aperture.h>
+@@ -110,6 +112,23 @@
+ #define ADP_PKT_REG		GENMASK(15, 0)
+ #define ADP_PKT_MAX_WORDS	4
+ 
++/*
++ * Display DART (dart-disp0, "dart,s5l8960x" family), read only: TCR at 0xc
++ * (one byte per stream, bit 7 = translate), TTBRs at 0x40 (valid bit 31,
++ * PA >> 12). Page tables: 4 KiB granule, TTBR index = bus[31:30],
++ * L1 = bus[29:21], L2 = bus[20:12], PTE valid bit 0, address bits [35:12].
++ */
++#define DART_WINDOWS		2
++#define DART_STREAMS		4
++#define DART_TTBRS		4
++#define DART_TCR		0x0c
++#define DART_TCR_TRANSLATE	BIT(7)
++#define DART_TTBR(sid, idx)	(0x40 + 4 * ((sid) * DART_TTBRS + (idx)))
++#define DART_TTBR_VALID		BIT(31)
++#define DART_TTBR_ADDR		GENMASK(23, 0)
++#define DART_PTE_VALID		BIT_ULL(0)
++#define DART_PTE_ADDR		GENMASK_ULL(35, 12)
++
+ #define ADBE_ALIGN		64	/* plane base and stride */
+ #define ADBE_ADDR_TAG		(ADBE_ALIGN - 1)	/* low bits of base/stride */
+ #define ADBE_BUS_LIMIT		BIT_ULL(32)
+@@ -709,12 +728,124 @@ static int adbe_take_boot_fb(struct adbe *adbe, struct device_node *fb_np)
+ 	return 0;
+ }
+ 
++/* Table pages are only read if they lie inside a /memory range. */
++static bool adbe_pa_is_dram(phys_addr_t pa)
++{
++	struct device_node *np;
++	struct resource res;
++	bool found = false;
++	int i;
++
++	for_each_node_by_type(np, "memory") {
++		for (i = 0; !found && !of_address_to_resource(np, i, &res); i++)
++			found = pa >= res.start && pa + SZ_4K - 1 <= res.end;
++		if (found) {
++			of_node_put(np);
++			break;
++		}
++	}
++
++	return found;
++}
++
++static int adbe_dart_pte(phys_addr_t table, unsigned int index, u64 *pte)
++{
++	u64 *page;
++
++	if (!adbe_pa_is_dram(table))
++		return -EFAULT;
++	page = memremap(table, SZ_4K, MEMREMAP_WB);
++	if (!page)
++		return -ENOMEM;
++	*pte = READ_ONCE(page[index]);
++	memunmap(page);
++
++	return 0;
++}
++
++/*
++ * Whether one translating stream maps the live scanout page: 1 if it does,
++ * 0 if it leaves that page unmapped or maps it elsewhere (so it is not the
++ * stream the pipe reads through), <0 if its tables cannot be read.
++ */
++static int adbe_dart_maps_scanout(void __iomem *dart, unsigned int sid,
++				  u32 bus, phys_addr_t pa)
++{
++	u32 ttbr = readl(dart + DART_TTBR(sid, bus >> 30));
++	u64 pte;
++	int ret;
++
++	if (!(ttbr & DART_TTBR_VALID))
++		return 0;
++	ret = adbe_dart_pte((phys_addr_t)FIELD_GET(DART_TTBR_ADDR, ttbr) << 12,
++			    (bus >> 21) & 0x1ff, &pte);
++	if (ret || !(pte & DART_PTE_VALID))
++		return ret;
++	ret = adbe_dart_pte(pte & DART_PTE_ADDR, (bus >> 12) & 0x1ff, &pte);
++	if (ret || !(pte & DART_PTE_VALID))
++		return ret;
++
++	return (pte & DART_PTE_ADDR) == (pa & ~(phys_addr_t)(SZ_4K - 1));
++}
++
++/*
++ * Confirm that no display DART stream translates the live scanout (bus
++ * address @bus, physical @pa). Buffers are plain DMA allocations, which
++ * the pipe can only reach through bypass. An unreadable page table counts
++ * as translating: an unknown state is never taken for bypass.
++ */
++static int adbe_check_dart_bypass(struct adbe *adbe, u32 bus, phys_addr_t pa)
++{
++	struct platform_device *pdev = to_platform_device(adbe->drm.dev);
++	static const char * const names[DART_WINDOWS] = { "dart0", "dart1" };
++	struct device *dev = adbe->drm.dev;
++	unsigned int win, sid;
++
++	for (win = 0; win < DART_WINDOWS; win++) {
++		struct resource *res;
++		void __iomem *dart;
++		u32 tcr;
++		int ret = 0;
++
++		res = platform_get_resource_byname(pdev, IORESOURCE_MEM,
++						   names[win]);
++		if (!res)
++			return dev_err_probe(dev, -ENODEV,
++					     "no %s window: cannot check the display DART\n",
++					     names[win]);
++		/* Not requested: the DART is not this device's to own. */
++		if (res->flags & IORESOURCE_MEM_NONPOSTED)
++			dart = ioremap_np(res->start, resource_size(res));
++		else
++			dart = ioremap(res->start, resource_size(res));
++		if (!dart)
++			return -ENOMEM;
++
++		tcr = readl(dart + DART_TCR);
++		for (sid = 0; sid < DART_STREAMS && !ret; sid++) {
++			if (!((tcr >> (8 * sid)) & DART_TCR_TRANSLATE))
++				continue;
++			ret = adbe_dart_maps_scanout(dart, sid, bus, pa);
++			if (ret)
++				dev_err(dev, "display DART %s stream %u %s the scanout\n",
++					names[win], sid,
++					ret < 0 ? "may translate" : "translates");
++		}
++		iounmap(dart);
++		if (ret)
++			return ret < 0 ? ret : -ENODEV;
++	}
++
++	return 0;
++}
++
+ /* Check that the pipe runs as iBoot leaves it; reads only. */
+ static int adbe_adopt(struct adbe *adbe)
+ {
+ 	struct device *dev = adbe->drm.dev;
+ 	u32 base, stride, format;
+ 	u16 frame;
++	int ret;
+ 
+ 	format = readl(adbe->regs + ADP_FORMAT) & ~ADP_FORMAT_FLAGS;
+ 	if ((readl(adbe->regs + ADP_SPDS) & 0xffff) != ADP_SPDS_VERSION ||
+@@ -744,6 +875,11 @@ static int adbe_adopt(struct adbe *adbe)
+ 				     "plane %#x/%#x is not the boot framebuffer %pa\n",
+ 				     base, stride, &adbe->boot.start);
+ 
++	ret = adbe_check_dart_bypass(adbe, base & ~ADBE_ADDR_TAG,
++				     adbe->boot.start);
++	if (ret)
++		return ret;
++
+ 	adbe->boot_base = base;
+ 	adbe->boot_stride = stride;
+ 	adbe->cur_base = base;

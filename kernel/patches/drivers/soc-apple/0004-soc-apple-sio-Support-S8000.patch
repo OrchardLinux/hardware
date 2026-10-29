@@ -1,0 +1,149 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 21:30:22 +0800
+Subject: [PATCH] soc: apple: sio: Support S8000
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+iOS 16.7.10's AppleS8000SmartIO drives the same AppleA7IOP (iop-version
+1) as on T8010: register layout, message format, the endpoint 0 ready
+message (0x6d, SMARTIO_PROTOCOL_VERSION 3) and the shared-region setup
+sequence are identical. The A9 only needs its compatible and its own
+firmware image.
+
+Two probe changes come with it, for both SoCs:
+
+ - If the coprocessor is already running at probe (left so by the boot
+   chain), reset it through its PMGR power state when the node has a
+   reset, instead of failing outright.
+ - Load the image with request_firmware_direct() and probe
+   asynchronously: a missing image or a coprocessor that never reports
+   ready (5 s, plus 1 s for the setup) must not hold up the boot.
+
+The RX interrupt stays requested disabled and is enabled only while the
+coprocessor runs.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: from brkosebay/linux 71290f21 (J71t ledger 10.3); kept the
+ IRQF_NO_AUTOEN request and the IRQ enable/disable around the
+ coprocessor's run state (his version requested the IRQ enabled), and
+ left out the dev_info messages.]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/soc/apple/Kconfig          | 12 ++++++------
+ drivers/soc/apple/apple-sio-core.c | 26 +++++++++++++++++++-------
+ 2 files changed, 25 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/soc/apple/Kconfig b/drivers/soc/apple/Kconfig
+index 4e8dfff94..26ccd74ce 100644
+--- a/drivers/soc/apple/Kconfig
++++ b/drivers/soc/apple/Kconfig
+@@ -49,17 +49,17 @@ config APPLE_PMP_T8015_V1
+ 	  Say 'y' here if you have an Apple A11 SoC.
+ 
+ config APPLE_SIO
+-	tristate "Apple T8010 SmartIO coprocessor"
++	tristate "Apple S8000/T8010 SmartIO coprocessor"
+ 	depends on ARM64
+ 	depends on PM
+ 	depends on ARCH_APPLE || COMPILE_TEST
+ 	help
+-	  Support the SmartIO coprocessor found on Apple T8010 SoCs. SmartIO
+-	  boots dedicated firmware and exchanges endpoint messages with the
+-	  application processor. It provides DMA services to peripheral
+-	  controllers such as SPI.
++	  Support the SmartIO coprocessor found on Apple S8000/S8003 and T8010
++	  SoCs. SmartIO boots dedicated firmware and exchanges endpoint
++	  messages with the application processor. It provides DMA services
++	  to peripheral controllers such as SPI and MCA.
+ 
+-	  Say Y here if you have an Apple T8010 SoC.
++	  Say Y here if you have an Apple S8000/S8003 or T8010 SoC.
+ 
+ config APPLE_T8010_WLAN
+ 	tristate "Apple T8010 WLAN platform control"
+diff --git a/drivers/soc/apple/apple-sio-core.c b/drivers/soc/apple/apple-sio-core.c
+index 4c04fce03..56d3b5f34 100644
+--- a/drivers/soc/apple/apple-sio-core.c
++++ b/drivers/soc/apple/apple-sio-core.c
+@@ -1,6 +1,6 @@
+ // SPDX-License-Identifier: GPL-2.0-only OR MIT
+ /*
+- * Apple T8010 SmartIO coprocessor driver
++ * Apple S8000/T8010 SmartIO coprocessor driver
+  *
+  * Copyright (C) 2026 Paul Praschl
+  */
+@@ -23,6 +23,7 @@
+ #include <linux/platform_device.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/refcount.h>
++#include <linux/reset.h>
+ #include <linux/sizes.h>
+ #include <linux/slab.h>
+ #include <linux/soc/apple/sio.h>
+@@ -66,7 +67,7 @@
+ #define APPLE_SIO_DMA_COMPLETE_TAGGED	BIT(7)
+ #define APPLE_SIO_OP_ERROR		0x6a
+ #define APPLE_SIO_OP_READY		0x6d
+-#define APPLE_SIO_READY_PARAMETER	0x03
++#define APPLE_SIO_READY_PARAMETER	0x03	/* SMARTIO_PROTOCOL_VERSION */
+ #define APPLE_SIO_RX_IRQ_INDEX		2
+ #define APPLE_SIO_READY_TIMEOUT_MS	5000
+ #define APPLE_SIO_TX_TIMEOUT_US		200000
+@@ -802,16 +803,23 @@ static int apple_sio_start(struct apple_sio *sio, const char *firmware_name)
+ 	int ret;
+ 
+ 	control = readl(sio->base + APPLE_SIO_CPU_CONTROL);
+-	if (control & APPLE_SIO_CPU_RUN)
+-		return dev_err_probe(sio->dev, -EBUSY,
+-				     "SmartIO CPU is already running\n");
++	if (control & APPLE_SIO_CPU_RUN) {
++		/* Left running by the boot chain: reset it through the PMGR. */
++		ret = device_reset_optional(sio->dev);
++		control = readl(sio->base + APPLE_SIO_CPU_CONTROL);
++		if (ret || (control & APPLE_SIO_CPU_RUN))
++			return dev_err_probe(sio->dev, ret ?: -EBUSY,
++					     "SmartIO CPU is already running\n");
++	}
+ 
+-	ret = request_firmware(&firmware, firmware_name, sio->dev);
++	/* No user-helper fallback: a missing image must not stall the boot. */
++	ret = request_firmware_direct(&firmware, firmware_name, sio->dev);
+ 	if (ret)
+ 		return dev_err_probe(sio->dev, ret,
+ 				     "failed to load firmware %s\n",
+ 				     firmware_name);
+ 
++	/* iOS maps the image page-truncated; round up so all of it is mapped. */
+ 	size = ALIGN(firmware->size, SZ_4K);
+ 	buffer = dma_alloc_coherent(sio->dev, size, &dma, GFP_KERNEL);
+ 	if (!buffer) {
+@@ -1062,6 +1070,7 @@ static void apple_sio_remove(struct platform_device *pdev)
+ }
+ 
+ static const struct of_device_id apple_sio_of_match[] = {
++	{ .compatible = "apple,s8000-sio" },
+ 	{ .compatible = "apple,t8010-sio" },
+ 	{}
+ };
+@@ -1071,12 +1080,15 @@ static struct platform_driver apple_sio_driver = {
+ 	.driver = {
+ 		.name = "apple-sio",
+ 		.of_match_table = apple_sio_of_match,
++		/* Firmware boot waits up to 6 s: never hold up other probes. */
++		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
+ 	},
+ 	.probe = apple_sio_probe,
+ 	.remove = apple_sio_remove,
+ };
+ module_platform_driver(apple_sio_driver);
+ 
++MODULE_FIRMWARE("apple/s8000-smartio.bin");
+ MODULE_FIRMWARE("apple/t8010-smartio.bin");
+-MODULE_DESCRIPTION("Apple T8010 SmartIO coprocessor driver");
++MODULE_DESCRIPTION("Apple S8000/T8010 SmartIO coprocessor driver");
+ MODULE_LICENSE("Dual MIT/GPL");

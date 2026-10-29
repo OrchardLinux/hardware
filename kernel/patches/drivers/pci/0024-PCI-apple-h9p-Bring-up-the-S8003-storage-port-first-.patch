@@ -1,0 +1,423 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Berkay=20K=C3=B6sebay?= <brkosebay@users.noreply.github.com>
+Date: Thu, 29 Oct 2026 04:37:44 +0800
+Subject: [PATCH] PCI: apple-h9p: Bring up the S8003 storage port first, with
+ retries
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The S8003 support powered the Wi-Fi endpoint through pci-pwrctrl before
+any port came up and made the host probe wait for every power control
+driver, so storage depended on Wi-Fi power. It also tried each link
+once. The validated A9 bring-up differs in both:
+
+- Storage first. Port 0 (NVMe) trains on its own; the Wi-Fi endpoint is
+  powered afterwards, and a missing power GPIO only delays Wi-Fi.
+- Retries. Every port bring-up makes up to two link attempts, PERST#
+  asserted in between. If the storage link still doesn't come up, the
+  port is stopped, powered off, held off for 100 ms and brought up once
+  more. The Wi-Fi port gets up to two endpoint power cycles (off 100 ms,
+  on, 100 ms settle), each with up to two link attempts.
+
+On S8003, don't wait for the power controls at probe and don't power
+the endpoints there. Bring up the storage port first; then power the
+other ports' endpoints and train them. A power control that isn't bound
+yet moves its port to a delayed work item that retries every 500 ms for
+up to 30 s and rescans the bus once the link is up. A failure there only
+takes that port down.
+
+The iommu-map routes bus 1 to the storage DART and bus 2 to the Wi-Fi
+DART, and enumeration reassigns bus numbers. With the storage port down,
+Wi-Fi would become bus 1 and use the storage DART, so the other ports
+stay off in that case, as in the validated bring-up. A fixed numbering
+that keeps Wi-Fi on bus 2 needs more than a pre-programmed root port.
+
+The Wi-Fi supply must start off and stay off for 100 ms when cycled: its
+fixed regulator needs off-on-delay-us = <100000> and no
+regulator-boot-on. T8010 is unchanged.
+
+Signed-off-by: Berkay Kösebay <brkosebay@users.noreply.github.com>
+[Orchard: restores the port order and retries of brkosebay/linux
+ 9c088fd8 (apple_s8003_setup_port, apple_s8003_boot_retry,
+ apple_h9p_late_port, the late-port DART guard) and omarchy-ipad5
+ patches/pcie/kernel/0030 (J71t ledger 2.2, 2.3, 2.7) on top of
+ pci-pwrctrl instead of pwren-gpios; the deep link recovery after the
+ boot retry and the j71t machine check are not taken]
+[Orchard: adapted to main's T7000 and N61 support when moved after it]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/pci/controller/pcie-apple-h9p.c | 262 ++++++++++++++++++++++--
+ 1 file changed, 241 insertions(+), 21 deletions(-)
+
+diff --git a/drivers/pci/controller/pcie-apple-h9p.c b/drivers/pci/controller/pcie-apple-h9p.c
+index 235dc1456..6c101fb57 100644
+--- a/drivers/pci/controller/pcie-apple-h9p.c
++++ b/drivers/pci/controller/pcie-apple-h9p.c
+@@ -40,6 +40,7 @@
+ #include <linux/pm_domain.h>
+ #include <linux/sizes.h>
+ #include <linux/slab.h>
++#include <linux/workqueue.h>
+ 
+ #include <linux/apple-dart.h>
+ #include <linux/apple-ans.h>
+@@ -193,6 +194,16 @@
+ #define S8003_LINK_UP_TIMEOUT_US	500000
+ #define S8003_L0_TIMEOUT_US		100000
+ #define S8003_READY_TIMEOUT_US		250000
++/* Link attempts per power-up of the port, as in the validated bring-up */
++#define S8003_PORT_LINK_TRIES		2
++/* Endpoint power cycles of a port with a pci-pwrctrl endpoint (Wi-Fi) */
++#define S8003_ENDPOINT_POWER_CYCLES	2
++#define S8003_ENDPOINT_OFF_MS		100
++#define S8003_ENDPOINT_SETTLE_MS	100
++#define S8003_PORT_OFF_HOLD_MS		100
++/* Waiting for the endpoints' power control drivers: 60 x 500 ms */
++#define S8003_LATE_PORT_RETRY_MS	500
++#define S8003_LATE_PORT_TRIES		60
+ 
+ /*
+  * NVMMU invalidate FIFO status, in the port 0 block (iBoot sets the live ADT
+@@ -470,6 +481,8 @@ enum apple_h9p_port_result {
+  * @parse: SoC-specific device tree parsing, after the root ports (optional)
+  * @setup_common: root complex bring-up, once, before any port (optional)
+  * @setup_port: power up one root port and train its link
++ * @setup_ports: bring up all root ports, replacing the generic loop around
++ *               @setup_port (optional)
+  * @default_link_speed: target link speed of a root port without
+  *	max-link-speed (used by T7000)
+  * @has_clocks: the controller takes "aux" and "ref" clocks
+@@ -482,7 +495,7 @@ enum apple_h9p_port_result {
+  * @nvme_mode_ports: ports carrying the ANS NVMe endpoint, for which the root
+  *                   complex is switched into NVMe mode before they power up
+  * @link_settle_ms: delay between link training and the first configuration
+- *                  request below the root ports
++ *                  request below the root ports (required with @setup_ports)
+  * @phy_tunables: "phy" block tunables (S8003 only, T8010 has none)
+  * @common_tunables: root complex tunables (S8003 only; see T8010's code)
+  * @config_tunables: root port configuration space tunables (S8003 only)
+@@ -496,6 +509,7 @@ struct apple_h9p_hw {
+ 	int (*setup_common)(struct apple_h9p_pcie *pcie);
+ 	int (*setup_port)(struct apple_h9p_pcie *pcie, unsigned int port,
+ 			  enum apple_h9p_port_result *result);
++	int (*setup_ports)(struct apple_h9p_pcie *pcie);
+ 	u8 default_link_speed;
+ 	bool has_clocks;
+ 	bool has_phy;
+@@ -548,6 +562,10 @@ struct apple_h9p_pcie {
+ 	u32 inherited_perst_pending;
+ 	u32 lane_cfg;
+ 	bool pwrctrl_powered;
++	/* S8003: ports waiting for their endpoint's power control */
++	u32 late_ports;
++	unsigned int late_tries;
++	struct delayed_work late_work;
+ 
+ 	struct apple_h9p_nvmmu nvmmu;
+ 
+@@ -2448,19 +2466,15 @@ static int apple_s8003_start_link(struct apple_h9p_pcie *pcie,
+ 	return ret;
+ }
+ 
+-static int apple_s8003_setup_port(struct apple_h9p_pcie *pcie,
+-				  unsigned int port,
+-				  enum apple_h9p_port_result *result)
++/* Power the port up as validated for its kind, and train its link once */
++static int apple_s8003_setup_port_once(struct apple_h9p_pcie *pcie,
++				       unsigned int port)
+ {
+-	struct device *dev = pcie->dev;
+ 	int ret;
+ 
+-	*result = APPLE_H9P_PORT_DISABLED;
+-
+ 	ret = gpiod_direction_output(pcie->perst[port], 1);
+ 	if (ret)
+-		return dev_err_probe(dev, ret,
+-				     "failed to assert port %u PERST#\n", port);
++		return ret;
+ 
+ 	/*
+ 	 * Deliberately per port: the storage port takes the full power cycle
+@@ -2473,17 +2487,201 @@ static int apple_s8003_setup_port(struct apple_h9p_pcie *pcie,
+ 		ret = apple_s8003_restart_port(pcie, port);
+ 	if (!ret)
+ 		ret = apple_s8003_start_link(pcie, port);
+-	if (ret) {
++	if (ret)
++		gpiod_direction_output(pcie->perst[port], 1);
++
++	return ret;
++}
++
++static int apple_s8003_setup_port_tries(struct apple_h9p_pcie *pcie,
++					unsigned int port)
++{
++	unsigned int try;
++	int ret;
++
++	for (try = 0; try < S8003_PORT_LINK_TRIES; try++) {
++		ret = apple_s8003_setup_port_once(pcie, port);
++		if (ret != -ETIMEDOUT)
++			break;
++		if (try + 1 < S8003_PORT_LINK_TRIES)
++			dev_warn(pcie->dev, "port %u: no link, retrying\n", port);
++	}
++
++	return ret;
++}
++
++/*
++ * The storage port: if its link doesn't come up, take the port down
++ * completely, hold it off for 100 ms and run the full bring-up once more.
++ */
++static int apple_s8003_setup_storage_port(struct apple_h9p_pcie *pcie,
++					  unsigned int port)
++{
++	void __iomem *rc = pcie->base_rc;
++	int ret;
++
++	ret = apple_s8003_setup_port_tries(pcie, port);
++	if (ret != -ETIMEDOUT && ret != -ENOLINK)
++		return ret;
++
++	dev_warn(pcie->dev, "port %u: no link (%d), power cycling the port\n",
++		 port, ret);
++	if ((readl(rc + S8003_RC_PORT_CTL(port)) & S8003_RC_PORT_CTL_ENABLE) &&
++	    (readl(rc + S8003_RC_PORT_PWR(port)) & S8003_RC_PORT_PWR_ON)) {
++		ret = apple_s8003_port_stop(pcie, port);
++		if (ret)
++			return ret;
++	}
++	apple_s8003_port_off(pcie, port);
++	if ((readl(rc + S8003_RC_PORT_CTL(port)) |
++	     readl(rc + S8003_RC_PORT_PWR(port)) |
++	     readl(rc + S8003_RC_PORT_REFCLK(port))) & BIT(0))
++		return -EIO;
++	msleep(S8003_PORT_OFF_HOLD_MS);
++
++	return apple_s8003_setup_port_once(pcie, port);
++}
++
++/*
++ * A port whose endpoint is powered through pci-pwrctrl (Wi-Fi): power the
++ * endpoint, give it time to settle and train the link; if that fails, power
++ * the endpoint off and try once more. -EPROBE_DEFER: the endpoint's power
++ * control isn't there yet.
++ */
++static int apple_s8003_setup_endpoint_port(struct apple_h9p_pcie *pcie,
++					   unsigned int port)
++{
++	struct device *dev = pcie->dev;
++	unsigned int cycle;
++	int ret = 0;
++
++	for (cycle = 0; cycle < S8003_ENDPOINT_POWER_CYCLES; cycle++) {
+ 		gpiod_direction_output(pcie->perst[port], 1);
+-		dev_warn(dev, "disabling port %u after setup failed: %d\n",
+-			 port, ret);
++		if (pcie->pwrctrl_powered) {
++			pci_pwrctrl_power_off_devices(dev);
++			pcie->pwrctrl_powered = false;
++			msleep(S8003_ENDPOINT_OFF_MS);
++		}
++
++		ret = pci_pwrctrl_power_on_devices(dev);
++		if (ret)
++			return ret;
++		pcie->pwrctrl_powered = true;
++		msleep(S8003_ENDPOINT_SETTLE_MS);
++
++		ret = apple_s8003_setup_port_tries(pcie, port);
++		if (!ret)
++			return 0;
++	}
++
++	gpiod_direction_output(pcie->perst[port], 1);
++	pci_pwrctrl_power_off_devices(dev);
++	pcie->pwrctrl_powered = false;
++	return ret;
++}
++
++/*
++ * Storage first, and independent of every other port: the endpoint ports
++ * are powered and trained only after it, and wait for their power control
++ * without holding up the host. The iommu-map routes bus 1 to the storage
++ * port's DART and bus 2 to the next one; with the storage port down, the
++ * enumeration would give the next port bus 1 and so the storage DART. Leave
++ * the other ports off in that case.
++ */
++static int apple_s8003_setup_ports(struct apple_h9p_pcie *pcie)
++{
++	u32 storage = pcie->enabled_ports & pcie->hw->nvme_mode_ports;
++	u32 others = pcie->enabled_ports & ~storage;
++	unsigned long ports = storage;
++	unsigned int port;
++	int ret;
++
++	for_each_set_bit(port, &ports, H9P_NUM_PORTS) {
++		ret = apple_s8003_setup_storage_port(pcie, port);
++		if (ret) {
++			dev_warn(pcie->dev, "disabling port %u: %d\n", port, ret);
++			pcie->enabled_ports &= ~BIT(port);
++		}
++	}
++
++	pcie->enabled_ports &= ~others;
++	if (!others)
++		return 0;
++	if (storage & ~pcie->enabled_ports) {
++		dev_warn(pcie->dev,
++			 "storage port down, leaving ports %#x off to keep their bus numbers\n",
++			 others);
+ 		return 0;
+ 	}
+ 
+-	*result = APPLE_H9P_PORT_READY;
++	ports = others;
++	for_each_set_bit(port, &ports, H9P_NUM_PORTS) {
++		ret = apple_s8003_setup_endpoint_port(pcie, port);
++		if (ret == -EPROBE_DEFER)
++			pcie->late_ports |= BIT(port);
++		else if (ret)
++			dev_warn(pcie->dev, "disabling port %u: %d\n", port, ret);
++		else
++			pcie->enabled_ports |= BIT(port);
++	}
++
+ 	return 0;
+ }
+ 
++static void apple_s8003_late_ports_work(struct work_struct *work)
++{
++	struct apple_h9p_pcie *pcie = container_of(to_delayed_work(work),
++						   struct apple_h9p_pcie,
++						   late_work);
++	unsigned long pending = pcie->late_ports;
++	bool rescan = false, retry = false;
++	unsigned int port;
++	int ret;
++
++	for_each_set_bit(port, &pending, H9P_NUM_PORTS) {
++		ret = apple_s8003_setup_endpoint_port(pcie, port);
++		if (ret == -EPROBE_DEFER) {
++			retry = true;
++			continue;
++		}
++
++		pcie->late_ports &= ~BIT(port);
++		if (ret) {
++			dev_warn(pcie->dev, "disabling port %u: %d\n", port, ret);
++			continue;
++		}
++		WRITE_ONCE(pcie->enabled_ports, pcie->enabled_ports | BIT(port));
++		rescan = true;
++	}
++
++	if (rescan) {
++		/* PCIe r6.0 sec 6.6.1: 100 ms after link-up before configuration */
++		msleep(pcie->hw->link_settle_ms);
++		pci_lock_rescan_remove();
++		pci_rescan_bus(pcie->bridge->bus);
++		pci_unlock_rescan_remove();
++	}
++
++	if (!retry)
++		return;
++	if (++pcie->late_tries < S8003_LATE_PORT_TRIES) {
++		schedule_delayed_work(&pcie->late_work,
++				      msecs_to_jiffies(S8003_LATE_PORT_RETRY_MS));
++		return;
++	}
++
++	dev_warn(pcie->dev, "ports %#x: endpoint power control never ready\n",
++		 pcie->late_ports);
++	pcie->late_ports = 0;
++}
++
++static void apple_h9p_pcie_cancel_late_ports(void *data)
++{
++	struct apple_h9p_pcie *pcie = data;
++
++	cancel_delayed_work_sync(&pcie->late_work);
++}
++
+ static int apple_h9p_prepare_phy_ports(struct apple_h9p_pcie *pcie)
+ {
+ 	unsigned int port;
+@@ -2566,7 +2764,10 @@ static int apple_h9p_pcie_init(struct pci_config_window *cfg)
+ 	pcie->cfgwin = cfg;
+ 	pcie->base_config = cfg->win;
+ 
+-	ret = apple_h9p_setup_ports(pcie);
++	if (pcie->hw->setup_ports)
++		ret = pcie->hw->setup_ports(pcie);
++	else
++		ret = apple_h9p_setup_ports(pcie);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -2837,10 +3038,16 @@ static int apple_h9p_pcie_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		return ret;
+ 
+-	ret = pci_pwrctrl_devices_ready(dev);
+-	if (ret)
+-		return dev_err_probe(dev, ret,
+-				     "waiting for PCI power controls\n");
++	/*
++	 * With late endpoint power, the storage port must not wait for the
++	 * other endpoints' power controls: they are powered after it.
++	 */
++	if (!pcie->hw->setup_ports) {
++		ret = pci_pwrctrl_devices_ready(dev);
++		if (ret)
++			return dev_err_probe(dev, ret,
++					     "waiting for PCI power controls\n");
++	}
+ 
+ 	ret = dma_set_mask_and_coherent(dev, DMA_BIT_MASK(64));
+ 	if (ret)
+@@ -2909,7 +3116,7 @@ static int apple_h9p_pcie_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		return ret;
+ 
+-	if (!pcie->deferred_power_ports) {
++	if (!pcie->deferred_power_ports && !pcie->hw->setup_ports) {
+ 		ret = pci_pwrctrl_power_on_devices(dev);
+ 		if (ret) {
+ 			return dev_err_probe(dev, ret,
+@@ -2929,7 +3136,20 @@ static int apple_h9p_pcie_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		return ret;
+ 
+-	return pci_host_common_init(pdev, bridge, &apple_h9p_pcie_ecam_ops);
++	INIT_DELAYED_WORK(&pcie->late_work, apple_s8003_late_ports_work);
++	ret = devm_add_action_or_reset(dev, apple_h9p_pcie_cancel_late_ports,
++				       pcie);
++	if (ret)
++		return ret;
++
++	ret = pci_host_common_init(pdev, bridge, &apple_h9p_pcie_ecam_ops);
++	if (ret)
++		return ret;
++
++	if (pcie->late_ports)
++		schedule_delayed_work(&pcie->late_work,
++				      msecs_to_jiffies(S8003_LATE_PORT_RETRY_MS));
++	return 0;
+ }
+ 
+ static const struct apple_h9p_hw apple_h9p_hw_t7000 = {
+@@ -2963,7 +3183,7 @@ static const struct apple_h9p_hw apple_h9p_hw_j172 = {
+ static const struct apple_h9p_hw apple_h9p_hw_s8003 = {
+ 	.parse = apple_s8003_parse,
+ 	.setup_common = apple_s8003_setup_common,
+-	.setup_port = apple_s8003_setup_port,
++	.setup_ports = apple_s8003_setup_ports,
+ 	.nvme_mode_ports = BIT(0),
+ 	.link_settle_ms = 100,
+ 	.has_phy = true,
