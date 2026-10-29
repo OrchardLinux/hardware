@@ -135,12 +135,12 @@ jobs:
           echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
       - name: Build the platform kernel, modules and all device trees once
         run: |
-          bash kernel/build apple --output "$PWD/out/components/kernel"
+          bash kernel/build apple-16k --work-dir "$PWD/out/kernel-work" --output "$PWD/out/components/kernel"
           dpkg-query -W > out/components/kernel-toolchain-packages.lock
       - name: Archive components and corresponding kernel source
         run: |
           tar -C out -czf out/kernel-components.tar.gz components
-          tar -C kernel/.work/apple/source --exclude=.git -czf out/kernel-source.tar.gz .
+          tar -C out/kernel-work/source --exclude=.git -czf out/kernel-source.tar.gz .
       - uses: actions/upload-artifact@v4
         with:
           name: hardware-kernel

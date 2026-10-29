@@ -5,16 +5,17 @@ here=$(cd "$(dirname "$0")" && pwd)
 device=${1:-}
 [[ $# -gt 0 ]] && shift
 dest=
-resume=false
+work=
 while (($#)); do
   case "$1" in
     --output) [[ $# -ge 2 ]] || { echo 'Missing --output value' >&2; exit 2; }; dest=$2; shift 2;;
-    --resume) resume=true; shift;;
+    --work-dir) [[ $# -ge 2 ]] || { echo 'Missing --work-dir value' >&2; exit 2; }; work=$2; shift 2;;
+    --resume) shift;; # every build continues its tree; kept for older callers
     *) echo "Unknown argument: $1" >&2; exit 2;;
   esac
 done
 if [[ ! "$device" =~ ^[a-z0-9][a-z0-9_-]*$ || -z "$dest" || -e "$dest" ]]; then
-  echo 'Usage: ./kernel/build DEVICE|PLATFORM --output DIRECTORY [--resume]' >&2
+  echo 'Usage: ./kernel/build DEVICE|PLATFORM --output DIRECTORY [--work-dir DIRECTORY]' >&2
   exit 2
 fi
 # One kernel per platform; a device only selects which DTB is also copied
@@ -35,60 +36,90 @@ commit=$(awk -F= '$1=="commit" {print $2}' "$here/upstream.lock")
 [[ "$url" == https://github.com/torvalds/linux.git && "$commit" =~ ^[0-9a-f]{40}$ ]] || {
   echo 'Unexpected kernel/upstream.lock' >&2; exit 1;
 }
-work="$here/.work/$platform"
+# One incremental tree per platform and upstream pin, shared by every hardware
+# checkout and worktree in the Orchard cache: a new checkout continues from the
+# last build, and a patch change recompiles only the files it touches.
+cache=${ORCHARD_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/orchard}
+work=${work:-"$cache/kernel-work/$platform-${commit:0:12}"}
 source="$work/source"
 build_output="$work/output"
-if "$resume"; then
-  [[ -d "$source" && -d "$build_output" ]] || { echo "No build to resume: $work" >&2; exit 1; }
-  if [[ ! -d "$source/.git" ]]; then git -C "$source" init -q; fi
-  remote=$(git -C "$source" remote get-url origin 2>/dev/null || true)
-  if [[ -z "$remote" ]]; then
-    git -C "$source" remote add origin "$url"
-  elif [[ "$remote" != "$url" ]]; then
-    echo "Unexpected kernel remote: $remote" >&2; exit 1
-  fi
-  head=$(git -C "$source" rev-parse --verify HEAD 2>/dev/null || true)
-  if [[ -z "$head" ]]; then
-    echo "Fetching kernel source at $commit (this may take a while)..."
-    git -C "$source" fetch --progress --depth 1 origin "$commit"
-    git -C "$source" checkout -q --detach FETCH_HEAD
-  elif [[ "$head" != "$commit" ]]; then
-    echo 'Wrong kernel revision' >&2; exit 1
-  fi
-  echo 'Checking kernel patches...'
-  applied="$work/applied-patches"
-  if [[ -f "$applied" ]]; then
-    cmp "$applied" <(for patch in "${patches[@]}"; do
-      printf '%s %s\n' "$(git hash-object "$patch")" "${patch#"$here"/}"
-    done) || { echo 'Kernel patch set changed; use a fresh build directory' >&2; exit 1; }
-  else
-    for patch in "${patches[@]}"; do
-      if git -C "$source" apply --reverse --check "$patch" 2>/dev/null; then continue; fi
-      git -C "$source" apply --check "$patch"
-      git -C "$source" apply "$patch"
-    done
-    for patch in "${patches[@]}"; do
-      printf '%s %s\n' "$(git hash-object "$patch")" "${patch#"$here"/}"
-    done > "$applied"
-  fi
-else
-  [[ ! -e "$work" ]] || { echo "Build directory exists: $work (use --resume)" >&2; exit 1; }
-  mkdir -p "$source" "$build_output"
-  git -C "$source" init -q
-  git -C "$source" remote add origin "$url"
-  echo "Fetching kernel source at $commit (this may take a while)..."
-  git -C "$source" fetch --progress --depth 1 origin "$commit"
-  git -C "$source" checkout -q --detach FETCH_HEAD
-  [[ $(git -C "$source" rev-parse HEAD) == "$commit" ]] || { echo 'Wrong kernel revision' >&2; exit 1; }
+applied="$work/applied-patches"
+prepared="$work/prepared-tree"
+mkdir -p "$work"
+# One build per tree at a time; a second one waits. A caller that already
+# holds the lock names the tree in ORCHARD_KERNEL_WORK_LOCKED.
+exec 9>>"$work/.lock"
+if [[ ${ORCHARD_KERNEL_WORK_LOCKED:-} != "$work" ]]; then
+  python3 -c '
+import fcntl, sys
+try:
+    fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError:
+    print("Waiting for another kernel build to finish with this tree...", file=sys.stderr, flush=True)
+    fcntl.flock(9, fcntl.LOCK_EX)
+'
+fi
+
+patch_list() {
+  for patch in "${patches[@]}"; do
+    printf '%s %s\n' "$(git hash-object "$patch")" "${patch#"$here"/}"
+  done
+}
+
+# Content of the source tree, tracked and untracked, without touching its index.
+snapshot() {
+  local index="$work/snapshot-index.$$"
+  rm -f "$index"
+  cp "$(git -C "$source" rev-parse --absolute-git-dir)/index" "$index" 2>/dev/null ||
+    GIT_INDEX_FILE=$index git -C "$source" read-tree HEAD
+  GIT_INDEX_FILE=$index git -C "$source" add --all -- .
+  GIT_INDEX_FILE=$index git -C "$source" write-tree
+  rm -f "$index"
+}
+
+apply_patches() {
   echo 'Applying kernel patches...'
   for patch in "${patches[@]}"; do
     git -C "$source" apply --check "$patch"
     git -C "$source" apply "$patch"
   done
-  for patch in "${patches[@]}"; do
-    printf '%s %s\n' "$(git hash-object "$patch")" "${patch#"$here"/}"
-  done > "$work/applied-patches"
+  patch_list > "$applied"
+  snapshot > "$prepared"
+}
+
+if [[ ! -d "$source/.git" ]]; then
+  rm -rf "$source"
+  mkdir -p "$source"
+  git -C "$source" init -q
+  git -C "$source" remote add origin "$url"
+  echo "Fetching kernel source at $commit (this may take a while)..."
+  git -C "$source" fetch --progress --depth 1 origin "$commit"
+  git -C "$source" checkout -q --detach FETCH_HEAD
+  apply_patches
+else
+  [[ $(git -C "$source" remote get-url origin) == "$url" &&
+     $(git -C "$source" rev-parse HEAD) == "$commit" ]] || {
+    echo "Unexpected kernel source in $source" >&2; exit 1;
+  }
+  # Trees from before this record take it while still matching their patches.
+  if [[ ! -f "$prepared" ]] && cmp -s "$applied" <(patch_list); then
+    snapshot > "$prepared"
+  fi
+  if ! cmp -s "$applied" <(patch_list); then
+    # Patches are the only way kernel changes enter the tree; refuse to throw
+    # away hand edits made since the last build.
+    if [[ ! -f "$prepared" || $(snapshot) != "$(cat "$prepared")" ]]; then
+      echo "Kernel tree $source has changes that are not in the patch series;" \
+           'turn them into patches or remove the tree' >&2
+      exit 1
+    fi
+    echo 'Kernel patches changed; updating the tree (only affected files recompile)...'
+    git -C "$source" checkout -q -- .
+    git -C "$source" clean -fdq
+    apply_patches
+  fi
 fi
+mkdir -p "$build_output"
 cp "$config" "$build_output/.config"
 echo 'Preparing kernel build container...'
 python3 -m orchard_hardware.buildenv build --file "$here/Containerfile" \
