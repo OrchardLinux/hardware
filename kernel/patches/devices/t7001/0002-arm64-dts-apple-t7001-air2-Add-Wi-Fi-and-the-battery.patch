@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?Martin=20Pu=C5=A1k=C3=A1=C4=8D?= <martin@icebear.sk>
 Date: Thu, 29 Oct 2026 17:18:23 +0800
-Subject: [PATCH] arm64: dts: apple: iPad Air 2: Add Wi-Fi and the battery
+Subject: [PATCH] arm64: dts: apple: t7001-air2: Add Wi-Fi and the battery
  gauge
 
 Wire the iPad Air 2's BCM4350 on PCIe port 1, powered through a fixed

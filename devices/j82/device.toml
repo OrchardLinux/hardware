@@ -35,7 +35,8 @@ status = "experimental"
 caveats = [
   "RAM boot only: the internal storage is not supported yet.",
   "Wi-Fi module rieslingb (BCM4350); the cellular modem is not supported.",
-  "Untested: Martin Puškáč's port was validated on the Wi-Fi model (J81) only; the J82 differs at least in its Wi-Fi module (rieslingb) and the modem.",
+  "No J82 has booted yet. Martin Puškáč's port and Orchard's test ran on the Wi-Fi model (J81); the J82 differs at least in its Wi-Fi module (rieslingb) and the modem.",
+  "Boot with Hoolock's prebuilt Pongo (orchard build --pongo FILE), as on the J81.",
 ]
 wifi = false # True once Wi-Fi is validated on Orchard's stack.
 usb_serial = true
