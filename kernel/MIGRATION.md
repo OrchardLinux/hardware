@@ -115,8 +115,10 @@ into the shared cache, replay them onto the stack, then run the semantic review
 
 ## Notes
 
-- One kernel per platform (`apple`): `kernel/series/apple`, `kernel/configs/apple`,
-  all DTBs built; devices select their DTB in `device.toml` `[kernel]`.
+- One kernel per platform: `apple-16k` (A9 and later) and `apple-4k` (A7, A8,
+  A8X: no 16 KiB pages), each with `kernel/series/<platform>` and
+  `kernel/configs/<platform>`, all DTBs built; devices select their platform
+  and DTB in `device.toml` `[kernel]`.
   Patch layers: `hoolock/`, `import/pauli1go/`, `drivers/<subsystem>/` (driver
   code, even when one device needs it first), `devices/` (DT and board data only).
 - Layer order lives in `kernel/series/<platform>`; `kernel/series.py`

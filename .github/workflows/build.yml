@@ -297,8 +297,8 @@ jobs:
           tar -xzf out/downloads/quiet-pongo.tar.gz -C out/components/quiet
           # The platform bundle carries the kernel, modules, every DTB and the shared
           # loader; devices/<device>/device.toml names the DTB a device uses.
-          python ci/package_components.py --platform apple --directory out/components \
-            --output out/publication/apple-components.tar.gz
+          python ci/package_components.py --platform apple-16k --directory out/components \
+            --output out/publication/apple-16k-components.tar.gz
           # Compatibility: the shared launcher still reads the J71b bundle layout.
           bundle=out/bundles/j71b/components
           mkdir -p "$bundle/kernel"
