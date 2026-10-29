@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Assemble a J71b RAM recovery image from explicit kernel, loader and tool inputs."""
+"""Assemble the RAM recovery image from explicit kernel, loader and tool inputs."""
 import argparse
 from pathlib import Path
 import subprocess
@@ -12,10 +12,12 @@ HERE = ROOT / 'boot/initramfs/recovery'
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ('loader', 'kernel', 'dtb', 'busybox', 'dropbear', 'dropbearkey',
+    for name in ('loader', 'kernel', 'busybox', 'dropbear', 'dropbearkey',
                  'wpa-supplicant', 'wpa-cli', 'iw',
                  'base', 'base-receipt', 'modules-dir', 'root-receipt', 'output'):
         parser.add_argument('--' + name, type=Path, required=True)
+    parser.add_argument('--dtb', type=Path, action='append', required=True,
+                        help='the DTB of each device this recovery boots; repeat')
     diagnostics = parser.add_mutually_exclusive_group()
     diagnostics.add_argument('--verbose', action='store_true',
                              help='enable visible Linux framebuffer console and kernel diagnostics')
@@ -42,7 +44,7 @@ def main():
                         '--output', str(initramfs)], check=True)
         subprocess.run([sys.executable, '-m', 'orchard_hardware.boot.assemble',
                         '--manifest', str(HERE / manifest),
-                        '--loader', str(args.loader), '--dtb', str(args.dtb),
+                        '--loader', str(args.loader), *(f'--dtb={dtb}' for dtb in args.dtb),
                         '--kernel', str(args.kernel), '--initramfs', str(initramfs),
                         '--output', str(args.output)], check=True)
 
