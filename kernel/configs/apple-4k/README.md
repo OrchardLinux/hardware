@@ -7,6 +7,11 @@ patch layers are the same (`../../series/apple-4k`); only the page size and
 what Kconfig derives from it differ (page shift, contiguous-PTE and
 max-order sizes, mmap randomization bits, THP swap).
 
+Both platform configs build the legacy composite USB gadget and its mass-storage
+function as modules. RAM and recovery images can bind their configfs gadget at
+startup; users of the legacy composite gadget can load it when needed. FUSE
+remains a module.
+
 ## How the file is generated
 
 From `../apple-16k/config`, with `CONFIG_ARM64_4K_PAGES=y` and
