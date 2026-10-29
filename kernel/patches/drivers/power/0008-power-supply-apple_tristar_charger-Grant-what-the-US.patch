@@ -34,8 +34,8 @@ Signed-off-by: Henrik Klee <henrik@goat-code.com>
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  drivers/power/supply/Kconfig                 |  10 +-
- drivers/power/supply/apple_tristar_charger.c | 107 +++++++++++++++++--
- 2 files changed, 107 insertions(+), 10 deletions(-)
+ drivers/power/supply/apple_tristar_charger.c | 112 ++++++++++++++++++-
+ 2 files changed, 112 insertions(+), 10 deletions(-)
 
 diff --git a/drivers/power/supply/Kconfig b/drivers/power/supply/Kconfig
 index a3465c5ef..ab0e87fce 100644
@@ -59,7 +59,7 @@ index a3465c5ef..ab0e87fce 100644
  	  This driver can also be built as a module. If so, the module will be
  	  called apple_tristar_charger.
 diff --git a/drivers/power/supply/apple_tristar_charger.c b/drivers/power/supply/apple_tristar_charger.c
-index 58c559763..558948041 100644
+index 58c559763..ac762a314 100644
 --- a/drivers/power/supply/apple_tristar_charger.c
 +++ b/drivers/power/supply/apple_tristar_charger.c
 @@ -8,7 +8,11 @@
@@ -199,7 +199,7 @@ index 58c559763..558948041 100644
  		break;
  	default:
  		mutex_unlock(&chg->lock);
-@@ -856,6 +917,38 @@ static int tristar_get_property(struct power_supply *psy,
+@@ -856,6 +917,43 @@ static int tristar_get_property(struct power_supply *psy,
  	return 0;
  }
  
@@ -221,7 +221,12 @@ index 58c559763..558948041 100644
 +
 +	mutex_lock(&chg->lock);
 +	old_code = chg->code;
-+	chg->usb_ma = max(val->intval, 0) / 1000;
++	/*
++	 * With nothing attached there is no session: a late report (the
++	 * suspend draw after a disconnect) must not make the next source look
++	 * like a USB host.
++	 */
++	chg->usb_ma = chg->present ? max(val->intval, 0) / 1000 : 0;
 +	chg->usb_epoch = READ_ONCE(chg->epoch);
 +	dev_dbg(chg->dev, "USB host allows %u mA\n", chg->usb_ma);
 +	if (!chg->stopping) {
@@ -238,7 +243,7 @@ index 58c559763..558948041 100644
  static const enum power_supply_property tristar_properties[] = {
  	POWER_SUPPLY_PROP_ONLINE,
  	POWER_SUPPLY_PROP_USB_TYPE,
-@@ -867,11 +960,13 @@ static const struct power_supply_desc tristar_desc = {
+@@ -867,11 +965,13 @@ static const struct power_supply_desc tristar_desc = {
  	.name = "lightning",
  	.type = POWER_SUPPLY_TYPE_USB,
  	.usb_types = BIT(POWER_SUPPLY_USB_TYPE_UNKNOWN) |

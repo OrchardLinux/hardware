@@ -22,7 +22,7 @@ Reference files:
 Firmware addresses are unslid VAs in the iPadOS 17.7.11 (21H461) iPad7,5/7,6
 kernelcache; `…5e69b38` abbreviates `0xfffffff005e69b38`.
 
-## Status (2026-10-28)
+## Status (2026-10-29)
 
 | Piece | J71b state | Evidence |
 |---|---|---|
@@ -34,10 +34,12 @@ kernelcache; `…5e69b38` abbreviates `0xfffffff005e69b38`.
 | USB-C Rp current (1.5 A / 3 A) | Works on demand | 140 W wall, power bank, Mac, hardware |
 | Withdrawal on unplug or source change | Works, <1 ms edge to verified write | Prototype owner, hardware |
 | Prototype that grants identified current | Hardware-tested in one RAM session; superseded by the driver below | [measurements](measurements.md#prototype-session-2026-10-28) |
-| In-tree driver `apple_tristar_charger` | Works: power bank, 140 W USB-C both orientations, Mac USB-C and Mac hub identified; withdrawal ~1 ms | [Linux driver](#5-linux-driver), [measurements](measurements.md#driver-session-apple_tristar_charger-2026-10-28) |
-| Computers / generic chargers (BC1.2, CDP) | Not implemented, held at 500 mA | [CH-04](experiments.md#ch-04) |
+| In-tree driver `apple_tristar_charger` | Works: power bank, 140 W USB-C both orientations, Mac USB-C and Mac hub identified; withdrawal ~1 ms. On the PMU event controller (J71b RAM test, 2026-10-29): 140 W USB-C and power bank hold 2400 mA, every unplug withdraws through the PMU line and event 72 | [Linux driver](#5-linux-driver), [measurements](measurements.md#driver-session-apple_tristar_charger-2026-10-28), `docs/integration/j71t.md` (J71b RAM test) |
+| PMU event controller (D2365 `irq_chip` in the PMIC GPIO driver) | Works for the line, ADC completion and source events. The event mask cannot be written yet | [pmu-events](pmu-events.md), [CH-15](experiments.md#ch-15) |
+| Computers / generic chargers (BC1.2, CDP) | Implemented: a Mac port classified as CDP, 1500 mA. Only when the early check runs before USB enumeration; otherwise the host's 500 mA | [CH-04](experiments.md#ch-04), [CH-16](experiments.md#ch-16) |
+| Apple host grant (vendor request through `vbus_draw`) | Implemented, not observed: macOS sent 100 mA | [CH-16](experiments.md#ch-16) |
 | USB PD | Not implemented | [CH-05](experiments.md#ch-05) |
-| Suspend | Not tested with charging | [CH-06](experiments.md#ch-06) |
+| Suspend | Not tested with charging; needs the event mask first | [CH-06](experiments.md#ch-06), [CH-15](experiments.md#ch-15) |
 | Live USB-C Rp changes without detach | Not detected (CC is sampled on demand) | [CH-07](experiments.md#ch-07) |
 
 Evidence vocabulary used in this directory:
