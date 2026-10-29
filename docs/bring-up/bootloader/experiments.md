@@ -60,6 +60,18 @@ Pass: LBA 1 starts with `EFI PART`, and the disk GUID matches `sgdisk -p` from a
 
 Send back: the HMB size and alignment requested, the Identify model and firmware strings, and the GPT disk GUID.
 
+**Result (J71b, 2026-10-29): BL-01 and BL-02 passed** with [bl02_storage.py](bl02_storage.py), run over the m1n1 proxy.
+- **Port 0:** reached L0 (`LINKSTS 0x9b401101`). Endpoint `106b:2002`, class `0x018002` rev `0x11`.
+- **Controller:** APPLE SSD AP0128K, firmware 57.20.01, `CAP 0x20f00103ff`. It requests an HMB of `0xe00000` with alignment `0x1000`.
+- **Disk:** 31,250,000 blocks of 4 KiB. GPT disk GUID `40bf8b49-2763-46fe-8bc8-8387167fbf51`. Partitions: 1 "Container" (APFS), 3 "OmarchySystems".
+- **Shutdown:** iBoot's stop sequence ended at `CC 0` / `CSTS 0`.
+
+What it took (each point found on hardware):
+- **Power first.** Power `/arm-io/apcie` (gates PCIE, PCIE_AUX, PCIE_REF) before any PCIe register read. A read of the unpowered port block takes a synchronous exception, which wedges m1n1.
+- **Do it the Linux way.** Give the controller the whole carve-out as HMB, as Linux does, and put the queues behind `pcie0_dart0`.
+  With the requested size only and the queues in the SART window, enable ends in `CSTS.CFS`.
+- **DART setup:** stream 0, iOS init order with the ADT values (reflector `0x20fffc`, fetch `0xe0303`, diag `0x100`). The same L1 table sits behind TTBR 0 and TTBR 2; which one the bridge uses is still open.
+
 ## BL-03
 
 **Linux storage after m1n1 has used it.** This experiment decides the design.
@@ -72,6 +84,13 @@ The shutdown sequence:
 
 Pass: Linux mounts NVMe and survives a 10-minute read soak (`dd` of the root
 partition to `/dev/null`) without timeouts. Repeat over 5 cold boots.
+
+**First runs (J71b, 2026-10-29): Linux did not come back usable.** It happened both after the fatal-state run and after the clean BL-02 run with `ps_pcie` powered off.
+- "J71b Recovery" enumerates on USB, so the kernel ran and the recovery init started the gadget.
+- The serial shell never answers, not even raw. In BL-00 it answered at once.
+- The screen stays black, because the recovery's boot arguments map fbcon away.
+
+Next: the same run with a visible kernel console (`BL03_BOOTARGS="orchard.recovery=1 loglevel=7"`) to see where Linux stops. Then `--keep-power`.
 
 If it fails, record the LTSSM state Linux reports. Compare with Berkay's
 `POLL_COMPLIANCE` result after kexec. Then try once with `ps_pcie` left on,
