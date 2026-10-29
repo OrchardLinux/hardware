@@ -135,7 +135,7 @@ sys.path.insert(0,'/usr/libexec/orchard-j71b')
 import launch
 status=json.loads(subprocess.check_output(['/usr/bin/orchard-device','status']))['result']
 assert status['ready'] is False and status['mode']=='launcher'
-for operation in ('format-target','install','targets','handoff','destination'):
+for operation in ('format-target','reset-target','install','targets','handoff','destination'):
     r=subprocess.run(['/usr/bin/orchard-device',operation],capture_output=True,text=True)
     assert r.returncode!=0 and 'Shared launcher refuses' in r.stdout
 assert not Path('/run/orchard/format.started').exists()

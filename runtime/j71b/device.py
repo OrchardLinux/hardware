@@ -128,7 +128,7 @@ def status(_):
             'diagnostics': not ssh_access.revoked(config()['release']),
             'installation_attempted': (RUN / 'prepare.started').exists(),
             'formatting': json.loads((RUN / 'format.json').read_text()) if (RUN / 'format.json').exists() else None,
-            'capabilities': ['abort']}
+            'capabilities': ['abort'] + ([] if config().get('mode') == 'launcher' else ['reset-ext4-v1'])}
 
 
 REBOOT_MESSAGE = 'A fresh recovery boot is required.\nPut the iPad in DFU mode, then run: orchard install'
@@ -186,6 +186,18 @@ def abort(_):
             raise ValueError('Launch mount remains; inspect and use a fresh recovery boot')
         atomic(RUN / 'state.json', {'phase':'failed', 'reboot_required':True})
         return {'reboot_required':True, 'removed_staging':0, 'message':REBOOT_MESSAGE}
+    formatting = RUN / 'format.json'
+    started = RUN / 'format.started'
+    receipt = json.loads(formatting.read_text()) if formatting.exists() else (
+        json.loads(started.read_text()) if started.exists() else {})
+    reset = receipt.get('operation') == 'reset-target'
+    if reset and receipt.get('status') != 'complete':
+        # An unverified reset cannot safely enter installation cleanup or
+        # provide an assurance that the previous filesystem survived.
+        atomic(RUN / 'state.json', {'phase': 'failed', 'reboot_required': True})
+        return {'reboot_required': True, 'removed_staging': 0,
+                'message': 'Filesystem reset outcome is unknown; previous contents may be lost. '
+                           'Do not retry reset. Inspect storage and the formatting report.\n' + REBOOT_MESSAGE}
     if ROOT.is_mount():
         installed = json.loads((RUN / 'installation.json').read_text())
         partition = installed['target']
@@ -212,8 +224,12 @@ def abort(_):
     operation = RUN / 'installation.json'
     replacement = operation.exists() and json.loads(operation.read_text()).get('replacement_started', False)
     cleanup = 'Incomplete staging removed. ' if removed else 'No recognized incomplete staging remains. '
-    outcome = ('Replacement deletion was started; the old directory may be partially or fully deleted and cannot be restored.\n'
-               if replacement else 'Existing directories were not deleted.\n')
+    outcome = ('Filesystem reset completed; all previous contents on partition ' + receipt['target'] +
+               ' were destroyed.\n') if reset else ''
+    if replacement:
+        outcome += 'Replacement deletion was started; the old directory may be partially or fully deleted and cannot be restored.\n'
+    elif not reset:
+        outcome = 'Existing directories were not deleted.\n'
     return {'reboot_required': True, 'removed_staging': removed,
             'message': cleanup + outcome + REBOOT_MESSAGE}
 
@@ -360,6 +376,14 @@ def selected(request):
 
 
 def format_target(request):
+    return format_partition(request)
+
+
+def reset_target(request):
+    return format_partition(request, reset=True)
+
+
+def format_partition(request, *, reset=False):
     boot_id = ssh_access.BOOT_ID.read_text().strip()
     operation_id = request.get('operation_id', '')
     current = state()
@@ -371,13 +395,23 @@ def format_target(request):
     if (RUN / 'format.started').exists():
         raise ValueError('Formatting was already attempted; do not retry. ' + REBOOT_MESSAGE)
     partition = selected(request)
-    if (partition['filesystem'] != 'unformatted' or
+    if reset:
+        if (partition['filesystem'] != 'ext4' or
+                request.get('confirmation') != 'reset ' + partition['id'] or
+                request.get('expected_filesystem_uuid') != partition['filesystem_uuid'] or
+                storage.guid(partition['filesystem_uuid']) != partition['filesystem_uuid']):
+            raise ValueError('Reset requires explicitly confirmed ext4 and matching filesystem UUID')
+    elif (partition['filesystem'] != 'unformatted' or
             request.get('confirmation') != 'format ' + partition['id']):
         raise ValueError('Only explicitly confirmed Linux-data partitions without signatures may be formatted')
     if partition['bytes'] < capacity_needed(config()['root']):
         raise ValueError('Partition is too small for this image; nothing was formatted')
     receipt = {'operation_id': operation_id, 'boot_id': boot_id, 'target': partition['id'],
                'filesystem_uuid': str(uuid.uuid4()), 'status': 'unknown'}
+    if reset:
+        receipt.update(operation='reset-target', previous_filesystem_uuid=partition['filesystem_uuid'])
+        if receipt['filesystem_uuid'] == partition['filesystem_uuid']:
+            raise ValueError('Reset must assign a new filesystem UUID')
     # Consume the boot-scoped permission before any command can enable writes.
     with (RUN / 'format.started').open('x') as marker:
         json.dump(receipt, marker)
@@ -386,7 +420,11 @@ def format_target(request):
     atomic(RUN / 'format.json', {**receipt, 'partition': partition})
     try:
         no_faults()
-        formatted = storage.format_ext4(partition, receipt['filesystem_uuid'])
+        if reset:
+            formatted = storage.format_ext4(partition, receipt['filesystem_uuid'], reset=True)
+            storage.verify_empty(formatted, ROOT)
+        else:
+            formatted = storage.format_ext4(partition, receipt['filesystem_uuid'])
         no_faults()
         result = {**receipt, 'status': 'complete', 'filesystem': formatted['filesystem']}
         atomic(RUN / 'format.json', result)
@@ -647,7 +685,7 @@ OPERATIONS = {'installations': installations, 'launch': launch_installed,
               'status': status, 'prepare': prepare, 'targets': targets,
               'destination': destination, 'install': install, 'handoff': handoff,
               'diagnostics': diagnostics, 'abort': abort, 'bootstrap': bootstrap,
-              'revoke-ssh': revoke_ssh, 'format-target': format_target}
+              'revoke-ssh': revoke_ssh, 'format-target': format_target, 'reset-target': reset_target}
 
 
 def main():

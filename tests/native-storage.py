@@ -121,13 +121,37 @@ def main():
                 else:
                     raise AssertionError('Missing simulated timeout')
             assert command('blockdev', '--getro', str(parts[4])) == '1'
+            # Reset the existing filesystem, including roots outside /omarchy.
+            existing = next(p for p in rows if p['path'] == str(parts[0]))
+            reset_uuid = str(uuid.uuid4())
+            reset = storage.format_ext4(existing, reset_uuid, reset=True)
+            assert reset['filesystem_uuid'] != existing['filesystem_uuid']
+            storage.verify_empty(reset, mount)
+            assert command('blockdev', '--getro', str(parts[0])) == '1'
+            assert digest(parts[0]) != before.pop(str(parts[0]))
+            # Stale observations cannot authorize a second reset.
+            try:
+                storage.format_ext4(existing, str(uuid.uuid4()), reset=True)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError('Accepted stale reset identity')
+            # A reset timeout must restore the fence on an existing filesystem too.
+            with patch.object(storage, 'checked', side_effect=timeout):
+                try:
+                    storage.format_ext4(reset, str(uuid.uuid4()), reset=True)
+                except subprocess.TimeoutExpired:
+                    pass
+                else:
+                    raise AssertionError('Missing reset timeout')
+            assert command('blockdev', '--getro', str(parts[0])) == '1'
             command('blockdev', '--setrw', str(parts[1]))
             command('mount', str(parts[1]), str(mount))
             mounted = mount
             (mount / 'minimal').mkdir()
             (mount / 'minimal/payload').write_bytes(b'installed test payload')
             try:
-                storage.format_ext4(formatted, str(uuid.uuid4()))
+                storage.format_ext4(formatted, str(uuid.uuid4()), reset=True)
             except ValueError:
                 pass
             else:
@@ -143,7 +167,8 @@ def main():
                 stream.seek(-1024**2, 2)
                 assert hashlib.sha256(stream.read()).hexdigest() == back
             print(json.dumps({'formatted': 'ext4', 'verified_uuid': fsuuid,
-                              'preserved_existing_roots_and_other_partitions': True,
+                              'existing_roots_removed_by_confirmed_reset': True,
+                              'reset_uuid': reset_uuid, 'unrelated_partitions_preserved': True,
                               'gpt_unchanged': True, 'timeout_refenced': True,
                               'existing_changed_and_mounted_targets_refused': True}))
         finally:

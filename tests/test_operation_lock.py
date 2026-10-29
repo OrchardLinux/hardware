@@ -65,7 +65,7 @@ class OperationLock(unittest.TestCase):
             fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
 
     def test_busy_request_cannot_poison_active_session_or_attempt_cleanup(self):
-        for operation in ('prepare', 'install', 'handoff', 'launch'):
+        for operation in ('prepare', 'install', 'handoff', 'launch', 'reset-target'):
             with self.subTest(operation=operation), self.lock_path.open('a') as owner:
                 fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 handler = Mock(side_effect=AssertionError('Busy handler must not execute'))

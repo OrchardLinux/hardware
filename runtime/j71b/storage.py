@@ -98,6 +98,8 @@ def probe(path):
         raise ValueError('Inconclusive filesystem probe')
     else:
         filesystem = fields.get('TYPE', 'partition-table' if 'PTTYPE' in fields else 'unsupported')
+    if filesystem == 'ext4' and ('PTTYPE' in fields or fields.get('USAGE', 'filesystem') != 'filesystem'):
+        raise ValueError('Conflicting filesystem and storage signatures')
     return filesystem, fields
 
 
@@ -141,12 +143,14 @@ def inventory():
     return result
 
 
-def format_ext4(partition, filesystem_uuid):
-    """Never force/wipe/discard. The caller owns confirmation and attempt state."""
+def format_ext4(partition, filesystem_uuid, *, reset=False):
+    """The caller owns consent/attempt state; reset permits only existing ext4."""
     filesystem_uuid = guid(filesystem_uuid)
     block = SYS / Path(partition['path']).name
     fenced(block)
-    if partition['filesystem'] != 'unformatted' or record(block) != partition:
+    expected = 'ext4' if reset else 'unformatted'
+    if (partition['filesystem'] != expected or record(block) != partition or
+            (reset and (guid(partition['filesystem_uuid']) == filesystem_uuid))):
         raise ValueError('Formatting target changed or already has a signature')
     fd = os.open(partition['path'], os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
     try:
@@ -162,7 +166,8 @@ def format_ext4(partition, filesystem_uuid):
                 raise ValueError('Formatting target changed before writes')
             checked('blockdev', '--setrw', path, pass_fds=(fd,))
             fenced(block, readonly=False)
-            checked(str(TOOLS / 'mke2fs'), '-t', 'ext4', '-b', '4096', '-I', '256', '-m', '0',
+            checked(str(TOOLS / 'mke2fs'), *(['-F'] if reset else []),
+                    '-t', 'ext4', '-b', '4096', '-I', '256', '-m', '0',
                     '-U', filesystem_uuid, '-L', 'OrchardLinux',
                     '-O', 'none,has_journal,extent,filetype,sparse_super,large_file,ext_attr,dir_index,metadata_csum,64bit,flex_bg,extra_isize,dir_nlink',
                     '-E', 'nodiscard,lazy_itable_init=0,lazy_journal_init=0', path,
@@ -179,3 +184,23 @@ def format_ext4(partition, filesystem_uuid):
         return formatted
     finally:
         os.close(fd)
+
+
+def verify_empty(partition, root):
+    """Inspect the new filesystem read-only, then unmount and verify fencing."""
+    block = SYS / Path(partition['path']).name
+    fenced(block)
+    if record(block) != partition or partition['filesystem'] != 'ext4':
+        raise ValueError('Reset filesystem changed before inspection')
+    root.mkdir(exist_ok=True)
+    checked('mount', '-t', 'ext4', '-o', 'ro,noload', partition['path'], str(root))
+    try:
+        for entry in root.iterdir():
+            if (entry.name != 'lost+found' or not stat.S_ISDIR(entry.lstat().st_mode) or
+                    any(entry.iterdir())):
+                raise ValueError('Reset filesystem is not empty')
+    finally:
+        checked('umount', str(root))
+    fenced(block)
+    if record(block) != partition:
+        raise ValueError('Reset filesystem changed after inspection')
