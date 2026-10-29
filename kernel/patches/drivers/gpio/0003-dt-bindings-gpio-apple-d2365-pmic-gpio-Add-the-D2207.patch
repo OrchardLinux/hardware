@@ -1,0 +1,65 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Martin=20Pu=C5=A1k=C3=A1=C4=8D?= <martin@icebear.sk>
+Date: Thu, 29 Oct 2026 16:58:16 +0800
+Subject: [PATCH] dt-bindings: gpio: apple,d2365-pmic-gpio: Add the D2207
+
+The D2207 PMIC on the A8X iPad Air 2 has 21 GPIOs in the same kind of
+per-line configuration byte bank as the D2333 and D2365, read and
+written through the parent Apple I2C PMIC's regmap. Board signals such
+as the Wi-Fi REG_ON line of the iPad Air 2 hang off these GPIOs.
+
+Add its compatible. Its PMU event block is not described yet, so like
+the D2333 it is not an interrupt controller.
+
+[Orchard: from mattonik/ipad-nixos b94d42f kernel/patches/0052-pcie-apple-t7000-j81-reg-on.patch, handed to Orchard by micro23 (ipadair2-omarchy 7ea2b2b); 0052 wrote the D2207 GPIO 3 configuration register from the PCIe host driver through an apple,reg-on-pmic phandle; the PMIC GPIOs are described here as a GPIO controller instead]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../bindings/gpio/apple,d2365-pmic-gpio.yaml       | 14 +++++++++-----
+ 1 file changed, 9 insertions(+), 5 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/gpio/apple,d2365-pmic-gpio.yaml b/Documentation/devicetree/bindings/gpio/apple,d2365-pmic-gpio.yaml
+index 72f3c6fef..c1cae13ab 100644
+--- a/Documentation/devicetree/bindings/gpio/apple,d2365-pmic-gpio.yaml
++++ b/Documentation/devicetree/bindings/gpio/apple,d2365-pmic-gpio.yaml
+@@ -4,15 +4,16 @@
+ $id: http://devicetree.org/schemas/gpio/apple,d2365-pmic-gpio.yaml#
+ $schema: http://devicetree.org/meta-schemas/core.yaml#
+ 
+-title: Apple A9/A10 PMIC GPIO and event interrupt controller
++title: Apple A8/A9/A10 PMIC GPIO and event interrupt controller
+ 
+ maintainers:
+   - Paul Praschl <praschlpaul@g-p.at>
+ 
+ description: |
+-  The Dialog D2333 and D2365 PMICs used in Apple A9 and A10 devices provide
+-  21 and 24 GPIOs respectively. The controller is accessed through the regmap
+-  exported by the parent Apple I2C PMIC device.
++  The Dialog D2207 PMIC used with the Apple A8X and the D2333 and D2365
++  PMICs used in Apple A9 and A10 devices provide 21, 21 and 24 GPIOs
++  respectively. The controller is accessed through the regmap exported by the
++  parent Apple I2C PMIC device.
+ 
+   The D2365 also latches 240 PMU events (charger, ADC, GPIO edges and
+   others) in one read-to-clear block and signals them on a single active-low
+@@ -32,6 +33,7 @@ description: |
+ properties:
+   compatible:
+     enum:
++      - apple,d2207-pmic-gpio
+       - apple,d2333-pmic-gpio
+       - apple,d2365-pmic-gpio
+ 
+@@ -64,7 +66,9 @@ allOf:
+   - if:
+       properties:
+         compatible:
+-          const: apple,d2333-pmic-gpio
++          enum:
++            - apple,d2207-pmic-gpio
++            - apple,d2333-pmic-gpio
+     then:
+       properties:
+         interrupt-controller: false

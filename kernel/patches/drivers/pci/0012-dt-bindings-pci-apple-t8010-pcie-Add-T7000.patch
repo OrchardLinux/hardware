@@ -1,0 +1,249 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Martin=20Pu=C5=A1k=C3=A1=C4=8D?= <martin@icebear.sk>
+Date: Thu, 29 Oct 2026 16:57:28 +0800
+Subject: [PATCH] dt-bindings: pci: apple,t8010-pcie: Add T7000
+
+The A8/A8X (T7000/T7001) PCIe root complex is an earlier version of the
+T8010 (H9P) block: the same ECAM layout with one 0x8000-byte root-port
+window per port, the same shared root-complex window at 0x600000000,
+and the same per-port register block (LTSSM enable at +0x80, event
+status and mask at +0x100/+0x104, MSI configuration at +0x124/+0x128)
+with 32 MSI vectors split into four eight-vector port slices.
+
+It differs in what surrounds that block: there are no separate PHY
+register windows and no storage NVMMU, and the PCIe reference and
+auxiliary clocks are PMGR power domains rather than clocks. iOS
+requests the PCIE, PCIE_AUX and PCIE_REF gates before link setup.
+
+Add the apple,t7000-pcie compatible with its register, interrupt and
+power-domain layout, and move the T8010-only requirements (PHY and
+NVMMU windows, clocks, NVMMU properties) under a condition.
+
+[Orchard: from mattonik/ipad-nixos b94d42f kernel/patches/0052-pcie-apple-t7000-j81-reg-on.patch, 0057-pcie-apple-t7000-msi-domain.patch, handed to Orchard by micro23 (ipadair2-omarchy 7ea2b2b); folded into the existing H9P binding instead of a separate apple,t7000-pcie.yaml; dropped apple,reg-on-pmic (Wi-Fi power is a vdd-supply on the endpoint), apple,iova-window and apple,iova-rebase (the DMA window is the five-cell iommu-map); added named reg windows, port interrupts and the three power domains]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../bindings/pci/apple,t8010-pcie.yaml        | 152 +++++++++++++++---
+ 1 file changed, 133 insertions(+), 19 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/pci/apple,t8010-pcie.yaml b/Documentation/devicetree/bindings/pci/apple,t8010-pcie.yaml
+index 0e1cc7b0b..727de4cfd 100644
+--- a/Documentation/devicetree/bindings/pci/apple,t8010-pcie.yaml
++++ b/Documentation/devicetree/bindings/pci/apple,t8010-pcie.yaml
+@@ -4,7 +4,7 @@
+ $id: http://devicetree.org/schemas/pci/apple,t8010-pcie.yaml#
+ $schema: http://devicetree.org/meta-schemas/core.yaml#
+ 
+-title: Apple T8010 PCIe host controller
++title: Apple T7000 and T8010 PCIe host controller
+ 
+ maintainers:
+   - Paul Praschl <praschlpaul@g-p.at>
+@@ -21,6 +21,11 @@ description: |
+   window. The PCIe driver owns that NVMMU state and exposes it only to the ANS
+   NVMe glue.
+ 
++  Apple A8/A8X (T7000/T7001) devices use an earlier version of the same root
++  complex, with the same ECAM layout, port register block and MSI block. It
++  has no separate PHY register windows and no NVMMU, and its reference and
++  auxiliary clocks are power domains.
++
+   Each enabled root port is represented by a child node. This allows port
+   devices to carry their own reset, clock-request, firmware and other
+   device-specific properties.
+@@ -28,37 +33,91 @@ description: |
+ allOf:
+   - $ref: /schemas/pci/pci-host-bridge.yaml#
+   - $ref: /schemas/interrupt-controller/msi-controller.yaml#
++  - if:
++      properties:
++        compatible:
++          contains:
++            const: apple,t7000-pcie
++    then:
++      properties:
++        reg:
++          maxItems: 6
++        reg-names:
++          items:
++            - const: config
++            - const: rc
++            - const: port0
++            - const: port1
++            - const: port2
++            - const: port3
++        interrupts:
++          maxItems: 4
++        interrupt-names:
++          maxItems: 4
++        power-domains:
++          items:
++            - description: PCIe controller
++            - description: PCIe reference clock
++            - description: PCIe auxiliary clock
++        clocks: false
++        clock-names: false
++        apple,nvmmu-iova: false
++        apple,nvme-hmb: false
++        apple,preinit-phy-port-mask: false
++    else:
++      properties:
++        reg:
++          minItems: 9
++        reg-names:
++          items:
++            - const: config
++            - const: rc
++            - const: phy
++            - const: phy-ip
++            - const: port0
++            - const: port1
++            - const: port2
++            - const: port3
++            - const: nvmmu
++        interrupts:
++          minItems: 5
++        interrupt-names:
++          minItems: 5
++        power-domains:
++          maxItems: 1
++      required:
++        - clocks
++        - clock-names
++        - apple,nvmmu-iova
++        - apple,nvme-hmb
+ 
+ properties:
+   compatible:
+     oneOf:
+-      - const: apple,t8010-pcie
++      - enum:
++          - apple,t7000-pcie
++          - apple,t8010-pcie
+       - items:
+           - const: apple,j172-pcie
+           - const: apple,t8010-pcie
+ 
+   reg:
++    minItems: 6
+     maxItems: 9
+ 
+   reg-names:
+-    items:
+-      - const: config
+-      - const: rc
+-      - const: phy
+-      - const: phy-ip
+-      - const: port0
+-      - const: port1
+-      - const: port2
+-      - const: port3
+-      - const: nvmmu
++    minItems: 6
++    maxItems: 9
+ 
+   interrupts:
+     description:
+-      One state interrupt for each root port followed by the storage-port
+-      NVMMU fault interrupt.
++      One state interrupt for each root port followed, on T8010, by the
++      storage-port NVMMU fault interrupt.
++    minItems: 4
+     maxItems: 5
+ 
+   interrupt-names:
++    minItems: 4
+     items:
+       - const: port0
+       - const: port1
+@@ -76,7 +135,8 @@ properties:
+       - const: ref
+ 
+   power-domains:
+-    maxItems: 1
++    minItems: 1
++    maxItems: 3
+ 
+   msi-parent: true
+ 
+@@ -195,16 +255,12 @@ required:
+   - reg-names
+   - interrupts
+   - interrupt-names
+-  - clocks
+-  - clock-names
+   - power-domains
+   - bus-range
+   - ranges
+   - msi-controller
+   - msi-parent
+   - msi-ranges
+-  - apple,nvmmu-iova
+-  - apple,nvme-hmb
+   - '#interrupt-cells'
+ 
+ unevaluatedProperties: false
+@@ -301,4 +357,62 @@ examples:
+         };
+     };
+ 
++
++  - |
++    #include <dt-bindings/gpio/gpio.h>
++    #include <dt-bindings/interrupt-controller/apple-aic.h>
++
++    soc {
++        #address-cells = <2>;
++        #size-cells = <2>;
++
++        pcie: pcie@610000000 {
++            compatible = "apple,t7000-pcie";
++            device_type = "pci";
++
++            reg = <0x6 0x10000000 0x0 0x1000000>,
++                  <0x6 0x00000000 0x0 0x2000>,
++                  <0x6 0x01004000 0x0 0x1000>,
++                  <0x6 0x02004000 0x0 0x1000>,
++                  <0x6 0x03004000 0x0 0x1000>,
++                  <0x6 0x04004000 0x0 0x1000>;
++            reg-names = "config", "rc", "port0", "port1", "port2", "port3";
++
++            interrupt-parent = <&aic>;
++            interrupts = <AIC_IRQ 212 IRQ_TYPE_LEVEL_HIGH>,
++                         <AIC_IRQ 215 IRQ_TYPE_LEVEL_HIGH>,
++                         <AIC_IRQ 218 IRQ_TYPE_LEVEL_HIGH>,
++                         <AIC_IRQ 221 IRQ_TYPE_LEVEL_HIGH>;
++            interrupt-names = "port0", "port1", "port2", "port3";
++
++            msi-controller;
++            msi-parent = <&pcie>;
++            msi-ranges = <&aic AIC_IRQ 224 IRQ_TYPE_EDGE_RISING 32>;
++            apple,msi-doorbell = <0xbffff000>;
++
++            iommu-map = <0x100 &dart_apcie1 0 0x0 0x80000000 0x0 0x3ffff000 1>;
++            iommu-map-mask = <0xff00>;
++
++            #address-cells = <3>;
++            #size-cells = <2>;
++            #interrupt-cells = <1>;
++            interrupt-controller;
++            bus-range = <0x00 0x04>;
++            ranges = <0x02000000 0x0 0xc0000000
++                      0x7 0xc0000000 0x0 0x40000000>;
++
++            power-domains = <&ps_pcie>, <&ps_pcie_ref>, <&ps_pcie_aux>;
++
++            pci@1,0 {
++                device_type = "pci";
++                reg = <0x800 0x0 0x0 0x0 0x0>;
++                reset-gpios = <&pinctrl 179 GPIO_ACTIVE_LOW>;
++                max-link-speed = <1>;
++
++                #address-cells = <3>;
++                #size-cells = <2>;
++                ranges;
++            };
++        };
++    };
+ ...

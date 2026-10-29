@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <henrik@goat-code.com>
+Date: Thu, 29 Oct 2026 17:14:33 +0800
+Subject: [PATCH] dt-bindings: net: brcmfmac: Add BCM4350 PCIe ID
+
+The iPad Air 2 (J81) has a BCM4350 Wi-Fi module on PCIe, described by
+its PCI compatible pci14e4,43a3 so the endpoint node can carry its
+vdd-supply and device-wake-gpios. Add it to the list of PCIe IDs.
+
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../devicetree/bindings/net/wireless/brcm,bcm4329-fmac.yaml      | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/Documentation/devicetree/bindings/net/wireless/brcm,bcm4329-fmac.yaml b/Documentation/devicetree/bindings/net/wireless/brcm,bcm4329-fmac.yaml
+index cb99194e5..000060f30 100644
+--- a/Documentation/devicetree/bindings/net/wireless/brcm,bcm4329-fmac.yaml
++++ b/Documentation/devicetree/bindings/net/wireless/brcm,bcm4329-fmac.yaml
+@@ -49,6 +49,7 @@ properties:
+           - const: brcm,bcm4329-fmac
+       - enum:
+           - brcm,bcm4329-fmac
++          - pci14e4,43a3  # BCM4350
+           - pci14e4,43dc  # BCM4355
+           - pci14e4,4464  # BCM4364
+           - pci14e4,4488  # BCM4377

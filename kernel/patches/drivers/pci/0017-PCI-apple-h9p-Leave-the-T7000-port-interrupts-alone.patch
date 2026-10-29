@@ -1,0 +1,55 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <henrik@goat-code.com>
+Date: Thu, 29 Oct 2026 17:32:04 +0800
+Subject: [PATCH] PCI: apple-h9p: Leave the T7000 port interrupts alone
+
+The T7000 variant requested and enabled the per-port interrupts at probe,
+before the port windows were set up. The validated A8X bring-up never
+used them, and a status bit that can't be acknowledged would keep the
+interrupt asserted. Leave them alone on T7000, as iOS's T7000 code does.
+
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/pci/controller/pcie-apple-h9p.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/drivers/pci/controller/pcie-apple-h9p.c b/drivers/pci/controller/pcie-apple-h9p.c
+index 15593b6ef..d58b3efaf 100644
+--- a/drivers/pci/controller/pcie-apple-h9p.c
++++ b/drivers/pci/controller/pcie-apple-h9p.c
+@@ -334,6 +334,8 @@ enum apple_h9p_port_result {
+  * @has_nvmmu: the storage port has an NVMMU ("nvmmu" window and interrupt)
+  * @port3_link_events: port 3's event interrupt is armed by @setup_port, and
+  *	its link event re-enables the root complex
++ * @no_port_irqs: leave the per-port interrupts alone (iOS's T7000 code
++ *	doesn't use them)
+  * @j172_bridge_quirk: replay J172 firmware's bridge transactions on port 3
+  */
+ struct apple_h9p_hw {
+@@ -345,6 +347,7 @@ struct apple_h9p_hw {
+ 	bool has_phy;
+ 	bool has_nvmmu;
+ 	bool port3_link_events;
++	bool no_port_irqs;
+ 	bool j172_bridge_quirk;
+ };
+ 
+@@ -836,6 +839,9 @@ static int apple_h9p_pcie_request_port_irqs(struct apple_h9p_pcie *pcie)
+ 	struct device *dev = pcie->dev;
+ 	unsigned int port;
+ 
++	if (pcie->hw->no_port_irqs)
++		return 0;
++
+ 	for (port = 0; port < H9P_NUM_PORTS; port++) {
+ 		struct apple_h9p_port_irq *port_irq = &pcie->port_irq[port];
+ 		bool armed_later;
+@@ -2309,6 +2315,7 @@ static const struct apple_h9p_hw apple_h9p_hw_t7000 = {
+ 	.setup_port = apple_t7000_setup_port,
+ 	/* The only speed validated on T7001; J81's port 1 is Gen1-limited. */
+ 	.default_link_speed = H9P_LINK_SPEED_2_5GT,
++	.no_port_irqs = true,
+ };
+ 
+ static const struct apple_h9p_hw apple_h9p_hw_t8010 = {

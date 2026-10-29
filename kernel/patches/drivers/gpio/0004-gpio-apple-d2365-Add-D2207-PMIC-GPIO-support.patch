@@ -1,0 +1,142 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Martin=20Pu=C5=A1k=C3=A1=C4=8D?= <martin@icebear.sk>
+Date: Thu, 29 Oct 2026 16:58:57 +0800
+Subject: [PATCH] gpio: apple-d2365: Add D2207 PMIC GPIO support
+
+The iPad Air 2 (A8X) powers its BCM4350 Wi-Fi through D2207 GPIO 3,
+which the boot firmware leaves as a low output (configuration byte
+0x09). Add the D2207 as per-PMIC match data so that board signals like
+this one can be described as GPIOs of the PMIC.
+
+Lines 0-16 have their one-byte configuration register at 0x400 + n,
+lines 17-20 at 0x3e0 + 3 * n, as iOS AppleD2207PMU's
+_index2GPIOAddress() computes them. Bit 1 is the output level: iOS
+drives a line high with (old & 0x1d) | 0x02, and writing 0x0b to
+0x0403 powered the Wi-Fi chip on hardware. Bits 7:5 are the mode:
+iOS's _setGPIODirection() selects mode 0 for output and mode 3 for
+input, and the input level of line n is bit n % 8 of register
+0x63 + n / 8. Lines left in any other mode (the boot firmware
+configures several, for PMU events among others) are reported as not
+plain GPIOs, as on the D2365.
+
+The D2207 PMU event block is not handled; the D2207 has no interrupt
+controller here.
+
+[Orchard: from mattonik/ipad-nixos b94d42f kernel/patches/0052-pcie-apple-t7000-j81-reg-on.patch, handed to Orchard by micro23 (ipadair2-omarchy 7ea2b2b); register map and level bit from 0052 and research/j81-d2207-gpio-register-correction.md, moved from the PCIe host driver into the PMIC GPIO driver; mode field, input register and line count read from the public iOS 10.0 T8010 AppleD2207PMU (userlandkernel/ios-unstripped-kexts 96ca2b7), the binary Martin's notes cite]
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/gpio/Kconfig            |  8 +++---
+ drivers/gpio/gpio-apple-d2365.c | 43 +++++++++++++++++++++++++++++++--
+ 2 files changed, 45 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/gpio/Kconfig b/drivers/gpio/Kconfig
+index 3b16f007b..a5a7c6290 100644
+--- a/drivers/gpio/Kconfig
++++ b/drivers/gpio/Kconfig
+@@ -1349,13 +1349,13 @@ config GPIO_ALTERA_A10SR
+ 	  as writes to LEDs.
+ 
+ config GPIO_APPLE_D2365
+-	tristate "Apple T8010 PMIC GPIO support"
++	tristate "Apple A8X/A9/A10 PMIC GPIO support"
+ 	depends on MFD_SIMPLE_MFD_I2C
+ 	help
+ 	  Say yes here to enable support for the GPIOs provided by the Dialog
+-	  D2333 and D2365 PMICs used in Apple A10 devices. The GPIO controller
+-	  is exposed as a child of the Apple I2C PMIC and can control board-level
+-	  signals such as peripheral power enables.
++	  D2207, D2333 and D2365 PMICs used in Apple A8X, A9 and A10 devices.
++	  The GPIO controller is exposed as a child of the Apple I2C PMIC and
++	  can control board-level signals such as peripheral power enables.
+ 
+ config GPIO_ARIZONA
+ 	tristate "Wolfson Microelectronics Arizona class devices"
+diff --git a/drivers/gpio/gpio-apple-d2365.c b/drivers/gpio/gpio-apple-d2365.c
+index 2f4d6f55a..c66ceadf8 100644
+--- a/drivers/gpio/gpio-apple-d2365.c
++++ b/drivers/gpio/gpio-apple-d2365.c
+@@ -1,7 +1,7 @@
+ // SPDX-License-Identifier: GPL-2.0-only
+ /*
+  * GPIO and PMU event interrupt driver for Apple/Dialog PMICs used with the
+- * A9 and A10 SoCs.
++ * A8X, A9 and A10 SoCs.
+  *
+  * The D2365 latches 240 PMU events in a read-to-clear block. Any unmasked
+  * pending event pulls the PMU interrupt line to the AP low; reading the
+@@ -32,6 +32,22 @@
+ #include <linux/suspend.h>
+ #include <linux/workqueue.h>
+ 
++/*
++ * D2207, as iOS AppleD2207PMU accesses it: the configuration byte of line n
++ * is 0x400 + n for lines 0-16 and 0x3e0 + 3 * n for lines 17-20
++ * (_index2GPIOAddress). Bits 7:5 are the mode; _setGPIODirection() writes
++ * mode 0 for output and mode 3 for input and keeps bits 4:0. Bit 1 is the
++ * output level: _setGPIOFunction() drives a line high with
++ * (old & 0x1d) | 0x02. Input levels are bit n % 8 of 0x63 + n / 8.
++ */
++#define D2207_GPIO_SPLIT		17
++#define D2207_GPIO_CFG_0_16	0x400
++#define D2207_GPIO_CFG_17_20	0x3e0
++#define D2207_GPIO_VALUE		BIT(1)
++#define D2207_GPIO_MODE_MASK		GENMASK(7, 5)
++#define D2207_GPIO_OUTPUT		0
++#define D2207_GPIO_INPUT		(3 << 5)
++
+ #define D2365_GPIO_SPLIT		18
+ #define D2365_GPIO_CFG_0_17	0x900
+ #define D2365_GPIO_CFG_18_23	0x8bd
+@@ -110,6 +126,14 @@ struct apple_pmic_gpio {
+ 	bool removing;
+ };
+ 
++static unsigned int d2207_gpio_config_reg(unsigned int offset)
++{
++	if (offset < D2207_GPIO_SPLIT)
++		return D2207_GPIO_CFG_0_16 + offset;
++
++	return D2207_GPIO_CFG_17_20 + 3 * offset;
++}
++
+ static unsigned int d2365_gpio_config_reg(unsigned int offset)
+ {
+ 	if (offset < D2365_GPIO_SPLIT)
+@@ -683,6 +707,17 @@ static int apple_pmic_gpio_probe(struct platform_device *pdev)
+ 	return devm_gpiochip_add_data(dev, &gpio->chip, gpio);
+ }
+ 
++static const struct apple_pmic_gpio_info d2207_gpio_info = {
++	.label = "d2207-pmic-gpio",
++	.ngpio = 21,
++	.input_base = 0x63,
++	.value_mask = D2207_GPIO_VALUE,
++	.direction_mask = D2207_GPIO_MODE_MASK,
++	.input_mode = D2207_GPIO_INPUT,
++	.output_mode = D2207_GPIO_OUTPUT,
++	.config_reg = d2207_gpio_config_reg,
++};
++
+ static const struct apple_pmic_gpio_info d2333_gpio_info = {
+ 	.label = "d2333-pmic-gpio",
+ 	.ngpio = ARRAY_SIZE(d2333_gpio_config_regs),
+@@ -715,6 +750,10 @@ static const struct apple_pmic_gpio_info d2365_gpio_info = {
+ };
+ 
+ static const struct of_device_id d2365_gpio_of_match[] = {
++	{
++		.compatible = "apple,d2207-pmic-gpio",
++		.data = &d2207_gpio_info,
++	},
+ 	{
+ 		.compatible = "apple,d2333-pmic-gpio",
+ 		.data = &d2333_gpio_info,
+@@ -737,5 +776,5 @@ static struct platform_driver d2365_gpio_driver = {
+ };
+ module_platform_driver(d2365_gpio_driver);
+ 
+-MODULE_DESCRIPTION("Apple A9/A10 PMIC GPIO and event interrupt driver");
++MODULE_DESCRIPTION("Apple A8X/A9/A10 PMIC GPIO and event interrupt driver");
+ MODULE_LICENSE("GPL");
