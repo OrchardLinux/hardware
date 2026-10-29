@@ -18,6 +18,7 @@ For building components or another image, follow [BUILD.md](BUILD.md). All comma
 - [GitHub builds and release ordering](docs/ci.md)
 - [Shared launcher build and publication](boot/quiet/README.md)
 - [Device protocol](https://github.com/OrchardLinux/cli/blob/main/docs/device-protocol.md)
+- [Contributing](CONTRIBUTING.md)
 
 Public packages contain recipes and code, not private Apple firmware, calibration, device trees captured from hardware, or session credentials. Device-specific inputs are prepared separately on the user's host.
 
