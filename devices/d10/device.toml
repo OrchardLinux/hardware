@@ -21,7 +21,6 @@ product = "D10 Recovery"
 [boot]
 methods = ["checkm8-pongo"]
 # Not published yet: no d10 launcher release exists. Mirrors the j71b URL pattern.
-launch_manifest = "https://github.com/OrchardLinux/hardware/releases/latest/download/d10-apple-launcher.boot.toml"
 
 [kernel]
 platform = "apple-16k" # kernel/series/apple-16k, kernel/configs/apple-16k
