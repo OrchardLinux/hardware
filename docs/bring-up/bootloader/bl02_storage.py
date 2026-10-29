@@ -513,12 +513,20 @@ def port_down():
         return
     if result.get('link'):
         rmw(cfg_addr(1) + 0x04, 0x4, 0)    # endpoint bus mastering off
+    # Linux expects the port interrupt clear, as after power-on reset; a
+    # pending link-down event left here storms IRQ 60. Mask before the link
+    # goes down, clear while the port registers are still powered.
+    p.write32(PORT0 + 0x104, 0xffffffff)   # mask everything
     rmw(PORT0 + 0x80, 1, 0)                # LTSSM off
     gpio_out(PERST_PIN, 0)                 # PERST# asserted
     p.write32(NVMMU + 0x20, 0)             # SART aperture off
     rmw(DART0 + 0x0c, 0xff, 0)             # DART stream 0 translation off, tables gone
     for idx in range(4):
         p.write32(DART0 + 0x40 + 4 * idx, 0)
+    time.sleep(0.01)
+    pending = rd(PORT0 + 0x100)
+    p.write32(PORT0 + 0x100, pending)      # write-1-to-clear what the link-down raised
+    log(f'port IRQ: pending {pending:#x}, now {rd(PORT0 + 0x100):#x}, mask {rd(PORT0 + 0x104):#x}')
     for reg in (0x124, 0x114, 0x100):      # iBoot's port-down order
         rmw(RC + reg, 1, 0)
     linksts, state = ltssm()

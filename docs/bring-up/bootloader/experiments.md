@@ -90,7 +90,19 @@ partition to `/dev/null`) without timeouts. Repeat over 5 cold boots.
 - The serial shell never answers, not even raw. In BL-00 it answered at once.
 - The screen stays black, because the recovery's boot arguments map fbcon away.
 
-Next: the same run with a visible kernel console (`BL03_BOOTARGS="orchard.recovery=1 loglevel=7"`) to see where Linux stops. Then `--keep-power`.
+**Cause found and fixed (third and fourth runs).**
+- Taking the link down left the port's link-event bit (`0x1000`) pending, so IRQ 60 stormed 100,000 times. Linux then disabled it ("nobody cared").
+- The storm also caused the PMIC I²C reset loop, which showed up in one run only.
+- The fix: `port_down()` masks the port interrupts, then takes the link down, then clears the status while the port registers are still powered. Only after that does it switch off RC `0x124`/`0x114`/`0x100` and power.
+
+**Result (J71b, 2026-10-29, one boot): passed.**
+- IRQ 60 fires once, as on a normal boot. No I²C resets, and the serial shell answers.
+- `nvme.ko` probes the controller (`nvme0n1: p1 p3`), and the GPT disk GUID matches the one m1n1 read.
+- A 2 GiB read-only `dd` of p3 took 3.7 s with no NVMe or DART errors.
+
+Still owed for the pass criteria: the 10-minute soak and five cold boots.
+
+Before the fix: the same run with a visible kernel console (`BL03_BOOTARGS="orchard.recovery=1 loglevel=7"`) to see where Linux stops. Then `--keep-power`.
 
 If it fails, record the LTSSM state Linux reports. Compare with Berkay's
 `POLL_COMPLIANCE` result after kexec. Then try once with `ps_pcie` left on,
