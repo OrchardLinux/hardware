@@ -1,0 +1,16 @@
+#!/run/orchard/rescue/busybox sh
+# Keep every executable and the shell history on the RAM mount.
+BB=/run/orchard/rescue/busybox
+export PATH=/run/orchard/rescue HOME=/run/orchard/rescue TERM=linux
+export HISTFILE=/run/orchard/rescue/.ash_history
+cd /run/orchard/rescue
+while :; do
+    if [ -c /dev/ttyGS0 ]; then
+        "$BB" setsid "$BB" sh -i </dev/ttyGS0 >/dev/ttyGS0 2>&1 &
+        shell=$!
+        echo "$shell" > /run/orchard/rescue/shell.pid
+        wait "$shell" || true
+        "$BB" rm -f /run/orchard/rescue/shell.pid
+    fi
+    "$BB" sleep 1
+done

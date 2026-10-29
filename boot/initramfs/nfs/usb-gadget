@@ -1,0 +1,27 @@
+#!/bin/busybox sh
+# Configfs owns USB throughout the RAM-to-systemd handoff.
+set -eu
+. /etc/orchard/nfs.conf
+mount -t configfs -o nosuid,nodev,noexec configfs /sys/kernel/config
+g=/sys/kernel/config/usb_gadget/orchard-nfs
+[ ! -e "$g" ]
+mkdir "$g"
+echo 0x05ac > "$g/idVendor"
+echo 0x4144 > "$g/idProduct"
+echo 0x0200 > "$g/bcdUSB"
+mkdir -p "$g/strings/0x409" "$g/configs/c.1/strings/0x409"
+echo Orchard > "$g/strings/0x409/manufacturer"
+echo "Orchard $NFS_PROFILE NFS" > "$g/strings/0x409/product"
+printf 'PROFILE:%s ROOT:%s BOOT:%s\n' "$NFS_PROFILE" "$NFS_ROOT_ID" \
+    "$(cat /proc/sys/kernel/random/boot_id)" > "$g/strings/0x409/serialnumber"
+echo 'USB network and physical rescue shell' > "$g/configs/c.1/strings/0x409/configuration"
+# Descriptor power only; hardware charging remains a separate driver concern.
+echo 100 > "$g/configs/c.1/MaxPower"
+mkdir "$g/functions/$NFS_FUNCTION.usb0" "$g/functions/acm.usb0"
+echo "$NFS_HOST_MAC" > "$g/functions/$NFS_FUNCTION.usb0/host_addr"
+echo "$NFS_DEVICE_MAC" > "$g/functions/$NFS_FUNCTION.usb0/dev_addr"
+ln -s "$g/functions/$NFS_FUNCTION.usb0" "$g/configs/c.1/"
+ln -s "$g/functions/acm.usb0" "$g/configs/c.1/"
+set -- /sys/class/udc/*
+[ "$#" -eq 1 ] && [ -e "$1" ]
+printf '%s\n' "${1##*/}" > "$g/UDC"
