@@ -1,0 +1,247 @@
+[    0.000000] Booting Linux on physical CPU 0x0000000000 [0x610f0030]
+[    0.000000] Linux version 7.3.0-rc1-orchard-apple-4k (orchard@builder) (Debian clang version 19.1.7 (3~deb12u1), Debian LLD 19.1.7) #1 SMP PREEMPT 2026-10-22T00:00:00Z
+[    0.000000] KASLR enabled
+[    0.000000] random: crng init done
+[    0.000000] Machine model: Apple iPad Air 2 (Wi-Fi)
+[    0.000000] efi: UEFI not found.
+[    0.000000] OF: reserved mem: 0x000000087d0da000..0x000000087d0ddfff (16 KiB) map non-reusable flash@87d0da000
+[    0.000000] OF: reserved mem: 0x000000080376c000..0x000000080378bfff (128 KiB) map non-reusable flash@80376c000
+[    0.000000] cma: Reserved 16 MiB at 0x0000000800c00000
+[    0.000000] Zone ranges:
+[    0.000000]   DMA      [mem 0x0000000800c00000-0x000000087d0ddfff]
+[    0.000000]   DMA32    empty
+[    0.000000]   Normal   empty
+[    0.000000] Movable zone start for each node
+[    0.000000] Early memory node ranges
+[    0.000000]   node   0: [mem 0x0000000800c00000-0x000000087d0d5fff]
+[    0.000000]   node   0: [mem 0x000000087d0da000-0x000000087d0ddfff]
+[    0.000000] Initmem setup node 0 [mem 0x0000000800c00000-0x000000087d0ddfff]
+[    0.000000] On node 0, zone DMA: 3072 pages in unavailable ranges
+[    0.000000] On node 0, zone DMA: 4 pages in unavailable ranges
+[    0.000000] On node 0, zone DMA: 12066 pages in unavailable ranges
+[    0.000000] percpu: Embedded 32 pages/cpu s92056 r8192 d30824 u131072
+[    0.000000] pcpu-alloc: s92056 r8192 d30824 u131072 alloc=32*4096
+[    0.000000] pcpu-alloc: [0] 0 [0] 1 [0] 2 
+[    0.000000] Detected PIPT I-cache on CPU0
+[    0.000000] CPU features: detected: Spectre-v2
+[    0.000000] CPU features: detected: Spectre-v4
+[    0.000000] CPU features: detected: Spectre-BHB
+[    0.000000] CPU features: kernel page table isolation forced ON by KASLR
+[    0.000000] CPU features: detected: Kernel page table isolation (KPTI)
+[    0.000000] alternatives: applying boot alternatives
+[    0.000000] Kernel command line: console=tty0 loglevel=7 rdinit=/init
+[    0.000000] printk: log buffer data + meta data: 131072 + 458752 = 589824 bytes
+[    0.000000] Dentry cache hash table entries: 262144 (order: 9, 2097152 bytes, linear)
+[    0.000000] Inode-cache hash table entries: 131072 (order: 8, 1048576 bytes, linear)
+[    0.000000] software IO TLB: SWIOTLB bounce buffer size adjusted to 1MB
+[    0.000000] software IO TLB: area num 4.
+[    0.000000] software IO TLB: mapped [mem 0x000000087a700000-0x000000087a900000] (2MB)
+[    0.000000] Built 1 zonelists, mobility grouping on.  Total pages: 509146
+[    0.000000] mem auto-init: stack:off, heap alloc:off, heap free:off
+[    0.000000] SLUB: HWalign=64, Order=0-3, MinObjects=0, CPUs=3, Nodes=1
+[    0.000000] rcu: Preemptible hierarchical RCU implementation.
+[    0.000000] rcu: 	RCU event tracing is enabled.
+[    0.000000] rcu: 	RCU restricting CPUs from NR_CPUS=8 to nr_cpu_ids=3.
+[    0.000000] 	Trampoline variant of Tasks RCU enabled.
+[    0.000000] 	Tracing variant of Tasks RCU enabled.
+[    0.000000] rcu: RCU calculated value of scheduler-enlistment delay is 100 jiffies.
+[    0.000000] rcu: Adjusting geometry for rcu_fanout_leaf=16, nr_cpu_ids=3
+[    0.000000] RCU Tasks: Setting shift to 2 and lim to 1 rcu_task_cb_adjust=1 rcu_task_cpu_ids=3.
+[    0.000000] NR_IRQS: 64, nr_irqs: 64, preallocated irqs: 0
+[    0.000000] Root IRQ handler: aic_handle_irq
+[    0.000000] Root FIQ handler: aic_handle_fiq
+[    0.000000] irq_apple_aic: Kernel running in EL1, mapping interrupts
+[    0.000000] irq_apple_aic: Initialized with 256/1024 IRQs * 1/1 die(s), 7 FIQs, 32 vIPIs
+[    0.000000] rcu: srcu_init: Setting srcu_struct sizes based on contention.
+[    0.000000] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 1911260446275000 ns
+[    0.000000] arch_timer: cp15 timer running at 24.00MHz (virt).
+[    0.000000] clocksource: arch_sys_counter: mask: 0xffffffffffffff max_cycles: 0x588fe9dc0, max_idle_ns: 440795202592 ns
+[    0.000000] sched_clock: 56 bits at 24MHz, resolution 41ns, wraps every 4398046511097ns
+[    0.000137] Console: colour dummy device 80x25
+[    0.000145] printk: legacy console [tty0] enabled
+[    0.000353] Calibrating delay loop (skipped), value calculated using timer frequency.. 48.00 BogoMIPS (lpj=24000)
+[    0.000365] pid_max: default: 32768 minimum: 301
+[    0.000499] landlock: Up and running.
+[    0.000584] Mount-cache hash table entries: 4096 (order: 3, 32768 bytes, linear)
+[    0.000597] Mountpoint-cache hash table entries: 4096 (order: 3, 32768 bytes, linear)
+[    0.000731] VFS: Finished mounting rootfs on nullfs
+[    0.001634] rcu: Hierarchical SRCU implementation.
+[    0.001642] rcu: 	Max phase no-delay instances is 400.
+[    0.001758] Timer migration: 1 hierarchy levels; 8 children per group; 1 crossnode level
+[    0.001940] EFI services will not be available.
+[    0.002034] smp: Bringing up secondary CPUs ...
+[    0.002264] Detected PIPT I-cache on CPU1
+[    0.002309] CPU1: Booted secondary processor 0x0000000001 [0x610f0030]
+[    0.002584] Detected PIPT I-cache on CPU2
+[    0.002625] CPU2: Booted secondary processor 0x0000000002 [0x610f0030]
+[    0.002689] smp: Brought up 1 node, 3 CPUs
+[    0.002709] SMP: Total of 3 processors activated.
+[    0.002714] CPU: All CPU(s) started at EL1
+[    0.002720] CPU features: detected: 32-bit EL0 Support
+[    0.002753] alternatives: applying system-wide alternatives
+[    0.003037] Memory: 1919692K/2036584K available (11136K kernel code, 1720K rwdata, 4564K rodata, 960K init, 415K bss, 96844K reserved, 16384K cma-reserved)
+[    0.003415] devtmpfs: initialized
+[    0.005489] posixtimers hash table entries: 2048 (order: 3, 32768 bytes, linear)
+[    0.005523] futex hash table entries: 1024 (65536 bytes on 1 NUMA nodes, total 64 KiB, linear).
+[    0.005639] 2G module region forced by RANDOMIZE_MODULE_REGION_FULL
+[    0.005646] 0 pages in range for non-PLT usage
+[    0.005649] 519536 pages in range for PLT usage
+[    0.005949] DMI: not present or invalid.
+[    0.006113] NET: Registered PF_NETLINK/PF_ROUTE protocol family
+[    0.006557] DMA: preallocated 256 KiB GFP_KERNEL|GFP_DMA pool for atomic allocations
+[    0.006580] audit: initializing netlink subsys (disabled)
+[    0.006657] audit: type=2000 audit(0.006:1): state=initialized audit_enabled=0 res=1
+[    0.006826] thermal_sys: Registered thermal governor 'step_wise'
+[    0.006852] cpuidle: using governor menu
+[    0.006893] hw-breakpoint: found 6 breakpoint and 4 watchpoint registers.
+[    0.006947] ASID allocator initialised with 128 entries
+[    0.008164] /soc/pcie@610000000: Fixed dependency cycle(s) with /soc/pcie@610000000
+[    0.013576] HugeTLB: registered 1.00 GiB page size, pre-allocated 0 pages
+[    0.013592] HugeTLB: 0 KiB vmemmap can be freed for a 1.00 GiB page
+[    0.013599] HugeTLB: registered 32.0 MiB page size, pre-allocated 0 pages
+[    0.013605] HugeTLB: 0 KiB vmemmap can be freed for a 32.0 MiB page
+[    0.013611] HugeTLB: registered 2.00 MiB page size, pre-allocated 0 pages
+[    0.013616] HugeTLB: 0 KiB vmemmap can be freed for a 2.00 MiB page
+[    0.013623] HugeTLB: registered 64.0 KiB page size, pre-allocated 0 pages
+[    0.013628] HugeTLB: 0 KiB vmemmap can be freed for a 64.0 KiB page
+[    0.014275] fbcon: Taking over console
+[    0.014408] iommu: Default domain type: Translated
+[    0.014415] iommu: DMA domain TLB invalidation policy: strict mode
+[    0.015765] usbcore: registered new interface driver usbfs
+[    0.015788] usbcore: registered new interface driver hub
+[    0.015805] usbcore: registered new device driver usb
+[    0.016273] vgaarb: loaded
+[    0.016390] clocksource: Switched to clocksource arch_sys_counter
+[    0.016579] VFS: Disk quotas dquot_6.6.0
+[    0.016593] VFS: Dquot-cache hash table entries: 512 (4096 bytes)
+[    0.019984] NET: Registered PF_INET protocol family
+[    0.020060] IP idents hash table entries: 32768 (order: 6, 262144 bytes, linear)
+[    0.020908] tcp_listen_portaddr_hash hash table entries: 1024 (order: 2, 16384 bytes, linear)
+[    0.020923] Table-perturb hash table entries: 65536 (order: 6, 262144 bytes, linear)
+[    0.020933] TCP established hash table entries: 16384 (order: 5, 131072 bytes, linear)
+[    0.020971] TCP bind hash table entries: 16384 (order: 7, 524288 bytes, linear)
+[    0.021074] TCP: Hash tables configured (established 16384 bind 16384)
+[    0.021116] UDP hash table entries: 1024 (order: 4, 65536 bytes, linear)
+[    0.021175] NET: Registered PF_UNIX/PF_LOCAL protocol family
+[    0.021196] PCI: CLS 0 bytes, default 64
+[    0.021439] Unpacking initramfs...
+[    0.021752] Initialise system trusted keyrings
+[    0.021827] workingset: timestamp_bits=46 (anon: 41) max_order=19 bucket_order=0 (anon: 0)
+[    0.021990] squashfs: version 4.0 (2009/01/31) Phillip Lougher
+[    0.022630] cryptd: max_cpu_qlen set to 1000
+[    0.041364] NET: Registered PF_ALG protocol family
+[    0.041419] Key type asymmetric registered
+[    0.041426] Asymmetric key parser 'x509' registered
+[    0.041459] io scheduler mq-deadline registered
+[    0.041467] io scheduler kyber registered
+[    0.051755] 20a0c0000.serial: ttySAC0 MMIO32:0x000000020a0c0000 (irq = 35, base_baud = 0) is a APPLE S5L
+[    0.052556] apple-dart 602002000.iommu: DART [pagesize 1000, 4 streams, bypass support: 0, bypass forced: 0, AS 32 -> 36] initialized
+[    0.053111] [drm] Initialized simpledrm 1.0.0 for 87d0de000.framebuffer on minor 0
+[    0.061059] Console: switching to colour frame buffer device 192x128
+[    0.067067] simple-framebuffer 87d0de000.framebuffer: [drm] fb0: simpledrmdrmfb frame buffer device
+[    0.071872] loop: module loaded
+[    0.078417] zram: Added device: zram0
+[    0.711919] Freeing initrd memory: 33588K
+[    0.713231] tun: Universal TUN/TAP device driver, 1.6
+[    0.714274] gadgetfs: USB Gadget filesystem, version 24 Aug 2004
+[    0.714347] file system registered
+[    0.714424] UDC core: g_multi: couldn't find an available UDC
+[    0.714806] Driver for 1-wire Dallas network protocol.
+[    0.715443] device-mapper: ioctl: 4.50.0-ioctl (2025-04-28) initialised: dm-devel@lists.linux.dev
+[    0.716080] usbcore: registered new interface driver usbhid
+[    0.716101] usbhid: USB HID core driver
+[    0.717129] hw perfevents: enabled with apple_typhoon_pmu PMU driver, 8 (0,000000ff) counters available
+[    0.717365]  cs_system_cfg: CoreSight Configuration manager initialised
+[    0.718726] NET: Registered PF_INET6 protocol family
+[    0.719253] Segment Routing with IPv6
+[    0.719314] In-situ OAM (IOAM) with IPv6
+[    0.719407] sit: IPv6, IPv4 and MPLS over IPv4 tunneling driver
+[    0.719676] NET: Registered PF_PACKET protocol family
+[    0.719744] Key type dns_resolver registered
+[    0.723166] registered taskstats version 1
+[    0.723272] Loading compiled-in X.509 certificates
+[    0.726817] zswap: loaded using pool zstd
+[    0.728478] dwc2 20c100000.usbdev: supply vusb_d not found, using dummy regulator
+[    0.728605] dwc2 20c100000.usbdev: supply vusb_a not found, using dummy regulator
+[    0.730351] dwc2 20c100000.usbdev: EPs: 9, dedicated fifos, 2056 entries in SPRAM
+[    0.732235] LUN: removable file: (no medium)
+[    0.732294] no file given for LUN0
+[    0.732342] printk: legacy console [ttyGS0] disabled
+[    0.732523] udc 20c100000.usbdev: failed to start g_multi: -22
+[    0.732580] g_multi gadget.0: probe with driver g_multi failed with error -22
+[    0.734368] pcie-apple-h9p 610000000.pcie: host bridge /soc/pcie@610000000 ranges:
+[    0.734468] pcie-apple-h9p 610000000.pcie:      MEM 0x0620000000..0x07bfffffff -> 0x0620000000
+[    0.734538] pcie-apple-h9p 610000000.pcie:      MEM 0x07c0000000..0x07ffffffff -> 0x00c0000000
+[    0.735222] 20a0d4000.serial: ttySAC1 MMIO32:0x000000020a0d4000 (irq = 48, base_baud = 0) is a APPLE S5L
+[    0.735361] serial serial0: tty port ttySAC1 registered
+[    0.735665] w1_master_driver w1_bus_master1: Attaching one wire slave 01.000000000000 crc 3d
+[    0.736513] OF: Bad cell count for /soc/i2c@20a110000/pmic@3c
+[    0.736579] OF: Bad cell count for /soc/i2c@20a110000/pmic@3c
+[    0.736742] OF: Bad cell count for /soc/i2c@20a110000/pmic@3c
+[    0.736802] OF: Bad cell count for /soc/i2c@20a110000/pmic@3c
+[    0.738420] OF: Bad cell count for /soc/i2c@20a110000/pmic@3c
+[    0.738445] OF: Bad cell count for /soc/i2c@20a110000/pmic@3c
+[    0.738610] OF: Bad cell count for /soc/i2c@20a110000/pmic@3c
+[    0.738902] pcie-apple-h9p 610000000.pcie: host bridge /soc/pcie@610000000 ranges:
+[    0.738938] pcie-apple-h9p 610000000.pcie:      MEM 0x0620000000..0x07bfffffff -> 0x0620000000
+[    0.738965] pcie-apple-h9p 610000000.pcie:      MEM 0x07c0000000..0x07ffffffff -> 0x00c0000000
+[    0.741817] rtc-apple-pmic 20a110000.i2c:pmic@3c:rtc@5c0: registered as rtc0
+[    0.742820] rtc-apple-pmic 20a110000.i2c:pmic@3c:rtc@5c0: setting system clock to 2026-10-29T16:18:47 UTC (1793290727)
+[    0.742894] pcie-apple-h9p 610000000.pcie: host bridge /soc/pcie@610000000 ranges:
+[    0.742928] pcie-apple-h9p 610000000.pcie:      MEM 0x0620000000..0x07bfffffff -> 0x0620000000
+[    0.742955] pcie-apple-h9p 610000000.pcie:      MEM 0x07c0000000..0x07ffffffff -> 0x00c0000000
+[    1.060516] pcie-apple-h9p 610000000.pcie: ECAM at [mem 0x610000000-0x610ffffff] for [bus 00-04]
+[    1.061165] pcie-apple-h9p 610000000.pcie: PCI host bridge to bus 0000:00
+[    1.061469] pci_bus 0000:00: root bus resource [bus 00-04]
+[    1.061699] pci_bus 0000:00: root bus resource [mem 0x620000000-0x7bfffffff pref]
+[    1.061806] pci_bus 0000:00: root bus resource [mem 0x7c0000000-0x7ffffffff] (bus address [0xc0000000-0xffffffff])
+[    1.062169] pci 0000:00:01.0: [106b:1002] type 01 class 0x060400 PCIe Root Port
+[    1.062283] pci 0000:00:01.0: PCI bridge to [bus 00]
+[    1.062358] pci 0000:00:01.0:   bridge window [io  0x0000-0x0fff]
+[    1.062472] pci 0000:00:01.0:   bridge window [mem 0x00000000-0x000fffff]
+[    1.062565] pci 0000:00:01.0:   bridge window [mem 0x00000000-0x000fffff 64bit pref]
+[    1.062726] pci 0000:00:01.0: PME# supported from D0 D3hot D3cold
+[    1.063202] OF: /soc/pcie@610000000: no iommu-map translation for id 0x8 on (null)
+[    1.067069] pci 0000:00:01.0: bridge configuration invalid ([bus 00-00]), reconfiguring
+[    1.067690] pci 0000:01:00.0: [14e4:43a3] type 00 class 0x028000 PCIe Endpoint
+[    1.068015] pci 0000:01:00.0: BAR 0 [mem 0x00000000-0x00007fff 64bit]
+[    1.068260] pci 0000:01:00.0: BAR 2 [mem 0x00000000-0x003fffff 64bit]
+[    1.068713] pci 0000:01:00.0: supports D1 D2
+[    1.068917] pci 0000:01:00.0: PME# supported from D0 D1 D2 D3hot D3cold
+[    1.069900] pci 0000:01:00.0: Adding to iommu group 0
+[    1.071487] pci 0000:01:00.0: ASPM: default states L1
+[    1.071664] pci_bus 0000:01: busn_res: [bus 01-04] end is updated to 01
+[    1.071784] pci 0000:00:01.0: bridge window [mem 0x7c0000000-0x7c04fffff]: assigned
+[    1.071886] pci 0000:01:00.0: BAR 2 [mem 0x7c0000000-0x7c03fffff 64bit]: assigned
+[    1.071994] pci 0000:01:00.0: BAR 0 [mem 0x7c0400000-0x7c0407fff 64bit]: assigned
+[    1.072097] pci 0000:00:01.0: PCI bridge to [bus 01]
+[    1.072167] pci 0000:00:01.0:   bridge window [mem 0x7c0000000-0x7c04fffff]
+[    1.072252] pci_bus 0000:00: resource 4 [mem 0x620000000-0x7bfffffff pref]
+[    1.072331] pci_bus 0000:00: resource 5 [mem 0x7c0000000-0x7ffffffff]
+[    1.072445] pci_bus 0000:01: resource 1 [mem 0x7c0000000-0x7c04fffff]
+[    1.074860] input: gpio-keys as /devices/platform/gpio-keys/input/input0
+[    1.077134] clk: Disabling unused clocks
+[    1.077205] PM: genpd: Disabling unused power domains
+[    1.077968] Freeing unused kernel memory: 960K
+[    1.078461] Run /init as init process
+[    1.078666]   with arguments:
+[    1.078686]     /init
+[    1.078700]   with environment:
+[    1.078711]     HOME=/
+[    1.078722]     TERM=linux
+[    1.152673] cfg80211: Loading compiled-in X.509 certificates for regulatory database
+[    1.156510] Loaded X.509 cert 'sforshee: 00b28ddf47aef9cea7'
+[    1.157091] Loaded X.509 cert 'wens: 61c038651aabdcf94bd0ac7ff06c7248db18c600'
+[    1.157306] faux_driver regulatory: Direct firmware load for regulatory.db failed with error -2
+[    1.157346] cfg80211: failed to load regulatory.db
+[    1.165228] brcmfmac 0000:01:00.0: of_irq_parse_pci: failed with rc=-22
+[    1.165351] pci 0000:00:01.0: enabling device (0000 -> 0002)
+[    1.165419] brcmfmac 0000:01:00.0: enabling device (0000 -> 0002)
+[    1.274566] brcmfmac: brcmf_fw_alloc_request: using brcm/brcmfmac4350c2-pcie for chip BCM4350/5
+[    1.388633] brcmfmac: brcmf_c_process_txcap_blob: TxCap blob found, loading
+[    1.389789] brcmfmac: brcmf_c_preinit_dcmds: Firmware: BCM4350/5 wl0: Sep 11 2019 21:34:51 version 7.63.81.2 (r840655) FWID 01-113566a8
+[    1.539673] configfs-gadget.hardware-check gadget.0: HOST MAC [MAC]
+[    1.539878] configfs-gadget.hardware-check gadget.0: MAC [MAC]
+[    1.544701] dwc2 20c100000.usbdev: bound driver configfs-gadget.hardware-check
+[    1.700560] dwc2 20c100000.usbdev: new device is high-speed
+[    1.712945] dwc2 20c100000.usbdev: new address 1

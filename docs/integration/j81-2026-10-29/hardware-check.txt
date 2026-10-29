@@ -1,0 +1,72 @@
+hardware-check 2026-10-29T16:21:25Z
+kernel: 7.3.0-rc1-orchard-apple-4k
+model: Apple iPad Air 2 (Wi-Fi)
+compatible: apple,j81 apple,t7001 apple,arm-platform 
+
+== Storage
+[SKIP] no NVMe storage
+
+== PCIe
+  0000:00:01.0 0x106b:0x1002 class 0x060400 driver none
+  0000:01:00.0 0x14e4:0x43a3 class 0x028000 driver brcmfmac
+[PASS] PCIe devices enumerated
+
+== Wi-Fi
+  brcmfmac: brcmf_c_preinit_dcmds: Firmware: BCM4350/5 wl0: Sep 11 2019 21:34:51 version 7.63.81.2 (r840655) FWID 01-113566a8
+[PASS] scan found 32 networks
+Successfully initialized wpa_supplicant
+nl80211: kernel reports: Match already configured
+nl80211: kernel reports: Match already configured
+nl80211: kernel reports: Match already configured
+nl80211: kernel reports: Match already configured
+nl80211: kernel reports: Match already configured
+nl80211: kernel reports: Match already configured
+nl80211: kernel reports: Match already configured
+nl80211: kernel reports: Match already configured
+nl80211: kernel reports: Match already configured
+nl80211: kernel reports: Match already configured
+nl80211: kernel reports: Match already configured
+[PASS] associated after 0s
+udhcpc: started, v1.35.0
+udhcpc: broadcasting discover
+udhcpc: broadcasting select for [LAN-IP], server [LAN-IP]
+udhcpc: lease of [LAN-IP] obtained from [LAN-IP], lease time 86248
+[PASS] DHCP: [LAN-IP]/24
+PING [LAN-IP] ([LAN-IP]): 56 data bytes
+64 bytes from [LAN-IP]: seq=0 ttl=64 time=5.410 ms
+64 bytes from [LAN-IP]: seq=1 ttl=64 time=4.487 ms
+64 bytes from [LAN-IP]: seq=2 ttl=64 time=94.234 ms
+64 bytes from [LAN-IP]: seq=3 ttl=64 time=111.872 ms
+64 bytes from [LAN-IP]: seq=4 ttl=64 time=1.593 ms
+
+--- [LAN-IP] ping statistics ---
+5 packets transmitted, 5 packets received, 0% packet loss
+round-trip min/avg/max = 1.593/43.519/111.872 ms
+[PASS] ping gateway [LAN-IP]
+[SKIP] download: no DOWNLOAD_URL in /etc/hardware-check.conf
+
+== Battery
+  /sys/class/power_supply/battery
+  status=Discharging capacity=100 voltage_now=4292000 current_now=-583000 temp=246
+  status=Discharging capacity=100 voltage_now=4292000 current_now=-583000 temp=246
+  status=Discharging capacity=100 voltage_now=4292000 current_now=-583000 temp=246
+  status=Discharging capacity=100 voltage_now=4292000 current_now=-583000 temp=246
+  status=Discharging capacity=100 voltage_now=4292000 current_now=-583000 temp=246
+  status=Discharging capacity=100 voltage_now=4292000 current_now=-583000 temp=246
+  status=Discharging capacity=100 voltage_now=4292000 current_now=-583000 temp=246
+  status=Discharging capacity=100 voltage_now=4292000 current_now=-583000 temp=246
+  status=Discharging capacity=100 voltage_now=4285000 current_now=-734000 temp=248
+  status=Discharging capacity=100 voltage_now=4285000 current_now=-734000 temp=248
+[PASS] 10 readings without errors
+
+== Display and backlight
+[PASS] display: card0 card0-Unknown-1 version fb0
+[PASS] 20a110000.i2c:pmic@3c:backlight@600: set 511 of 2047, restored 1627
+
+== Kernel log
+[PASS] no IOMMU faults, NVMe timeouts, warnings or oopses
+
+Report: /run/hardware-check.txt, kernel log: /run/dmesg.txt (also at http://10.71.0.1:8080/)
+
+== Keys
+[FAIL] keys: no input events

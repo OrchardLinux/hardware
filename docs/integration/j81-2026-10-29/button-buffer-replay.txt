@@ -1,0 +1,5 @@
+Terminated
+       96 /run/j81-key-sample.bin
+        0 /run/j81-key-sample-stream.txt
+      288 /run/j81-key-sample-eof.txt
+      384 total
