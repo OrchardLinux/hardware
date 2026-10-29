@@ -1,7 +1,7 @@
 hardware-check 2026-10-29T16:21:25Z
 kernel: 7.3.0-rc1-orchard-apple-4k
 model: Apple iPad Air 2 (Wi-Fi)
-compatible: apple,j81 apple,t7001 apple,arm-platform 
+compatible: apple,j81 apple,t7001 apple,arm-platform
 
 == Storage
 [SKIP] no NVMe storage

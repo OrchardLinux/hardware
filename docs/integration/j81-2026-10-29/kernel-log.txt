@@ -21,7 +21,7 @@
 [    0.000000] On node 0, zone DMA: 12066 pages in unavailable ranges
 [    0.000000] percpu: Embedded 32 pages/cpu s92056 r8192 d30824 u131072
 [    0.000000] pcpu-alloc: s92056 r8192 d30824 u131072 alloc=32*4096
-[    0.000000] pcpu-alloc: [0] 0 [0] 1 [0] 2 
+[    0.000000] pcpu-alloc: [0] 0 [0] 1 [0] 2
 [    0.000000] Detected PIPT I-cache on CPU0
 [    0.000000] CPU features: detected: Spectre-v2
 [    0.000000] CPU features: detected: Spectre-v4
