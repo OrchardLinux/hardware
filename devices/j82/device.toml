@@ -1,0 +1,59 @@
+# iPad Air 2 (Cellular) — J82: hardware identity, boot assets and firmware recipe.
+# iPad Air 2 support comes from Martin Puškáč's port (mattonik/ipad-nixos), handed to Orchard
+# by micro23 (micro23/ipadair2-omarchy).
+schema = 1
+kind = "hardware.device"
+
+[device]
+profile = "j82"
+name = "iPad Air 2 (Cellular)"
+apple_products = ["iPad5,4"]
+dt_compatible = ["apple,j82"]
+
+# BDID: ApChipID/ApBoardID of the j82ap identities in the 19H422 (iPadOS 15.8.8) BuildManifest.plist.
+[match.dfu]
+chip = 0x7001
+board = 0x02
+
+# USB product of the Orchard recovery system ("<Board> Recovery").
+[match.linux]
+product = "J82 Recovery"
+
+[boot]
+methods = ["checkm8-pongo"]
+
+[kernel]
+platform = "apple-4k"  # kernel/series/apple-4k, kernel/configs/apple-4k: A8X has no 16 KiB pages
+dtb = "t7001-j82"       # arch/arm64/boot/dts/apple/<dtb>.dtb
+
+[firmware]
+recipe = "firmware.json" # Relative to this device.toml; public recipe, not firmware bytes.
+
+[support]
+install = false # No storage driver for the A8X's NVMe (ANS1) yet: RAM boot only.
+status = "experimental"
+caveats = [
+  "RAM boot only: the internal storage is not supported yet.",
+  "Wi-Fi module rieslingb (BCM4350); the cellular modem is not supported.",
+  "Untested: Martin Puškáč's port was validated on the Wi-Fi model (J81) only; the J82 differs at least in its Wi-Fi module (rieslingb) and the modem.",
+]
+wifi = false # True once Wi-Fi is validated on Orchard's stack.
+usb_serial = true
+usb_network = true
+
+# States: working, partial, untested, missing, none (features.toml).
+[features]
+display = "untested"
+touch = "missing"
+wifi = "untested"
+bluetooth = "missing"
+storage = "missing"
+battery = "untested"
+charging = "missing"
+backlight = "untested"
+buttons = "untested"
+audio = "missing"
+camera = "missing"
+cellular = "missing"
+suspend = "missing"
+gpu = "missing"
