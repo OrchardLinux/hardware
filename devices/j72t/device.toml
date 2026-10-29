@@ -1,0 +1,60 @@
+# iPad 5 (Cellular) (J72T, S8003 TSMC): hardware identity, boot assets and firmware recipe.
+# iPad 5 support comes from Berkay Kösebay's port (brkosebay/omarchy-ipad5, OrchardLinux/hardware#6).
+schema = 1
+kind = "hardware.device"
+
+[device]
+profile = "j72t"
+name = "iPad 5 (Cellular)"
+apple_products = ["iPad6,12"]
+dt_compatible = ["apple,j72t"]
+
+# BDID: ApChipID/ApBoardID of the j72tap identities in the 20H350 (iPadOS 16.7.10) BuildManifest.plist.
+[match.dfu]
+chip = 0x8003
+board = 0x12
+
+# USB product of the Orchard recovery system ("<Board> Recovery").
+[match.linux]
+product = "J72t Recovery"
+
+[boot]
+methods = ["checkm8-pongo"]
+# Not published yet: no j72t launcher release exists. Mirrors the j71b URL pattern.
+launch_manifest = "https://github.com/OrchardLinux/hardware/releases/latest/download/j72t-apple-launcher.boot.toml"
+
+[kernel]
+platform = "apple-16k" # kernel/series/apple-16k, kernel/configs/apple-16k
+dtb = "s8003-j72t"     # arch/arm64/boot/dts/apple/<dtb>.dtb
+
+[firmware]
+recipe = "firmware.json" # Relative to this device.toml; public recipe, not firmware bytes.
+
+[support]
+install = true
+status = "experimental"
+caveats = [
+  "Not yet tested on Orchard's stack. Wi-Fi, Bluetooth, touch, storage, battery, charging, audio, display and H.264 decoding were validated on an iPad 5 (J71t) in Berkay Kösebay's port.",
+  "Cellular has no Linux driver.",
+  "Charging: Apple chargers and USB-C sources up to 2.4 A; computers per the host's own grant; other sources 500 mA.",
+]
+wifi = true
+usb_serial = true
+usb_network = true
+
+# States: working, partial, untested, missing, none (features.toml).
+[features]
+display = "untested"
+touch = "untested"
+wifi = "untested"
+bluetooth = "untested"
+storage = "untested"
+battery = "untested"
+charging = "untested"
+backlight = "untested"
+buttons = "untested"
+audio = "untested"
+camera = "missing"
+cellular = "missing"
+suspend = "missing"
+gpu = "missing"
