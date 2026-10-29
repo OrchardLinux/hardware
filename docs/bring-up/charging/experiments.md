@@ -363,7 +363,9 @@ tester, the iOS values, and the class trace.
   - USB 2.0 suspend current is far below 500 mA. PR #6 granted 500 mA to a
     suspended host and the review rejected it.
 - **Prerequisite**: suspend and resume work on the device without charging
-  code. On J71b they did not work reliably, so this is blocked there.
+  code. On J71b they did not work reliably, so this is blocked there. The
+  event mask must be writable ([CH-15](#ch-15)): only wake events may pull
+  the PMU line while asleep.
 - **Equipment**: the device, a Mac, an Apple brick.
 - **Time**: 2 h. **Risk**: low at the default limit.
 
@@ -643,15 +645,76 @@ Send back: code → meter mA, meter V, gauge mA, pack temperature.
 
 ---
 
+<a id="ch-15"></a>
+## CH-15: Writing the D2365 event mask
+
+- **Devices**: J71b; every D2365 board.
+- **Why**: The PMU event controller masks every event at probe and
+  unmasks only those with a consumer, as iPadOS does, and suspend must
+  leave only wake events unmasked. On J71b a plain I²C write to `0x1c0`
+  reads back unchanged (`0x33` before and after), so none of that takes
+  effect: Linux runs with the mask iBoot left, which happens to unmask
+  the charger's events. Unknowns:
+  - Is `0x1c0` the mask at all on J71b, or only a readable copy?
+  - Does the PMIC need an unlock or a different access (a bulk write of
+    the whole block, a write-enable register, SPMI-style framing)?
+  - What iPadOS's D2365 driver writes, in which order (firmware: the
+    vtable used for the event table in [pmu-events](pmu-events.md)).
+- **Equipment**: the device, a RAM boot with `i2c-dev` and `i2ctransfer`.
+- **Time**: A 2 h offline, B 1 h. **Risk**: low; masking events only
+  silences the PMU line.
+
+Steps:
+
+A. Offline: find the mask writes in the D2365 driver of the 21H461
+   kernelcache (address, width, any unlock sequence before them).
+B. Live: replay that sequence for one unused event byte, read back,
+   restore. Then mask an event the charger uses (72) and check that an
+   unplug no longer pulls GPIO38 low.
+
+Send back: the write sequence and the readbacks.
+
+---
+
+<a id="ch-16"></a>
+## CH-16: Apple host grant and Mac port timing
+
+- **Devices**: J71b.
+- **Why**: Two results from the J71b RAM test (2026-10-29):
+  - The driver answers the Apple host protocol's current request and
+    passes the grant through `vbus_draw`, but macOS sent only 100 mA.
+    The 2400 mA override seen earlier ([usb-c.md](usb-c.md)) came with a
+    different gadget. Does macOS grant only to some USB product IDs or
+    descriptors, or only after a vendor request we do not send?
+  - A Mac port classified as CDP (1500 mA) when the early BC1.2 check ran
+    before enumeration, and as a plain USB host (500 mA) when enumeration
+    came first. Should a host session keep a CDP result taken just after
+    it starts, or should the check run before the gadget connects?
+- **Equipment**: a Mac with USB-C and the Apple USB-C to Lightning cable, a
+  USB analyser or `ioreg` on the Mac.
+- **Time**: 2 h. **Risk**: low.
+
+Steps:
+
+1. Record the gadget's descriptors and the vendor requests macOS sends
+   (`ioreg -l -w0`, USB logging) for the current gadget and for the one
+   that received 2400 mA.
+2. Ten replugs into the same port: CDP or host, and the time from attach
+   to enumeration each time.
+
+Send back: requests per gadget, and the ten classifications with timings.
+
+---
+
 ## Per-device menu
 
 <a id="menu-j71b"></a>
 **iPad 6 Wi-Fi (J71b).** The reference board.
 - Do [CH-03](#ch-03) first.
 - Then [CH-10](#ch-10), [CH-12](#ch-12), [CH-11](#ch-11), [CH-09](#ch-09),
-  [CH-14](#ch-14), [CH-04](#ch-04), [CH-07](#ch-07).
+  [CH-14](#ch-14), [CH-04](#ch-04), [CH-07](#ch-07), [CH-16](#ch-16).
 - With a jailbroken iOS: [CH-13](#ch-13), [CH-05](#ch-05).
-- [CH-06](#ch-06) once suspend works.
+- [CH-15](#ch-15) before suspend, then [CH-06](#ch-06) once suspend works.
 
 <a id="menu-j72b"></a>
 **iPad 6 cellular (J72b).** *Inferred*: same charging hardware as J71b.

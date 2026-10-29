@@ -4,7 +4,9 @@
 
 - The D2365 keeps 240 event bits in a 30-byte block at `0x140`. Event *n* is
   byte *n*/8, bit *n*%8.
-- Masks are in the matching block at `0x1c0`.
+- Masks are in the matching block at `0x1c0`. A plain I²C byte write there
+  reads back unchanged (J71b, 2026-10-29), so Linux cannot mask events yet
+  and runs with the mask iBoot leaves ([CH-15](experiments.md#ch-15)).
 - Any unmasked pending event drives AP GPIO38 low. On J71b the ADT gives the
   PMU interrupt as GPIO38 with flags 1.
 - Reading the 30-byte block acknowledges everything pending and releases
@@ -37,6 +39,7 @@ edge (line low).
 | 16, 40–43, 72, 73 | Clear in iPadOS's initial mask (polarity and full board setup not derived from this) | Firmware |
 | 48–71 | PMIC GPIO 0–23 (event − 48 = GPIO index) | Firmware (D2365 vtable `0xfffffff006fc18f0` +0x590 → `…6b7f3a0`); ADT pairs Hall GPIO0/10 with events 48/58 |
 | 56, 59 | PMIC GPIO8, GPIO11. Present on a stable connection, quiet or with 8 MiB USB traffic, without a new GPIO38 edge | Firmware, hardware |
+| 73 | Also latches every few seconds while the input current approaches 2 A, with the same source attached. Not a source event: iPadOS's charger does not subscribe to it, and Linux leaves it out | Hardware (J71b RAM test, 2026-10-29), firmware |
 | 72, 73 (+76, 86) | Source detach | Hardware: every no-ADC unplug; first seen as the only charger-callback bit on A1357 ↔ Mac moves |
 | 72, 73 (+78, 80, 86) | Source reattach | Hardware |
 | 176 | ADC conversion complete | Firmware (registration `0x1601`, callback `…6b7c3b4`); hardware (one ADC-only conversion: new 176, nothing else new) |
