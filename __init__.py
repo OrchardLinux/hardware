@@ -52,14 +52,14 @@ def loader(profile):
 
     `orchard launch` needs only these two: m1n1 then reads the device's boot
     partition (docs/boot-contract.md), so launching depends on no distro and
-    on nothing an install left on the host. A wheel build places them in
-    loaders/ (loaders/pongo.bin, loaders/<profile>/m1n1.bin); a source
-    checkout has none and the CLI builds them instead. Returns
-    {'pongo': Path, 'm1n1': Path} or None.
+    on nothing an install left on the host. Both are built once for every
+    Apple device (boot/m1n1/build apple, boot/quiet/build-pongo.py); the
+    published wheel carries them in loaders/, a source checkout has none and
+    the CLI builds them instead. Returns {'pongo': Path, 'm1n1': Path} or None.
     """
     device_path(profile)
     root = Path(__file__).parent / 'loaders'
-    files = {'pongo': root / 'pongo.bin', 'm1n1': root / profile / 'm1n1.bin'}
+    files = {'pongo': root / 'pongo.bin', 'm1n1': root / 'm1n1.bin'}
     if all(path.is_file() and not path.is_symlink() for path in files.values()):
         return files
     return None

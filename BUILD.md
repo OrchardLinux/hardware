@@ -41,7 +41,7 @@ Both roots get the same modules, public firmware data and integrity list. Only t
 
 ## Publication
 
-`orchard launch` starts a device from its boot partition with only Pongo and the storage-capable m1n1. A published wheel carries them as `loaders/pongo.bin` and `loaders/<profile>/m1n1.bin` (`orchard_hardware.loader(profile)`), so launching needs nothing from a distro or an earlier install; without them the CLI builds both from this source.
+`orchard launch` starts a device from its boot partition with only Pongo and the storage-capable m1n1. Both are built once for every Apple device; the release workflow's `assets` job adds the quiet m1n1 and Pongo it built to the published wheel as `loaders/m1n1.bin` and `loaders/pongo.bin` (`ci/add_loaders.py`, `orchard_hardware.loader(profile)`), so launching needs nothing from a distro or an earlier install. A source checkout has none, and the CLI builds both from the source.
 
 Upload the hardware wheel to its immutable `vVERSION` GitHub release. Publish the compatible CLI pair using the [CLI release instructions](https://github.com/OrchardLinux/cli/blob/main/docs/releases.md). Retain upstream licenses and corresponding source/build inputs when distributing compiled components.
 
