@@ -30,6 +30,15 @@ Pass:
 
 Send back: `linux.py.log`, and whether m1n1's console stayed readable on screen.
 
+**Result (J71b, 2026-10-29): passed.**
+- The m1n1 proxy enumerated on A10 (dwc2) and took the kernel, DTB and initramfs.
+- `kboot_prepare_dt` ran the Orchard fill-ins: NVMe HMB `0x87ee00000` size `0x1200000`, CPU 1 release address.
+- "J71b Recovery" came up with kernel `7.3.0-rc1-orchard-apple`, our boot arguments and 2 CPUs.
+- The DT has `local-mac-address` (6 B), `brcm,cal-blob` (1780 B) and `local-bd-address` (6 B), the same sizes as the RAM-boot record in `kernel/REVIEW.md`.
+- The storage endpoint (`106b:2002`) enumerated at 8 GT/s. The recovery binds NVMe only when an operation needs it, so it wasn't tested here.
+- The m1n1 framebuffer log was not checked.
+- A cosmetic glitch: `linux.py` ends with a `termios` traceback when run without a TTY, after the kernel jump.
+
 ## BL-01
 
 **T8010 PCIe port 0 link from m1n1, read-only, over the proxy.** Prototype in Python
