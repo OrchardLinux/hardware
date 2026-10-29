@@ -1,6 +1,6 @@
 # J71b recovery
 
-Public recovery includes all modules, indexes, device scripts, a Python runtime from the verified public Arch base, and static BusyBox/Dropbear tools. Private firmware is transferred only after fresh ADT retrieval.
+Public recovery includes all modules, indexes, device scripts, a Python runtime from the verified public Arch base, and static BusyBox/Dropbear tools. The same producer also builds static `wpa_supplicant`, `wpa_cli` and `iw` (WPA2; libnl, internal crypto) for Wi-Fi in RAM images and, later, the recovery. Private firmware is transferred only after fresh ADT retrieval.
 
 - `python -m orchard_hardware.image.prepare_runtime`: stage public files using explicit base/module/root-receipt and image policy inputs.
 - `python -m orchard_hardware.image.recovery`: pack the runtime and assemble loader, bootargs, DTB, kernel and initramfs.

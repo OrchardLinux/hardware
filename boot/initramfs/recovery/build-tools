@@ -15,7 +15,10 @@ import urllib.request
 lock = json.loads(pathlib.Path(sys.argv[1]).read_text())
 work = pathlib.Path(sys.argv[2])
 for component, filename in (('busybox', 'busybox.deb'),
-                            ('dropbear', 'dropbear.tar.bz2')):
+                            ('dropbear', 'dropbear.tar.bz2'),
+                            ('libnl', 'libnl.tar.gz'),
+                            ('wpa_supplicant', 'wpa_supplicant.tar.gz'),
+                            ('iw', 'iw.tar.xz')):
     item = lock[component]
     target = work / filename
     if target.exists():

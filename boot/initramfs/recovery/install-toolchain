@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-packages=(build-essential bzip2 ca-certificates dpkg musl-tools)
+packages=(bison build-essential bzip2 ca-certificates dpkg file flex linux-libc-dev musl-tools pkg-config xz-utils)
 if [[ ${1:-} == --packages ]]; then printf '%s\n' "${packages[@]}"; exit 0; fi
 apt-get update
 apt-get install -y --no-install-recommends "${packages[@]}"
