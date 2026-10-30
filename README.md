@@ -63,6 +63,7 @@ distribution's own scripts or `orchard python -m unittest discover -s tests`. Se
 [BUILD.md](BUILD.md) for building components directly.
 
 - [Kernel producers](kernel/README.md)
+- [Device bring-up](docs/device-bring-up.md)
 - [RAM builds and development](docs/ram-development.md)
 - [Firmware recipes](docs/firmware-recipes.md)
 - [Device operation protocol](docs/device-protocol.md)
