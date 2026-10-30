@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "orchard-cli"
+version = "0.1.11"
+description = "Apple device Linux boot and installation tooling"
+readme = "README.md"
+license = "GPL-2.0-or-later AND MIT"
+license-files = ["LICENSE", "NOTICE", "LICENSES/*"]
+requires-python = ">=3.11"
+dependencies = ["orchard-hardware>=0.1.11,<0.2", "jsonschema>=4.25,<5"]
+
+[project.urls]
+Repository = "https://github.com/OrchardLinux/cli"
+Documentation = "https://github.com/OrchardLinux/cli#documentation"
+Issues = "https://github.com/OrchardLinux/cli/issues"
+
+[project.scripts]
+orchard = "orchard_cli.command:main"
+orch = "orchard_cli.command:main"
+
+[tool.setuptools]
+include-package-data = false
+packages = ["orchard_cli", "orchard_cli.apple", "orchard_cli.transports", "orchard_cli_schemas"]
+package-dir = {"" = "src", orchard_cli_schemas = "schemas"}
+
+[tool.setuptools.package-data]
+orchard_cli = ["py.typed", "usb-session"]
+orchard_cli_schemas = ["v1/*.json"]
+
+[dependency-groups]
+dev = ["mypy==1.18.2"]
+
+[tool.mypy]
+python_version = "3.11"
+mypy_path = "src"
+files = ["src/orchard_cli/contracts.py", "src/orchard_cli/devices.py", "src/orchard_cli/apple/device.py", "src/orchard_cli/service.py", "src/orchard_cli/command.py", "tests/typecheck_adapter.py"]
+check_untyped_defs = true
+follow_imports = "silent"
+ignore_missing_imports = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = ["orchard_cli.contracts", "orchard_cli.devices", "orchard_cli.apple.device"]
+disallow_untyped_defs = true
