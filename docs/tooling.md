@@ -27,6 +27,19 @@ Inside orchard, code is split by where it runs and how it is used:
 
 There is no wheel: orchard runs from a checkout. One version for the repository (0.2.0); releases publish component bundles, the loaders `m1n1.bin` and `pongo.bin`, sources and checksums.
 
+## Getting started (done)
+
+`git clone`, `./setup`, `orchard run examples/minimal-boot`. `./setup` (and `orchard
+setup`) shows every host requirement as ready, todo or yours, asks once, and can be
+rerun until everything is ready; `orchard doctor` shows the same and changes
+nothing. The requirements are one list shared with the installer's boot tools
+(`setup-host`): OpenSSH, libusb, palera1n and Linux USB permissions for booting;
+git, Podman (and its machine on macOS), the `orchard` command and PATH for building.
+Packages come from glu, then Homebrew on macOS (neither is installed for you), or
+apt, dnf or pacman. The `orchard` command links to mainline's launcher, so it
+does not depend on any clone. Pongo comes from the latest release while its recipe
+is unchanged, so most builds need no Xcode.
+
 ## Development: which orchard runs (done)
 
 `bin/orchard` is the `orchard` on PATH. Walking up from the current directory, the first match wins:
@@ -43,11 +56,10 @@ Parallel work gets one orchard worktree per branch (`git worktree add ../orchard
 
 | File | Committed | Contains |
 |---|---|---|
-| `payload.toml` beside a payload's `init` | yes | the payload's own settings, currently `transport = false`; commented, since the examples teach the system |
+| `payload.toml` beside a payload's `init` | yes | the payload's own settings: `transport`, `modules`, `firmware`; commented, since the examples teach the system |
 | `orchard.local.toml` | never | this checkout's choices: `orchard = "PATH"`, `device = "BOARD"` |
-| `~/.config/orchard/config.toml` | — | your own default: `device = "BOARD"` |
 
-No repository names a board. The board is `--device`, else `orchard.local.toml`, else the user config; builds never probe USB. A distribution release that is one board's (today's `release/j71b`) names that board itself until the device layer generalizes it.
+No repository and no per-person setting names a board: many contributors work on several. A payload serves every board of one platform (`out/PLATFORM/`); `orchard run` takes the platform from the attached board, builds what is missing and adds that board's firmware as its own layer from the private cache; `orchard build` takes it from `--platform`, `--device`, `orchard.local.toml` or the attached board (listing USB devices only). A distribution release that is one board's (today's `release/j71b`) names that board itself until the device layer generalizes it.
 
 ## Distributions (done)
 
@@ -73,7 +85,21 @@ Not used: Docker/BuildKit layers are linear; Nix would rebuild every patch varia
 
 Recipes run `$ORCHARD_PYTHON` (default `python3`), which `orchard` sets to its own interpreter. Python 3.11 is the minimum; CI tests 3.11 and 3.14.
 
-## Next: the installer and the user's orchard
+## Next: distributions as projects, the device layer and the installer
+
+One step, because all three need a distribution build that does not depend on the
+board:
+
+- **Device layer:** device files out of the distributions (`system/j71b`,
+  `release/j71b`) into orchard, so a distribution builds one image per platform.
+- **A distribution as a project:** `distro.toml` names its build entry. In a
+  distribution checkout, `orchard build` builds the whole image (root filesystem,
+  recovery, release directory with `index.toml`), and `orchard run` builds what is
+  missing and starts the recovery from RAM without installing; `orchard install`
+  stays separate.
+- **The installer and the user's orchard,** below.
+
+## The installer and the user's orchard
 
 Users install today with the released Orchard 0.1.10 through omarchy-a's `install.sh`; that stays until this step.
 
@@ -86,11 +112,12 @@ Users install today with the released Orchard 0.1.10 through omarchy-a's `instal
 
 ## Backlog
 
-- Device files out of the distributions (`system/j71b`, `release/j71b`) into a device layer.
+- `orchard run` in a distribution boots the locally built system over NFS root (#30) without installing: the desktop's edit-and-run loop.
+- Prebuilt kernel layers from CI, first for a newcomer's first build, which otherwise compiles Linux.
 - Keep the kernel tree inside the Podman VM (the largest remaining build cost is `make` walking the tree through the host file share).
 - A `kernel/build` shortcut when tree, config, image and series match the last build; skip the image check when its inputs match.
 - Warn about hand edits in the shared kernel tree; they are built silently and reach every checkout with the same series.
-- Prebuilt kernel layers from CI, mainly for upstream pin bumps.
+- Prebuilt kernel layers also for upstream pin bumps, which are always full builds.
 - Several kernel trees per platform, if checkouts waiting for each other becomes a problem.
 - Converter steps next to the device data; IOKit USB on macOS (no libusb); no checkra1n dependency; the iOS app installer with APFS resize.
 

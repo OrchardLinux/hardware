@@ -2,28 +2,34 @@
 
 ```sh
 cd examples/minimal-boot
-orchard build --device j71b
 orchard run
 ```
 
 `orchard build` and `orchard run` take the payload directory, by default the current
 one. See the [README](../README.md#develop) for which orchard checkout runs.
 
-## Which board
+## Platforms and boards
 
-The board is the developer's choice, never a repository's: `--device NAME`, else
-`device` in the nearest `orchard.local.toml` (searched upwards to the repository
-root; this checkout only, never committed), else `device` in
-`~/.config/orchard/config.toml`. Without any, the build stops and says so. No
-registered device description is required. Distro-owned producers can use
-`orchard.build.configured_device(directory)` for the same choice. Installation
-does not read it and still rejects incompatible devices.
+A payload serves every board of one platform: the platform's kernel, each board's
+DTB (m1n1 picks the booted board's), one m1n1, Pongo and the tools. It goes to
+`out/PLATFORM/`. `orchard run` builds what is missing or outdated for the attached
+board, then boots it; `--no-build` boots the last build. `orchard build` takes the
+platform from `--platform`, `--device BOARD`, `device` in the nearest
+`orchard.local.toml` (searched upwards to the repository root; this checkout only,
+never committed) or the attached board, and otherwise lists the platforms and
+their boards. No repository and no per-person setting names a board. Distro-owned
+producers can use `orchard.build.configured_device(directory)`. Installation does
+not read it and still rejects incompatible devices.
 
 ## payload.toml
 
-An optional `payload.toml` beside `init` describes the payload itself. It currently
-accepts `transport = false`, which leaves the USB session helper (network, SSH) out.
-It names no board.
+An optional `payload.toml` beside `init` describes the payload itself, never its board:
+
+- `transport = false` leaves the USB session helper (network, SSH) out;
+- `modules = true` stages the kernel's modules without loading them;
+- `firmware = true` adds the booted board's firmware: `orchard run` reads it from
+  Apple's restore image once, keeps it in Orchard's private cache and adds it as its
+  own initramfs layer. Firmware never lands in the project's `out/`.
 
 ## Directory content
 
@@ -35,12 +41,10 @@ CLI's `rootfs/` input are currently rejected, not silently dereferenced.
 
 The CLI supplies BusyBox, the hardware's other static tools (Dropbear, and
 `wpa_supplicant`, `wpa_cli` and `iw` for Wi-Fi), the device kernel and boot
-framing, then writes artifacts to `DIRECTORY/out/`. Modules are omitted by default;
-`--modules` includes matching modules for manual use without automatically loading
-them. Firmware is omitted by default; `--firmware` includes every output of the
-device's firmware recipe at its destination (`lib/firmware/…`), produced and cached
-as the installer does: the first build downloads the device's IPSW. Component override
-flags: `--hardware`, `--cache`, `--kernel-dir`, `--busybox`, `--loader`, `--pongo`.
+framing, then writes artifacts to `DIRECTORY/out/PLATFORM/`; `payload.toml` decides
+about modules and firmware (see above). Pongo is the latest release's when this
+checkout's Pongo recipe (`boot/quiet`) is unchanged since, so building needs no Xcode;
+a changed recipe is built on macOS. Component override flags: `--hardware`, `--cache`, `--kernel-dir`, `--busybox`, `--loader`, `--pongo`.
 No parent-directory layout is required: `examples/`, `use_cases/`, a deeply nested
 folder or an unrelated absolute path all work. Hardware resources come from the
 hardware data and recipes of the orchard checkout it runs from,

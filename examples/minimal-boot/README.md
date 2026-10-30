@@ -6,13 +6,12 @@ No build/run wrapper scripts or example registration.
 
 ```sh
 cd examples/minimal-boot
-orchard build --device j71b
 orchard run
 ```
 
-`orchard` runs the checkout it is started in (see the [README](../../README.md#develop)).
-The board is yours to choose: `--device`, or `device` in `orchard.local.toml`
-(this checkout) or `~/.config/orchard/config.toml` (all of yours).
+`orchard run` builds what is missing for the board in DFU mode, then boots it.
+The payload serves every board of that board's platform; see the
+[README](../../README.md#develop) for which orchard checkout runs.
 
 ## What gets built
 
@@ -22,8 +21,8 @@ The board is yours to choose: `--device`, or `device` in `orchard.local.toml`
 
 To add a program, put an executable at `rootfs/usr/bin/my-tool`. To change startup,
 edit `init`. There is no Orchard device agent, RPC protocol, installer, network
-service or storage mount. Kernel modules are omitted unless you pass `--modules`;
-that stages matching modules but does not activate them.
+service or storage mount. Kernel modules are omitted unless `payload.toml` says
+`modules = true`; that stages matching modules but does not activate them.
 
 The CLI handles compilation, caching, packing and uploading directly.
 
@@ -59,7 +58,7 @@ hardware. Upload success is not proof of Linux readiness.
 
 - `~/.cache/orchard/`: shared upstream Git objects, immutable built components, the
   kernel tree per platform (`kernel-work/`) and the compiler cache, for every checkout.
-- This directory's `out/`: its own boot payload and local receipt.
+- This directory's `out/PLATFORM/`: its own boot payload and local receipt, per platform.
 
 `XDG_CACHE_HOME` is respected; `ORCHARD_CACHE_DIR` or `--cache DIR` overrides the
 cache root. Identical inputs in another checkout reuse the built kernel without
