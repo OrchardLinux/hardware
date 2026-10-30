@@ -103,14 +103,14 @@ def build_directory(directory, *, hardware=None, cache=None, kernel=None,
                     firmware=False):
     """Build any DIRECTORY/init plus optional DIRECTORY/rootfs/; no layout convention.
 
-    Unless orchard.toml says transport = false, the payload also gets the USB
+    Unless payload.toml says transport = false, the payload also gets the USB
     session helper (network, SSH; see ram_session) for its /init to start.
     """
     directory = Path(directory).expanduser().resolve()
-    settings = build.configured(directory) or {}
-    device = device if device is not None else settings.get('device')
+    settings = build.payload_settings(directory)
+    device = build.resolve_device(directory, device)
     if device is None:
-        raise ValueError('No device selected: add device = "<board>" to orchard.toml')
+        raise ValueError(build.NO_DEVICE)
     if hardware is None:
         from .hardware import ROOT
         hardware = ROOT
@@ -140,7 +140,7 @@ def build_directory(directory, *, hardware=None, cache=None, kernel=None,
         from . import ram_session
         for destination, source in ram_session.payload_files().items():
             if destination in files:
-                raise ValueError(f'rootfs/ provides {destination}; set transport = false to supply your own')
+                raise ValueError(f'rootfs/ provides {destination}; set transport = false in payload.toml to supply your own')
             files[destination] = source
     if firmware:
         from . import firmware as firmwares

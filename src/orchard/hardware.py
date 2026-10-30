@@ -1,6 +1,7 @@
 """The hardware data of this checkout: device descriptors, features, firmware recipes, loaders."""
 from pathlib import Path
 import re
+import subprocess
 import tomllib
 
 # The repository root: devices/, kernel/, boot/ and schemas/ sit beside src/.
@@ -63,3 +64,20 @@ def loader(profile):
     if all(path.is_file() and not path.is_symlink() for path in files.values()):
         return files
     return None
+
+
+def revision():
+    """The orchard commit this checkout is at, for a release's build receipt.
+
+    {'commit': SHA, 'modified': bool}; modified means the checkout differed
+    from that commit, so the commit alone does not reproduce the build.
+    """
+    def git(*arguments):
+        return subprocess.run(['git', '-C', str(ROOT), *arguments], capture_output=True,
+                              text=True, check=True).stdout.strip()
+    try:
+        commit = git('rev-parse', 'HEAD')
+        modified = bool(git('status', '--porcelain', '--untracked-files=no'))
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise ValueError(f'{ROOT} is not an orchard Git checkout; its revision is unknown') from error
+    return {'commit': commit, 'modified': modified}

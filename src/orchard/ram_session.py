@@ -1,7 +1,7 @@
 """Shell, commands and file transfer for a running RAM payload.
 
 `orchard build` adds the usb-session helper and this host's RAM key to every
-payload unless orchard.toml says transport = false. The device's host key is
+payload unless payload.toml says transport = false. The device's host key is
 generated per boot and pinned over USB serial, which is physical and trusted.
 SSH carries everything else. Without SSH, push and pull fall back to
 length-prefixed serial transfers checked by SHA-256.
