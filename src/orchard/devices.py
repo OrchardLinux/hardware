@@ -15,10 +15,10 @@ def load(profile: Optional[str] = None) -> Adapter:
     from . import hardware
     from .apple.device import Device
     if profile is None:
-        from .build import configured_device
+        from .build import NO_DEVICE, configured_device
         profile = configured_device(Path.cwd())
         if profile is None:
-            raise ValueError('No device selected: add device = "<board>" to orchard.toml')
+            raise ValueError(NO_DEVICE)
     if profile not in profiles():
         raise ValueError('Hardware support is not installed for ' + profile)
     adapter = Device(hardware.device(profile))

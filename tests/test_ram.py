@@ -3,6 +3,7 @@ from contextlib import nullcontext
 import gzip
 import io
 import json
+import os
 from pathlib import Path
 import shutil
 import struct
@@ -22,8 +23,11 @@ class RamTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.base = Path(temporary.name).resolve()
-        # Projects name their device; nothing defaults to one.
-        (self.base / 'orchard.toml').write_text('device = "j71b"\n')
+        # The board is the developer's choice, here this checkout's local file.
+        (self.base / 'orchard.local.toml').write_text('device = "j71b"\n')
+        environment = patch.dict(os.environ, {'XDG_CONFIG_HOME': str(self.base / 'config-home')})
+        environment.start()
+        self.addCleanup(environment.stop)
         self.hardware = hardware_data.ROOT
         self.kernel = self.base / 'kernel'
         modules = self.kernel / 'lib/modules/test-release'
@@ -380,7 +384,7 @@ class RamTests(unittest.TestCase):
         upload.assert_not_called()
 
     def test_project_device_selects_recipe_dtb_and_payload_receipt(self):
-        (self.base / 'orchard.toml').write_text('device = "experimental"\n')
+        (self.base / 'orchard.local.toml').write_text('device = "experimental"\n')
         for override, expected in ((None, 'experimental'), ('other-board', 'other-board')):
             with self.subTest(override=override):
                 dtb = self.kernel / (expected + '.dtb')
@@ -404,7 +408,7 @@ class RamTests(unittest.TestCase):
         self.assertEqual(compose.call_args.kwargs['device'], 'experimental')
 
     def test_invalid_project_config_fails_before_build_or_receipt_changes(self):
-        (self.base / 'orchard.toml').write_text('device = [')
+        (self.base / 'orchard.local.toml').write_text('device = [')
         self.output.mkdir()
         receipt = self.output / 'build.json'
         receipt.write_text('last successful receipt')
@@ -447,7 +451,7 @@ class RamTests(unittest.TestCase):
         public = (self.base / 'home/private/ram-ssh/id_ed25519.pub').read_bytes()
         self.assertIn(public, archive)
         self.assertNotIn((self.base / 'home/private/ram-ssh/id_ed25519').read_bytes(), archive)
-        (example / 'orchard.toml').write_text('device = "j71b"\ntransport = false\n')
+        (example / 'payload.toml').write_text('transport = false\n')
         with patch.object(build, 'prepare_components', return_value=self.components):
             ram.build_directory(example, hardware=self.hardware)
         archive = gzip.decompress((example / 'out/initramfs.cpio.gz').read_bytes())

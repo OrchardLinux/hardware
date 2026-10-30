@@ -1,24 +1,29 @@
 # Local RAM-boot development
 
 ```sh
-orchard build examples/minimal-boot
-orchard run examples/minimal-boot
+cd examples/minimal-boot
+orchard build --device j71b
+orchard run
 ```
 
-In an editable distro workspace, use its root `./orchard` launcher to select
-local CLI/hardware sources and prepare Python without activating an environment.
-The workspace `.venv` can also be selected by an editor for bare `orchard` commands.
+`orchard build` and `orchard run` take the payload directory, by default the current
+one. See the [README](../README.md#develop) for which orchard checkout runs.
 
-## Default device recipe
+## Which board
 
-Put `device = "j71b"` in the repository's `orchard.toml` to select its default
-build recipe. RAM builds use the nearest config at or above the experiment,
-without crossing a Git repository boundary. `orchard build DIRECTORY --device NAME`
-overrides it; without a config the existing `j71b` default remains. No registered
-device description is required. The file currently accepts only `device`.
-Distro-owned producers can use `orchard.build.configured_device(project_directory)`
-for the same default. Installation does not read this build setting and still
-rejects incompatible devices.
+The board is the developer's choice, never a repository's: `--device NAME`, else
+`device` in the nearest `orchard.local.toml` (searched upwards to the repository
+root; this checkout only, never committed), else `device` in
+`~/.config/orchard/config.toml`. Without any, the build stops and says so. No
+registered device description is required. Distro-owned producers can use
+`orchard.build.configured_device(directory)` for the same choice. Installation
+does not read it and still rejects incompatible devices.
+
+## payload.toml
+
+An optional `payload.toml` beside `init` describes the payload itself. It currently
+accepts `transport = false`, which leaves the USB session helper (network, SSH) out.
+It names no board.
 
 ## Directory content
 

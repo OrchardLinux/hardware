@@ -28,16 +28,39 @@ one without asking). Any computer with Orchard can launch any installed system.
 ## Develop
 
 `orchard` runs from a checkout of this repository: its hardware data and recipes
-are the files beside `src/`.
+are the files beside `src/`. Put the launcher on your PATH once (it needs
+[uv](https://docs.astral.sh/uv/)):
 
 ```sh
-uv venv && uv pip install -e .
-.venv/bin/orchard --help
+ln -sf "$PWD/bin/orchard" ~/.local/bin/orchard
 ```
 
-Distributions use this repository as their `orchard` checkout, e.g.
-`./orchard build examples/minimal-boot` in omarchy-a. See [BUILD.md](BUILD.md)
-for building components directly.
+It runs the checkout the current directory belongs to:
+
+- inside an orchard checkout, that checkout, e.g. a worktree on your branch;
+- elsewhere, the checkout named by the nearest `orchard.local.toml`
+  (`orchard = "../orchard-gpu"`), e.g. in a distribution you work on;
+- otherwise orchard's `main` branch, kept in `~/.cache/orchard/orchard-main` and
+  updated before use.
+
+`orchard.local.toml` belongs to one checkout and is never committed. It can also
+choose your board (`device = "j71b"`); `~/.config/orchard/config.toml` does that
+for all your checkouts. Nothing in a repository names a board.
+
+Bring up a device or try a driver in a worktree of its own:
+
+```sh
+git worktree add ../orchard-gpu -b gpu-a10
+cd ../orchard-gpu/examples/minimal-boot
+orchard build --device j71b
+orchard run
+```
+
+The [examples](examples/) are starting points: `minimal-boot` (a serial shell),
+`charger-001` (a read-only observation), `hardware-check` (a report on what a device
+offers). `orchard python ARGS` runs Python in the checkout's environment, e.g. a
+distribution's own scripts or `orchard python -m unittest discover -s tests`. See
+[BUILD.md](BUILD.md) for building components directly.
 
 - [Kernel producers](kernel/README.md)
 - [RAM builds and development](docs/ram-development.md)

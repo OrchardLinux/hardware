@@ -171,7 +171,8 @@ def stage(*, receipt, busybox, output, server, address, export, port,
         destination = output / target if target == 'init' else output / 'rootfs' / target
         shutil.copyfile(HERE / source, destination)
         destination.chmod(0o755)
-    (output / 'orchard.toml').write_text('device = "' + root['profile'] + '"\n')
+    # Generated for this root's device: a local choice, not a project setting.
+    (output / 'orchard.local.toml').write_text('device = "' + root['profile'] + '"\n')
     (output / 'rootfs/etc/orchard/nfs-root.json').write_bytes(blob)
     config = '# Generated from a validated root receipt; source only from this RAM image.\n'
     config += ''.join(name + '=' + shlex.quote(value) + '\n' for name, value in sorted(values.items()))

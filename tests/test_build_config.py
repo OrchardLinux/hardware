@@ -19,43 +19,66 @@ class BuildConfigTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
+        (self.root / '.git').mkdir()
         self.example = self.root / 'examples/deep/first-boot'
         self.example.mkdir(parents=True)
-        self.config = self.root / 'orchard.toml'
+        self.local = self.root / 'orchard.local.toml'
+        self.home = self.root / 'config-home'
+        environment = patch.dict(os.environ, {'XDG_CONFIG_HOME': str(self.home)})
+        environment.start()
+        self.addCleanup(environment.stop)
 
-    def test_repository_default_applies_to_nested_examples(self):
-        self.config.write_text('device = "unregistered-board"\n')
+    def user(self, text):
+        (self.home / 'orchard').mkdir(parents=True, exist_ok=True)
+        (self.home / 'orchard/config.toml').write_text(text)
+
+    def test_no_choice_selects_no_device(self):
+        self.assertIsNone(build.configured_device(self.example))
+
+    def test_checkout_local_choice_applies_to_everything_below_it(self):
+        self.local.write_text('device = "unregistered-board"\n')
         self.assertEqual(build.configured_device(self.example), 'unregistered-board')
         self.assertEqual(build.configured_device(self.root), 'unregistered-board')
 
-    def test_nearest_config_overrides_repository_default(self):
-        self.config.write_text('device = "j71b"\n')
-        (self.example / 'orchard.toml').write_text('device = "experimental"\n')
-        self.assertEqual(build.configured_device(self.example), 'experimental')
+    def test_flag_then_checkout_then_user_config(self):
+        self.user('device = "from-user"\n')
+        self.assertEqual(build.resolve_device(self.example), 'from-user')
+        self.local.write_text('device = "from-checkout"\n')
+        self.assertEqual(build.resolve_device(self.example), 'from-checkout')
+        self.assertEqual(build.resolve_device(self.example, 'from-flag'), 'from-flag')
 
-    def test_no_config_selects_no_device(self):
-        (self.root / '.git').mkdir()
-        self.assertIsNone(build.configured_device(self.example))
+    def test_local_file_naming_only_an_orchard_checkout_leaves_the_device_open(self):
+        self.local.write_text('orchard = "../orchard-gpu"\n')
+        self.user('device = "from-user"\n')
+        self.assertEqual(build.resolve_device(self.example), 'from-user')
 
-    def test_does_not_inherit_another_repositorys_config(self):
-        self.config.write_text('device = "unrelated"\n')
+    def test_does_not_inherit_another_repositorys_choice(self):
+        self.local.write_text('device = "unrelated"\n')
         (self.example / '.git').write_text('gitdir: elsewhere\n')
         self.assertIsNone(build.configured_device(self.example))
 
-    def test_transport_defaults_on_and_can_be_turned_off(self):
-        self.config.write_text('device = "j71b"\n')
-        self.assertEqual(build.configured(self.example), {'device': 'j71b', 'transport': True})
-        self.config.write_text('device = "j71b"\ntransport = false\n')
-        self.assertEqual(build.configured(self.example), {'device': 'j71b', 'transport': False})
+    def test_payload_transport_defaults_on_and_can_be_turned_off(self):
+        self.assertEqual(build.payload_settings(self.example), {'transport': True})
+        (self.example / 'payload.toml').write_text('transport = false\n')
+        self.assertEqual(build.payload_settings(self.example), {'transport': False})
+        # Only the payload's own directory counts; a parent's file is another payload's.
+        self.assertEqual(build.payload_settings(self.example.parent), {'transport': True})
 
-    def test_invalid_or_unused_settings_fail_instead_of_silently_defaulting(self):
-        for content in ('', 'device = [', 'device = 123', 'device = "../escape"',
-                        'device = ""', 'device = "-bad"', 'device = "j71b"\nunused = true', 'transport = false',
-                        'device = "j71b"\ntransport = "no"'):
+    def test_a_payload_names_no_device(self):
+        (self.example / 'payload.toml').write_text('device = "j71b"\n')
+        with self.assertRaisesRegex(ValueError, 'unknown settings device'):
+            build.payload_settings(self.example)
+
+    def test_invalid_settings_fail_instead_of_silently_defaulting(self):
+        for content in ('device = [', 'device = 123', 'device = "../escape"', 'device = ""',
+                        'device = "-bad"', 'device = "j71b"\nunused = true'):
             with self.subTest(content=content):
-                self.config.write_text(content)
-                with self.assertRaisesRegex(ValueError, 'orchard.toml'):
+                self.local.write_text(content)
+                with self.assertRaisesRegex(ValueError, 'orchard.local.toml'):
                     build.configured_device(self.example)
+        (self.example / 'payload.toml').write_text('transport = "no"\n')
+        with self.assertRaisesRegex(ValueError, 'payload.toml'):
+            build.payload_settings(self.example)
 
     def test_normal_installer_still_rejects_chip_and_board_mismatches(self):
         for mode in ('dfu', 'pongo'):

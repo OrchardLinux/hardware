@@ -23,9 +23,10 @@ def main():
     parser.add_argument('--verbose', action='store_true', help='show internal device events')
     commands = parser.add_subparsers(dest='action', required=True)
     build = commands.add_parser('build', help='build DIRECTORY/init and optional DIRECTORY/rootfs into a RAM payload')
-    build.add_argument('directory', type=Path, help='any directory containing init and optional rootfs/')
+    build.add_argument('directory', type=Path, nargs='?', default=Path('.'),
+                       help='a directory containing init and optional rootfs/ (default: this one)')
     build.add_argument('--hardware', type=Path, help='use the hardware data and recipes of another orchard checkout')
-    build.add_argument('--device', help='override the default recipe selected by orchard.toml')
+    build.add_argument('--device', help='the board to build for; default from orchard.local.toml or ~/.config/orchard/config.toml')
     build.add_argument('--cache', type=Path, help='override the shared component cache')
     build.add_argument('--kernel-dir', type=Path, help='reuse a staged kernel/DTB/module tree')
     for component in ('pongo', 'busybox', 'loader'):
@@ -41,7 +42,8 @@ def main():
     cached.add_argument('--keep', type=int, default=5, help='entries per component that --prune keeps (default 5)')
     cached.add_argument('--cache', type=Path, help='override the shared component cache')
     run = commands.add_parser('run', help='boot the last successful RAM payload for DIRECTORY')
-    run.add_argument('directory', type=Path, help='any directory whose out/ contains the built payload')
+    run.add_argument('directory', type=Path, nargs='?', default=Path('.'),
+                     help='a directory whose out/ contains the built payload (default: this one)')
     run.add_argument('-y', '--yes', action='store_true',
                      help='boot without prompting, including without an interactive terminal')
     commands.add_parser('shell', help='open a root shell on the running RAM payload over USB SSH')

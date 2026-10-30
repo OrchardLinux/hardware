@@ -10,3 +10,5 @@ out/
 .mypy_cache/
 .DS_Store
 /loaders/
+orchard.local.toml
+uv.lock

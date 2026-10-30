@@ -24,37 +24,79 @@ from . import sources, kernel as kernels
 _BASE_PRODUCER = kernels.build_base
 
 
-def configured(directory):
-    """Read the nearest orchard.toml up to the repository boundary, if present.
+PAYLOAD = 'payload.toml'
+LOCAL = 'orchard.local.toml'
+NO_DEVICE = ('No device selected: pass --device BOARD, or set device = "BOARD" in '
+             'orchard.local.toml or ~/.config/orchard/config.toml')
+_BOARD = re.compile(r'[a-z0-9][a-z0-9_-]*')
 
-    Keys: device = "board-name" (required), transport = false to leave the
-    USB session (network, SSH) out of RAM payloads.
+
+def _toml(path, allowed):
+    try:
+        with path.open('rb') as stream:
+            settings = tomllib.load(stream)
+    except (OSError, ValueError) as error:
+        raise ValueError(f'{path}: {error}') from error
+    unknown = set(settings) - set(allowed)
+    if unknown:
+        raise ValueError(f'{path}: unknown settings {", ".join(sorted(unknown))}; expected {", ".join(allowed)}')
+    return settings
+
+
+def payload_settings(directory):
+    """DIRECTORY/payload.toml: how this RAM payload is built. Optional.
+
+    transport = false leaves the USB session (network, SSH) out of the payload.
+    """
+    path = Path(directory).expanduser().resolve() / PAYLOAD
+    settings = _toml(path, ('transport',)) if path.exists() else {}
+    if not isinstance(settings.get('transport', True), bool):
+        raise ValueError(f'{path}: transport must be true or false')
+    return {'transport': settings.get('transport', True)}
+
+
+def local_settings(directory):
+    """The nearest orchard.local.toml from DIRECTORY up to its repository's root.
+
+    This checkout's own choices, never committed: device = "BOARD" and
+    orchard = "PATH" (the orchard checkout to use; read by the launcher).
     """
     directory = Path(directory).expanduser().resolve()
     for parent in (directory, *directory.parents):
-        config = parent / 'orchard.toml'
-        if config.exists():
-            try:
-                with config.open('rb') as stream:
-                    settings = tomllib.load(stream)
-            except (OSError, ValueError) as error:
-                raise ValueError(f'{config}: {error}') from error
-            if 'device' not in settings or not set(settings) <= {'device', 'transport'}:
-                raise ValueError(f'{config}: expected device = "board-name" and optional transport = false')
-            device = settings['device']
-            if not isinstance(device, str) or not re.fullmatch(r'[a-z0-9][a-z0-9_-]*', device):
-                raise ValueError(f'{config}: invalid device recipe name')
-            if not isinstance(settings.get('transport', True), bool):
-                raise ValueError(f'{config}: transport must be true or false')
-            return {'device': device, 'transport': settings.get('transport', True)}
+        path = parent / LOCAL
+        if path.exists():
+            return _toml(path, ('device', 'orchard')), path
         if (parent / '.git').exists():
             break
+    return {}, None
+
+
+def user_settings():
+    """~/.config/orchard/config.toml: this person's defaults for every checkout."""
+    root = Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config')
+    path = root / 'orchard/config.toml'
+    return (_toml(path, ('device',)), path) if path.exists() else ({}, None)
+
+
+def resolve_device(directory, device=None):
+    """--device, else orchard.local.toml, else the user config; None if none chooses.
+
+    Projects and distributions name no device: which board you build for is
+    your choice, not the repository's.
+    """
+    if device is not None:
+        return device
+    for settings, path in (local_settings(directory), user_settings()):
+        if 'device' in settings:
+            if not isinstance(settings['device'], str) or not _BOARD.fullmatch(settings['device']):
+                raise ValueError(f'{path}: invalid device name')
+            return settings['device']
     return None
 
 
 def configured_device(directory):
-    settings = configured(directory)
-    return settings['device'] if settings else None
+    """The device chosen for DIRECTORY (orchard.local.toml or user config), or None."""
+    return resolve_device(directory)
 
 
 def digest(path):
