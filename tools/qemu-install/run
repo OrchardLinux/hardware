@@ -31,8 +31,9 @@ from orchard import kernel as kernels  # noqa: E402
 from orchard.build import cache_root  # noqa: E402
 from orchard.manifests import platform_for  # noqa: E402
 
-IMAGE = 'docker.io/library/alpine:3.22'
-PACKAGES = 'python3 sfdisk losetup e2fsprogs util-linux zstd xz linux-virt'
+# Python 3.14, as in the recovery: zstd root images need compression.zstd.
+IMAGE = 'docker.io/library/python:3.14-alpine'
+PACKAGES = 'sfdisk losetup e2fsprogs util-linux zstd xz linux-virt'
 
 
 def main():
@@ -71,12 +72,13 @@ def main():
                                 stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT)
         deadline = time.monotonic() + args.seconds
         markers = {'mounted': b'mounted filesystem', 'openrc': b'OpenRC', 'systemd': b'systemd[1]',
-                   'initrd failed': b'orchard initrd:', 'login': b'login:'}
+                   'initrd failed': b'orchard initrd:', 'emergency': b'emergency mode', 'multi-user': b'Multi-User System',
+                   'login': b'login:'}
         try:
             while time.monotonic() < deadline and qemu.poll() is None:
                 time.sleep(2)
                 text = log.read_bytes()
-                if b'orchard initrd:' in text or b'login:' in text or b'Reached target' in text and b'Multi-User' in text:
+                if b'orchard initrd:' in text or b'login:' in text or b'emergency mode' in text or b'Multi-User System' in text:
                     time.sleep(3)
                     break
         finally:
@@ -90,7 +92,7 @@ def main():
     print(json.dumps({'release': manifest['version'], 'board': args.board, 'platform': platform,
                       **seen, 'serial_log': str(log)}, indent=2))
     started = seen['openrc'] or seen['systemd']
-    raise SystemExit(0 if seen['mounted'] and started and not seen['initrd failed'] else 1)
+    raise SystemExit(0 if seen['mounted'] and started and not seen['initrd failed'] and not seen['emergency'] else 1)
 
 
 if __name__ == '__main__':

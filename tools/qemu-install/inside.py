@@ -40,7 +40,7 @@ def newc(data):
 
 
 def test_initrd():
-    """orchard's initrd with this kernel's storage and ext4 modules (orchard builds ext4 in)."""
+    """orchard's initrd with this kernel's storage, ext4 and FAT modules (orchard builds the last two in)."""
     with tarfile.open(release / layer['file']) as archive:
         name = next(n for n in archive.getnames() if n.endswith('/initrd'))
         entries = newc(gzip.decompress(archive.extractfile(name).read()))
@@ -50,7 +50,8 @@ def test_initrd():
         key, _, value = line.partition(':')
         depends[key] = value.split()
     by_name = {re.sub(r'\.ko(\..*)?$', '', Path(k).name).replace('_', '-'): k for k in depends}
-    wanted = [m for m in ('nvme', 'crc32c-generic', 'ext4') if m in by_name]
+    # What orchard's kernels build in (ext4, FAT for /boot) comes from modules here.
+    wanted = [m for m in ('nvme', 'crc32c-generic', 'ext4', 'vfat', 'nls-cp437', 'nls-iso8859-1', 'nls-utf8') if m in by_name]
     needed, pending = [], [by_name[m] for m in wanted]
     while pending:
         key = pending.pop()
