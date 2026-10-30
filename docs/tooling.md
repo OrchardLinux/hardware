@@ -90,9 +90,10 @@ Recipes run `$ORCHARD_PYTHON` (default `python3`), which `orchard` sets to its o
 One step, because all three need a distribution build that does not depend on the
 board:
 
-- **Device layer** (done): kernel, DTBs and modules are orchard's platform layer,
-  which the installer writes into the root; a distribution builds one root image for
-  every platform and names no board. Release format: `schemas/v2`.
+- **Device layer** (done): kernel, initrd, DTBs and modules are orchard's platform
+  layer, which the installer writes into the root, and the installer writes the boot
+  entry; a distribution builds one root image for every platform, names no board and
+  needs no kernel-install. Release format: `schemas/v2`.
 - **A distribution as a project:** `distro.toml` names its build entry. In a
   distribution checkout, `orchard build` builds the whole image (root filesystem,
   recovery, release directory with `index.toml`), and `orchard run` builds what is

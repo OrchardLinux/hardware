@@ -130,8 +130,12 @@ def install(manifest=None, *, input_fn=input, secrets_fn=ask_secrets, progress=N
         remote.put(connection, remote.SCRIPT.read_bytes(), remote.SCRIPT.name)
         (layout,) = [e for e in remote.run(connection, ['inspect']) if e['event'] == 'layout']
         option = choose_target(layout, clock, input_fn=input_fn, output=progress.phase)
-        with clock.exclude('input'):
-            secrets = secrets_fn()
+        # Only a release that asks for it gets the password and PIN account.
+        account = record.get('account', False)
+        secrets = None
+        if account:
+            with clock.exclude('input'):
+                secrets = secrets_fn()
         with tempfile.TemporaryDirectory(prefix='installation-', dir=private) as directory:
             mixin, mixin_record = adapter.prepare_mixin(firmware, Path(directory) / 'mixin')
             remote.put(connection, mixin.read_bytes(), 'firmware.tar.gz')
@@ -139,13 +143,14 @@ def install(manifest=None, *, input_fn=input, secrets_fn=ask_secrets, progress=N
         remote.put(connection, assets['layer'].read_bytes(), 'platform.tar.gz', timeout=600)
         image = {key: root[key] for key in ('bytes', 'sha256', 'expanded_bytes')}
         image['compression'] = root.get('compression', 'zstd')
-        plan = install_layout.plan(layout, option, image, entry_for(record, adapter.DEVICETREE), account=True, layer={
+        plan = install_layout.plan(layout, option, image, entry_for(record, adapter.DEVICETREE), account=account, layer={
             'path': remote.DIRECTORY + '/platform.tar.gz',
             **{key: layer[key] for key in ('bytes', 'sha256', 'expanded_bytes')}}, firmware={
             'path': remote.DIRECTORY + '/firmware.tar.gz',
             'bytes': mixin_record['bytes'], 'sha256': mixin_record['sha256']})
         remote.put(connection, json.dumps(plan).encode(), 'plan.json')
-        remote.put(connection, json.dumps(secrets).encode(), 'secrets.json')
+        if account:
+            remote.put(connection, json.dumps(secrets).encode(), 'secrets.json')
         secrets = None
         progress.phase('Installing ' + record.get('name', 'Linux') + '…')
         with assets['root'].open('rb') as source:

@@ -203,5 +203,6 @@ def resolve(manifest, profile, progress=None, clock=None, purpose='install'):
             paths[role] = future.result()
     record = {'protocol': document['protocol'], 'profile': profile, 'platform': platform, 'assets': receipts,
               'release': document.get('version'), 'name': document.get('name', 'Linux'),
-              'default_root': document.get('install', {}).get('default_root', '/linux')}
+              'default_root': document.get('install', {}).get('default_root', '/linux'),
+              'account': document.get('install', {}).get('account', False)}
     return record, paths

@@ -49,7 +49,7 @@ def layout(partitions, free):
 
 
 class InstallFlow(unittest.TestCase):
-    def run_install(self, disk, answers, outcome='ok'):
+    def run_install(self, disk, answers, outcome='ok', account=True):
         work = tempfile.TemporaryDirectory()
         self.addCleanup(work.cleanup)
         root = Path(work.name)
@@ -69,7 +69,7 @@ class InstallFlow(unittest.TestCase):
         def connect(device):
             yield Connection([sys.executable, str(fake), str(store), json.dumps(disk), outcome], SCOPE, lambda: None)
         adapter.connect = connect
-        record = {'release': '1.0', 'name': 'Omarchy', 'assets': {'root': {
+        record = {'release': '1.0', 'name': 'Omarchy', 'account': account, 'assets': {'root': {
             'bytes': 11, 'sha256': 'a' * 64, 'expanded_bytes': 2 * GIB, 'compression': 'zstd'}, 'layer': {
             'bytes': 14, 'sha256': 'c' * 64, 'expanded_bytes': 100 << 20, 'compression': 'gzip'}}}
         status = self.status = Mock()
@@ -109,6 +109,13 @@ class InstallFlow(unittest.TestCase):
         self.assertIn('orchard launch', output)
         self.assertTrue(result['started'])
         self.assertEqual(self.status.call.call_args.args, ('start', {'root': plan['root']['partuuid'], 'boot': plan['boot']['partuuid']}))
+
+    def test_a_release_without_an_account_asks_for_no_secrets(self):
+        disk = layout([], [{'start': 256, 'blocks': 20 * GIB // 4096}])
+        result, store, prompts, output = self.run_install(disk, ['', ''], account=False)
+        self.assertFalse(json.loads((store / 'plan.json').read_text())['account'])
+        self.assertFalse((store / 'secrets.json').exists())
+        self.assertTrue(result['installed'])
 
     def test_replacing_a_partition_must_be_typed_out(self):
         disk = layout([{'number': 1, 'start': 6, 'blocks': 3 * GIB // 4096, 'type': APFS,

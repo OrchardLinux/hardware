@@ -85,5 +85,41 @@ class PlatformLayer(unittest.TestCase):
         self.assertEqual(caught.exception.code, 'stream-too-long')
 
 
+class BootEntry(unittest.TestCase):
+    """orchard writes the entry from the platform layer; no kernel-install in the system."""
+    def test_the_entry_names_the_layer_kernel_initrd_and_board_dtb(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            source = work / 'root/usr/lib/modules/7.3-orchard'
+            (source / 'dtb').mkdir(parents=True)
+            for name, data in (('vmlinuz', b'kernel'), ('initrd', b'initrd'), ('dtb/t8010-j71b.dtb', b'dtb'),
+                               ('dtb/t8010-j171.dtb', b'other')):
+                (source / name).write_bytes(data)
+            boot = work / 'boot'
+            boot.mkdir()
+            partuuid = '4d6c1a2b-0000-4000-8000-000000000001'
+            entry = {'id': 'omarchy', 'title': 'Omarchy', 'options': 'rootwait', 'devicetree': 't8010-j71b.dtb'}
+            token = D.write_entry(boot, work / 'root', '7.3-orchard', entry, partuuid)
+            self.assertEqual(token, 'omarchy-4d6c1a2b')
+            conf = (boot / 'loader/entries/omarchy-4d6c1a2b-7.3-orchard.conf').read_text()
+            self.assertIn('linux /omarchy-4d6c1a2b/7.3-orchard/linux\n', conf)
+            self.assertIn('initrd /omarchy-4d6c1a2b/7.3-orchard/initrd\n', conf)
+            self.assertIn(f'options root=PARTUUID={partuuid} rw rootwait\n', conf)
+            self.assertEqual((boot / 'omarchy-4d6c1a2b/7.3-orchard/t8010-j71b.dtb').read_bytes(), b'dtb')
+            self.assertFalse((boot / 'omarchy-4d6c1a2b/7.3-orchard/t8010-j171.dtb').exists())
+            self.assertEqual(D.check_entry(boot, partuuid, 't8010-j71b.dtb'), 'omarchy-4d6c1a2b-7.3-orchard.conf')
+            # Replacing that root removes its entry and the files only it names.
+            other = boot / 'loader/entries/other.conf'
+            other.write_text('linux /shared/linux\noptions root=PARTUUID=other\n')
+            (boot / 'shared').mkdir()
+            (boot / 'shared/linux').write_bytes(b'k')
+            self.assertEqual(D.remove_old_entries(boot, partuuid), ['omarchy-4d6c1a2b-7.3-orchard.conf'])
+            self.assertFalse((boot / 'omarchy-4d6c1a2b').exists())
+            self.assertTrue((boot / 'shared/linux').exists())
+            (source / 'initrd').unlink()
+            with self.assertRaisesRegex(D.InstallError, 'lacks /usr/lib/modules/7.3-orchard/initrd'):
+                D.write_entry(boot, work / 'root', '7.3-orchard', entry, partuuid)
+
+
 if __name__ == '__main__':
     unittest.main()

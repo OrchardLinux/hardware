@@ -453,13 +453,67 @@ def write_text(path, text):
 
 
 def remove_old_entries(boot_root, partuuid):
+    """The entries of a replaced root, and the files only they name."""
     entries = boot_root / 'loader/entries'
-    removed = []
+    removed, files, kept = [], set(), set()
     for entry in sorted(entries.glob('*.conf')) if entries.is_dir() else []:
-        if f'root=PARTUUID={partuuid}' in entry.read_text(errors='replace'):
+        text = entry.read_text(errors='replace')
+        named = {line.strip().partition(' ')[2].strip().lstrip('/') for line in text.splitlines()
+                 if line.strip().partition(' ')[0] in ('linux', 'initrd', 'devicetree')}
+        if f'root=PARTUUID={partuuid}' in text:
             entry.unlink()
             removed.append(entry.name)
+            files |= named
+        else:
+            kept |= named
+    for name in sorted(files - kept):
+        path = boot_root / name
+        if '..' not in PurePosixPath(name).parts and path.is_file() and not path.is_symlink():
+            path.unlink()
+            for parent in path.parents:
+                if parent == boot_root or any(parent.iterdir()):
+                    break
+                parent.rmdir()
     return removed
+
+
+def entry_token(entry, partuuid):
+    """The BLS entry token: the system's id and its root, so two installs never share files."""
+    return f'{entry["id"]}-{partuuid.split("-")[0]}'
+
+
+def write_entry(boot_root, root, version, entry, partuuid):
+    """Copy the platform layer's kernel, initrd and the board's DTB to the boot partition; write the entry.
+
+    orchard owns the kernel side of every installed system, so the entry
+    comes from the layer and not from the system's kernel-install
+    (docs/boot-contract.md). Files go to /TOKEN/VERSION/ and the entry to
+    /loader/entries/TOKEN-VERSION.conf, as the Boot Loader Specification
+    lays them out.
+    """
+    source = root / 'usr/lib/modules' / version
+    token = entry_token(entry, partuuid)
+    files = {'linux': source / 'vmlinuz', 'initrd': source / 'initrd',
+             entry['devicetree']: source / 'dtb' / entry['devicetree']}
+    for name, path in files.items():
+        if path.is_symlink() or not path.is_file():
+            raise InstallError('no-kernel', f'The platform layer lacks /{path.relative_to(root)}')
+    directory = boot_root / token / version
+    directory.mkdir(parents=True, exist_ok=True)
+    for name, path in files.items():
+        with path.open('rb') as data, (directory / name).open('wb') as output:
+            while chunk := data.read(1 << 20):
+                output.write(chunk)
+            output.flush()
+            os.fsync(output.fileno())
+    options = f'root=PARTUUID={partuuid} rw {entry.get("options", "")}'.strip()
+    text = (f'title {entry["title"]}\nversion {version}\nsort-key {entry["id"]}\n'
+            f'linux /{token}/{version}/linux\ninitrd /{token}/{version}/initrd\n'
+            f'devicetree /{token}/{version}/{entry["devicetree"]}\noptions {options}\narchitecture aa64\n')
+    entries = boot_root / 'loader/entries'
+    entries.mkdir(parents=True, exist_ok=True)
+    write_text(entries / f'{token}-{version}.conf', text)
+    return token
 
 
 def check_entry(boot_root, partuuid, devicetree):
@@ -480,7 +534,7 @@ def check_entry(boot_root, partuuid, devicetree):
             if not (boot_root / path.strip().lstrip('/')).is_file():
                 raise InstallError('entry-invalid', f'{entry.name}: initrd {path} is missing')
         return entry.name
-    raise InstallError('entry-missing', 'The system did not write a boot entry for its root')
+    raise InstallError('entry-missing', 'No boot entry names this root')
 
 
 def install_layer(path, root, *, size, sha256, expanded_limit):
@@ -688,12 +742,6 @@ def install(plan, stream):
             gone = remove_old_entries(boot_mount, plan['remove']['partuuid'])
             emit('step', step='remove-old-entries', state='done', entries=gone)
         entry = plan['entry']
-        write_text(TARGET / 'etc/kernel/cmdline',
-                   f'root=PARTUUID={plan["root"]["partuuid"]} rw {entry.get("options", "")}'.strip() + '\n')
-        write_text(TARGET / 'etc/kernel/entry-token', entry['id'] + '\n')
-        # The layer holds the DTB of every board of its platform; kernel-install
-        # copies the one this file names (see docs/boot-contract.md).
-        write_text(TARGET / 'etc/kernel/devicetree', entry['devicetree'] + '\n')
         write_text(TARGET / 'etc/fstab',
                    f'PARTUUID={plan["root"]["partuuid"]} / ext4 rw,relatime 0 1\n'
                    f'PARTUUID={plan["boot"]["partuuid"]} /boot vfat rw,relatime,fmask=0077,dmask=0077 0 2\n')
@@ -706,8 +754,7 @@ def install(plan, stream):
             emit('step', step='account', state='done', user=set_account(TARGET, *secrets))
             secrets = None
         version = kernel_version(TARGET)
-        kernel = f'/usr/lib/modules/{version}/vmlinuz'
-        run('chroot', str(TARGET), 'kernel-install', 'add', version, kernel, timeout=600)
+        write_entry(boot_mount, TARGET, version, entry, plan['root']['partuuid'])
         name = check_entry(boot_mount, plan['root']['partuuid'], entry['devicetree'])
         emit('step', step='boot-entry', state='done', entry=name)
     finally:

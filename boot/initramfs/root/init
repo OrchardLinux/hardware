@@ -1,0 +1,55 @@
+#!/bin/busybox sh
+# orchard's initrd for installed systems: load storage, mount the root that
+# root=PARTUUID= names, start its init. The same for every distribution and
+# init system; only BusyBox and the platform's storage modules are inside.
+export PATH=/bin
+/bin/busybox --install -s /bin
+mount -t proc -o nodev,noexec,nosuid proc /proc
+mount -t sysfs -o nodev,noexec,nosuid sysfs /sys
+mount -t devtmpfs -o mode=0755,nosuid dev /dev
+exec </dev/console >/dev/console 2>&1
+
+stop() {
+    echo "orchard initrd: $1"
+    echo 'Starting a shell on the console; the system did not start.'
+    exec sh
+}
+
+root= mode=rw flags= fstype= init=/sbin/init
+for argument in $(cat /proc/cmdline); do
+    case "$argument" in
+    root=PARTUUID=*) root=$(echo "${argument#root=PARTUUID=}" | tr A-F a-f) ;;
+    rootfstype=*) fstype=${argument#rootfstype=} ;;
+    rootflags=*) flags=${argument#rootflags=} ;;
+    ro | rw) mode=$argument ;;
+    init=*) init=${argument#init=} ;;
+    esac
+done
+[ -n "$root" ] || stop 'the boot entry names no root=PARTUUID='
+
+for module in $(cat /etc/orchard/modules); do
+    modprobe "$module" || stop "could not load $module"
+done
+
+# The kernel reports each partition's PARTUUID in its uevent.
+device=
+seconds=0
+while [ -z "$device" ]; do
+    for uevent in /sys/class/block/*/uevent; do
+        if grep -qix "PARTUUID=$root" "$uevent"; then
+            device=/dev/$(sed -n 's/^DEVNAME=//p' "$uevent")
+        fi
+    done
+    [ -n "$device" ] && break
+    seconds=$((seconds + 1))
+    [ "$seconds" -le 30 ] || stop "no partition $root after 30 s"
+    sleep 1
+done
+
+mkdir -p /newroot
+mount ${fstype:+-t "$fstype"} -o "$mode${flags:+,$flags}" "$device" /newroot || stop "could not mount $device"
+[ -x "/newroot$init" ] || [ -L "/newroot$init" ] || stop "the root has no $init"
+for name in dev proc sys; do
+    mount --move "/$name" "/newroot/$name"
+done
+exec switch_root /newroot "$init"
