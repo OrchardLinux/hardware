@@ -59,6 +59,7 @@ $R https://updates.cdn-apple.com/…/iPad_…_Restore.ipsw members   # ZIP membe
 $R j71b ls usr/share/firmware/multitouch                           # a system directory
 $R j71b get usr/share/firmware/multitouch/J71b.mtprops J71b.mtprops
 $R j71b kernelcache j71bap kernelcache.macho                       # decompressed Mach-O
+$R j81 dt j81ap wlan bluetooth multi-touch                         # device-tree nodes
 ```
 
 `get`, `member` and `kernelcache` print the file's size and sha256 for the
@@ -77,9 +78,14 @@ Then:
 1. Pick the IPSW. api.ipsw.me gives its URL and size; pin the newest
    release the reader can open. iPadOS 18 and later encrypt the IPSW (AEA),
    so those can't be read.
-2. Find the files with `ls`, save them with `get`, and identify the chip
-   from the kernel log of the device or the ADT.
-3. Write the inputs and outputs. Check the whole recipe against Apple's
+2. Read the board's device tree with `dt`. It is the ADT without what iBoot
+   fills in (serials, MAC addresses, calibration), so board facts come from
+   the IPSW and need no device: the Wi-Fi `module-instance` is
+   brcmfmac's board type (D10 `kristoff`, J81 `rieslinga`), and the chip is
+   in `compatible`. BlueTool's embedded patchrams name their board and
+   module too ("BCM4355C0 Kristoff MUR MCC").
+3. Find the files with `ls` and save them with `get`.
+4. Write the inputs and outputs. Check the whole recipe against Apple's
    server, into an empty cache:
 
    ```sh
