@@ -71,9 +71,12 @@ except BlockingIOError:
 fi
 
 patch_list() {
-  for patch in "${patches[@]}"; do
-    printf '%s %s\n' "$(git hash-object "$patch")" "${patch#"$here"/}"
-  done
+  # One git process for the whole series; it prints the hashes in argument order.
+  local hash i=0
+  while IFS= read -r hash; do
+    printf '%s %s\n' "$hash" "${patches[i]#"$here"/}"
+    i=$((i + 1))
+  done < <(git hash-object "${patches[@]}")
 }
 
 # Content of the source tree, tracked and untracked, without touching its index.
@@ -94,9 +97,17 @@ desired_tree() {
   local index="$work/desired-index.$$" patch tree
   rm -f "$index"
   GIT_INDEX_FILE=$index git -C "$source" read-tree HEAD || return
-  for patch in "${patches[@]}"; do
-    GIT_INDEX_FILE=$index git -C "$source" apply --cached "$patch" || { rm -f "$index"; return 1; }
-  done
+  # One apply for the whole series writes the large index once, not per patch.
+  if ! GIT_INDEX_FILE=$index git -C "$source" apply --cached "${patches[@]}"; then
+    # Name the first patch that fails; one by one is slow, but only on failure.
+    GIT_INDEX_FILE=$index git -C "$source" read-tree HEAD || return
+    for patch in "${patches[@]}"; do
+      GIT_INDEX_FILE=$index git -C "$source" apply --cached "$patch" 2>/dev/null ||
+        { echo "First patch that does not apply: ${patch#"$here"/}" >&2; break; }
+    done
+    rm -f "$index"
+    return 1
+  fi
   tree=$(GIT_INDEX_FILE=$index git -C "$source" write-tree) || { rm -f "$index"; return 1; }
   rm -f "$index"
   printf '%s\n' "$tree"
@@ -172,9 +183,9 @@ echo 'Compiling kernel image, modules and device trees...'
     fi
     make -C "$ORCHARD_SRC" O="$ORCHARD_OUT" LLVM=-19 ARCH=arm64 olddefconfig
     cmp "$ORCHARD_OUT/.config" "$ORCHARD_CONFIG/$platform/config"
-    make -C "$ORCHARD_SRC" O="$ORCHARD_OUT" -j"$2" LLVM=-19 ARCH=arm64 \
+    make -C "$ORCHARD_SRC" O="$ORCHARD_OUT" -j"${2:-$(nproc)}" LLVM=-19 ARCH=arm64 \
       LOCALVERSION="-orchard-$platform" DTC_FLAGS=-@ Image.gz modules dtbs
-  ' bash "$platform" "${ORCHARD_KERNEL_JOBS:-2}"
+  ' bash "$platform" "${ORCHARD_KERNEL_JOBS:-}"
 echo 'Staging kernel modules and device trees...'
 stage=$(mktemp -d "$work/stage.XXXXXX")
 trap 'rm -rf "$stage"' EXIT
