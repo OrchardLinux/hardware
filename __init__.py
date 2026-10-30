@@ -1,10 +1,7 @@
 """Standalone hardware data resources; no dependency on Orchard or any distro."""
 from pathlib import Path
 import re
-try:
-    import tomllib
-except ImportError:
-    import tomli as tomllib
+import tomllib
 
 
 def device_path(profile):

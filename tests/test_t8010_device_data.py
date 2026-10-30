@@ -2,10 +2,7 @@
 import json
 from pathlib import Path, PurePosixPath
 import re
-try:
-    import tomllib
-except ImportError:
-    import tomli as tomllib
+import tomllib
 import unittest
 from urllib.parse import urlsplit
 

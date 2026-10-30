@@ -28,7 +28,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.14'
       - name: Check release version
         if: github.ref_type == 'tag'
         env:
@@ -65,7 +65,7 @@ jobs:
     runs-on: ubuntu-24.04
     strategy:
       matrix:
-        python: ['3.9', '3.12']
+        python: ['3.11', '3.14']
     steps:
       - uses: actions/checkout@v4
         with:
@@ -95,7 +95,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.14'
       - uses: actions/download-artifact@v4
         with:
           name: hardware-packages
@@ -136,7 +136,7 @@ jobs:
           bash kernel/install-toolchain
           python3 -m venv .venv
           .venv/bin/python -m pip install out/packages/*.whl
-          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+          echo "ORCHARD_PYTHON=$GITHUB_WORKSPACE/.venv/bin/python" >> "$GITHUB_ENV"
       - name: Build the platform kernel, modules and all device trees once
         run: |
           bash kernel/build apple-16k --work-dir "$PWD/out/kernel-work" --output "$PWD/out/components/kernel"
@@ -194,7 +194,7 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           python3 -m venv .venv
           .venv/bin/python -m pip install out/packages/*.whl
-          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+          echo "ORCHARD_PYTHON=$GITHUB_WORKSPACE/.venv/bin/python" >> "$GITHUB_ENV"
       - name: Build static recovery tools
         if: inputs.reuse_run_id == ''
         run: |
@@ -237,7 +237,7 @@ jobs:
       - uses: actions/setup-python@v5
         if: inputs.reuse_run_id == ''
         with:
-          python-version: '3.12'
+          python-version: '3.14'
       - name: Fingerprint the Apple toolchain
         if: inputs.reuse_run_id == ''
         id: toolchain
@@ -287,7 +287,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.14'
       - uses: actions/download-artifact@v4
         with:
           pattern: hardware-*
