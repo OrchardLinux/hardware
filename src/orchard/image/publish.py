@@ -49,42 +49,39 @@ def publish(directory, tag, output, *, distro):
     if index_path.is_symlink():
         raise ValueError('Linked index refused')
     index = tomllib.loads(index_path.read_text())
-    if index.get('kind') != 'orchard.index' or index.get('distro') != distro:
+    if index.get('schema') != 2 or index.get('kind') != 'orchard.index' or index.get('distro') != distro:
         raise ValueError('Expected a matching distro release index')
-    metadata_names = {'index.toml'} | {pin.get('file') for methods in index['devices'].values() for pin in methods.values()}
+    source = local_asset(directory, index['release'])
+    manifest = tomllib.loads(source.read_text())
+    if manifest.get('kind') != 'orchard.install' or manifest.get('distro') != distro:
+        raise ValueError('Manifest does not match its index')
+    metadata_names = {'index.toml', source.name}
+    receipts = [manifest['root'], manifest['pongo']]
+    receipts += [files[role] for files in manifest['platforms'].values() for role in ('boot', 'layer')]
     base = 'https://github.com/OrchardLinux/' + distro + '/releases/download/' + tag
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.publish-', dir=output.parent) as temporary:
         stage = Path(temporary) / 'release'
         stage.mkdir()
         hosted = copy.deepcopy(index)
-        for profile, methods in index['devices'].items():
-            for method, pin in methods.items():
-                source = local_asset(directory, pin)
-                manifest = tomllib.loads(source.read_text())
-                if (manifest.get('kind') != 'orchard.install' or manifest.get('distro') != distro
-                        or manifest.get('device') != profile or manifest.get('boot_method') != method):
-                    raise ValueError('Manifest does not match its index entry')
-                for role in ('root', 'boot', 'pongo'):
-                    receipt = manifest[role]
-                    artifact = local_asset(directory, receipt)
-                    if artifact.name in metadata_names:
-                        raise ValueError('Artifact name collides with release metadata')
-                    target = stage / artifact.name
-                    if target.exists():
-                        if sha(target) != receipt['sha256']:
-                            raise ValueError('Conflicting release artifact names')
-                    else:
-                        try:
-                            os.link(artifact, target)
-                        except OSError:
-                            shutil.copyfile(artifact, target)
-                    receipt['url'] = base + '/' + receipt.pop('file')
-                target = stage / source.name
-                with target.open('x') as stream:
-                    stream.write(toml(manifest))
-                hosted['devices'][profile][method] = {
-                    'url': base + '/' + source.name, 'bytes': target.stat().st_size, 'sha256': sha(target)}
+        for receipt in receipts:
+            artifact = local_asset(directory, receipt)
+            if artifact.name in metadata_names:
+                raise ValueError('Artifact name collides with release metadata')
+            target = stage / artifact.name
+            if target.exists():
+                if sha(target) != receipt['sha256']:
+                    raise ValueError('Conflicting release artifact names')
+            else:
+                try:
+                    os.link(artifact, target)
+                except OSError:
+                    shutil.copyfile(artifact, target)
+            receipt['url'] = base + '/' + receipt.pop('file')
+        target = stage / source.name
+        with target.open('x') as stream:
+            stream.write(toml(manifest))
+        hosted['release'] = {'url': base + '/' + source.name, 'bytes': target.stat().st_size, 'sha256': sha(target)}
         (stage / 'index.toml').write_text(toml(hosted))
         stage.rename(output)
     return output / 'index.toml'
