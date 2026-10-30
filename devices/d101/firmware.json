@@ -9,14 +9,135 @@
     "sha256": "4d480918c4a3e6fa69177db706086d3bf00d6f83f311e55974fe54e90c170aab"
   },
   "inputs": {
+    "elsa.trx": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4355__s-C0/elsa.trx"
+      },
+      "device": "/usr/share/firmware/wifi/C-4355__s-C0/elsa.trx",
+      "sha256": "f0d8ef47999064c5f85296ce0c14c76f5e8b4aa932340c97b91c0cbfc3f8260f"
+    },
+    "elsa.clmb": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4355__s-C0/elsa.clmb"
+      },
+      "device": "/usr/share/firmware/wifi/C-4355__s-C0/elsa.clmb",
+      "sha256": "d67012c63fbcac7f72f24bd4db771651334221451301a3b599f6170c12e57517"
+    },
+    "elsa.txcb": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4355__s-C0/elsa.txcb"
+      },
+      "device": "/usr/share/firmware/wifi/C-4355__s-C0/elsa.txcb",
+      "sha256": "c2f1d7b3a73756b31195cf41a41484d219f48cb3819393bcbf8587031c93c1a7"
+    },
+    "P-elsa_M-PRNL_V-m__m-5.7.txt": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4355__s-C0/P-elsa_M-PRNL_V-m__m-5.7.txt"
+      },
+      "device": "/usr/share/firmware/wifi/C-4355__s-C0/P-elsa_M-PRNL_V-m__m-5.7.txt",
+      "sha256": "1b774cce4df9be973472906f90ec8874e4411041ae45c6c9a5bf80175b4a3570"
+    },
+    "P-elsa_M-PRNL_V-u__m-5.7.txt": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4355__s-C0/P-elsa_M-PRNL_V-u__m-5.7.txt"
+      },
+      "device": "/usr/share/firmware/wifi/C-4355__s-C0/P-elsa_M-PRNL_V-u__m-5.7.txt",
+      "sha256": "a4f85ecbe1cf06c359857bcb08ac1656b5d6cceb6eeec4599280fc1098269848"
+    },
+    "P-elsa_M-PRNL_V-u__m-5.9.txt": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4355__s-C0/P-elsa_M-PRNL_V-u__m-5.9.txt"
+      },
+      "device": "/usr/share/firmware/wifi/C-4355__s-C0/P-elsa_M-PRNL_V-u__m-5.9.txt",
+      "sha256": "a4f85ecbe1cf06c359857bcb08ac1656b5d6cceb6eeec4599280fc1098269848"
+    },
+    "kernelcache": {
+      "ipsw": {
+        "kernelcache": true
+      },
+      "device": {
+        "kernelcache": "active"
+      }
+    },
     "BlueTool": {
       "ipsw": {
         "rootfs": "usr/sbin/BlueTool"
       },
-      "device": "/usr/sbin/BlueTool"
+      "device": "/usr/sbin/BlueTool",
+      "sha256": "78115abe9705d30596768231d2f1587bf68670f6a7a2d1db7d88620aa54cca8d"
     }
   },
   "outputs": [
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355-pcie.apple,elsa.bin",
+      "sha256": "f0d8ef47999064c5f85296ce0c14c76f5e8b4aa932340c97b91c0cbfc3f8260f",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "elsa.trx"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355-pcie.apple,elsa.clm_blob",
+      "sha256": "d67012c63fbcac7f72f24bd4db771651334221451301a3b599f6170c12e57517",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "elsa.clmb"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355-pcie.apple,elsa.txcap_blob",
+      "sha256": "c2f1d7b3a73756b31195cf41a41484d219f48cb3819393bcbf8587031c93c1a7",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "elsa.txcb"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355-pcie.apple,elsa-PRNL-m-5.7.txt",
+      "sha256": "1b774cce4df9be973472906f90ec8874e4411041ae45c6c9a5bf80175b4a3570",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-elsa_M-PRNL_V-m__m-5.7.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355-pcie.apple,elsa-PRNL-u-5.7.txt",
+      "sha256": "a4f85ecbe1cf06c359857bcb08ac1656b5d6cceb6eeec4599280fc1098269848",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-elsa_M-PRNL_V-u__m-5.7.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355-pcie.apple,elsa-PRNL-u-5.9.txt",
+      "sha256": "a4f85ecbe1cf06c359857bcb08ac1656b5d6cceb6eeec4599280fc1098269848",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-elsa_M-PRNL_V-u__m-5.9.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/apple/t8010-smartio.bin",
+      "sha256": "408adbb05e75469cbd9c4d94624fd116ae58be5f87cf40b5e495242a83140bcb",
+      "steps": [
+        {
+          "step": "smartio-from-kernelcache@1",
+          "input": "kernelcache"
+        }
+      ]
+    },
     {
       "destination": "lib/firmware/brcm/BCM.apple,d101-MUR.hcd",
       "sha256": "e6b2c37c62247133ffc4f550d1cf37d1f471f0d3c11f7fd784cc917dd0432d02",
