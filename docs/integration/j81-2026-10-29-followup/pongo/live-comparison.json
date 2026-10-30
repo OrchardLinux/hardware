@@ -1,0 +1,36 @@
+{
+  "date": "2026-10-29",
+  "device": "Wi-Fi iPad Air 2 J81",
+  "method": "same pinned source and runtime; sequential quiet then normal; start each from normal iPadOS",
+  "rounds": [
+    {
+      "variant": "quiet-1",
+      "sha256": "c6aa270ba22d40036487b027d5bb9b67955c35def61ceb65cff2b358dd40d80b",
+      "pongo_boot_message_seen": true,
+      "usb_enumerated": false,
+      "strict_identity_verified": false,
+      "shell_help_responded": false,
+      "linux_uploaded": false,
+      "storage_writes": false,
+      "outcome": "PONGO_USB_NOT_ENUMERATED",
+      "owner_observed_return_to_ipados": true,
+      "host_observed_return_to_ipados": null
+    },
+    {
+      "variant": "normal-1",
+      "sha256": "90086685c73a066a05b736cc1908308ba2cda2a5283cdfebc1f7d9b62d41234d",
+      "pongo_boot_message_seen": true,
+      "usb_enumerated": false,
+      "strict_identity_verified": false,
+      "shell_help_responded": false,
+      "linux_uploaded": false,
+      "storage_writes": false,
+      "outcome": "PONGO_USB_NOT_ENUMERATED",
+      "owner_observed_return_to_ipados": true,
+      "host_observed_return_to_ipados": true
+    }
+  ],
+  "known_working_prebuilt_sha256": "1e5543fd8e6dbd84c334b87d71aa473f4d347c2ba8a5e863b6e10f18461c7575",
+  "prebuilt_hardware_control": "Earlier repeated successful Pongo and Linux boots; not a third paired round",
+  "conclusion": "Removing QUIET_BOOT did not fix the source-built loader in this comparison; underlying cause unresolved"
+}

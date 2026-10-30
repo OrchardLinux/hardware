@@ -1,0 +1,29 @@
+{
+  "compiler": "Apple clang version 21.0.0 (clang-2100.3.34.2)",
+  "sdk_version": "27.1",
+  "same_source_and_newlib": true,
+  "rebuild_target_forced_each_time": true,
+  "runs": [
+    {
+      "variant": "quiet-1",
+      "quiet_define": true,
+      "bytes": 238104,
+      "sha256": "c6aa270ba22d40036487b027d5bb9b67955c35def61ceb65cff2b358dd40d80b",
+      "seconds": 4.2
+    },
+    {
+      "variant": "normal-1",
+      "quiet_define": false,
+      "bytes": 238104,
+      "sha256": "90086685c73a066a05b736cc1908308ba2cda2a5283cdfebc1f7d9b62d41234d",
+      "seconds": 3.34
+    },
+    {
+      "variant": "quiet-2",
+      "quiet_define": true,
+      "bytes": 238104,
+      "sha256": "c6aa270ba22d40036487b027d5bb9b67955c35def61ceb65cff2b358dd40d80b",
+      "seconds": 3.4
+    }
+  ]
+}

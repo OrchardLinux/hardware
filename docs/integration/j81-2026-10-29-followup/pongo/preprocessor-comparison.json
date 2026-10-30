@@ -1,0 +1,47 @@
+{
+  "method": "clang -E -P, identical flags except QUIET_BOOT",
+  "sources": [
+    {
+      "source": "src/drivers/framebuffer/fb.c",
+      "normal_sha256": "99cd82089d26e4a326c56cb97dabe0779c625d45555e25ded03e3d1ece2048f2",
+      "quiet_sha256": "5eb3df87a0efd72c859445f9a5ed05bda60fd0d3dfeffa4cf95e8f3ea64d4e16",
+      "identical": false
+    },
+    {
+      "source": "src/kernel/entry.c",
+      "normal_sha256": "30fc123868bf27cbd0925b67334523c99a57e444c085f3ffbb867376f71430ca",
+      "quiet_sha256": "46cc40f19b187449e4c118adee89b27e586f993048ca2a3c928a6345d6a60734",
+      "identical": false
+    },
+    {
+      "source": "src/drivers/usb/synopsys_otg.c",
+      "normal_sha256": "ca91f179f6433575e90540bcf35dbd60c0fcb598bc5235a1c2fdb54849704f94",
+      "quiet_sha256": "ca91f179f6433575e90540bcf35dbd60c0fcb598bc5235a1c2fdb54849704f94",
+      "identical": true
+    },
+    {
+      "source": "src/shell/usbloader.c",
+      "normal_sha256": "582d0dff9d10a334434004d83ce9e9dc136f2a9b1ff4592e48e0dcf201e77efe",
+      "quiet_sha256": "582d0dff9d10a334434004d83ce9e9dc136f2a9b1ff4592e48e0dcf201e77efe",
+      "identical": true
+    },
+    {
+      "source": "src/kernel/main_task.c",
+      "normal_sha256": "57df392b88b617381c9f061ed70bae65c90f204c8728af427e7b0705a8fe64a9",
+      "quiet_sha256": "57df392b88b617381c9f061ed70bae65c90f204c8728af427e7b0705a8fe64a9",
+      "identical": true
+    },
+    {
+      "source": "src/kernel/support/io.c",
+      "normal_sha256": "7c67e2a22e0a7b5110cd8823385a33143b6fb82e57556d366bbd0762e3eb7e23",
+      "quiet_sha256": "7c67e2a22e0a7b5110cd8823385a33143b6fb82e57556d366bbd0762e3eb7e23",
+      "identical": true
+    },
+    {
+      "source": "src/shell/main.c",
+      "normal_sha256": "cfda54beadb21ba8da4ad0cbc93e01ad8b134647ca53e8664af4449aa143a8a5",
+      "quiet_sha256": "cfda54beadb21ba8da4ad0cbc93e01ad8b134647ca53e8664af4449aa143a8a5",
+      "identical": true
+    }
+  ]
+}

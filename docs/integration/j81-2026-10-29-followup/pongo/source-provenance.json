@@ -1,0 +1,26 @@
+{
+  "source_commit": "bb492b004265ce91123caa23b8bc04b2eff6d2b7",
+  "newlib_commit": "f9ea5054de8fb51dff6f6d3c2e7cdd4aa89744b8",
+  "source_patch_sha256": "2a91091383fa37bf50aeb5094eb51c8b3d0b60c0af6a1c062e6309bcd4a2215b",
+  "shared_source_diff_sha256": "8ead4251b1b1d37f63e545a8b8647afaf0d5a7f48954ff14a98994c9105ac5a4",
+  "source_files": {
+    "Makefile": "52ae01fae0c04c037c3a009e95bb00cddac4179f906bf6209f272a41a6878af6",
+    "src/drivers/framebuffer/fb.c": "51ae0eea34e5e3df0c9eaafdb197857da024654a69a50cd085318ef318874426",
+    "src/kernel/entry.c": "a7ccc24cd89196a83fbc36a0aaf2752cb7eb27a4c5b0f846fd20ab0855040c2b"
+  },
+  "linked_newlib_archives": {
+    "newlib/aarch64-none-darwin/fixup/libc.a": {
+      "sha256": "e9d5a2fe863bd91e6edd147d1251744f8db5272e444f5201fc0126d72c1ba307",
+      "bytes": 2498088
+    },
+    "newlib/aarch64-none-darwin/lib/libc.a": {
+      "sha256": "417cdb6d2e2745b4b018cc53e11759313eeb7524bfc480632bcdc58b72e338e8",
+      "bytes": 2506616
+    }
+  },
+  "host_platform": {
+    "system": "Darwin",
+    "machine": "arm64",
+    "release": "27.0.0"
+  }
+}
