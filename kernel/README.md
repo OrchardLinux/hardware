@@ -17,7 +17,12 @@ upstream pin, shared by every hardware checkout and worktree:
 (`--work-dir` chooses another). Every build continues that tree: a changed patch
 series resets the files the old series touched and applies the new one, so only
 affected files recompile. Hand edits in the tree are refused rather than lost.
-A second build of the same tree waits for the first. `--output` must name a new
+A second build of the same tree waits for the first. Compiled objects also go
+into a compiler cache (ccache) next to the trees, `.../orchard/ccache/kernel/`,
+so a tree that returns to a patch set built before, in any worktree, compiles it
+from the cache. ccache stands in for `clang-19` on the recipe's PATH, so the
+recorded compiler commands are the same with and without it; `ORCHARD_CCACHE=0`
+builds without it and rebuilds nothing by itself. `--output` must name a new
 directory; it receives `Image.gz`, `<device>.dtb`, `dtbs/`, `kernel.release` and
 `lib/modules/`.
 

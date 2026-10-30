@@ -43,6 +43,14 @@ commit=$(awk -F= '$1=="commit" {print $2}' "$here/upstream.lock")
 # last build, and a patch change recompiles only the files it touches.
 cache=${ORCHARD_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/orchard}
 work=${work:-"$cache/kernel-work/$platform-${commit:0:12}"}
+# Compiled objects keyed by preprocessed content, shared by every tree: a tree
+# that returns to a patch set built before compiles it from the cache.
+# ORCHARD_CCACHE=0 compiles without it.
+compiler_cache=()
+if [[ ${ORCHARD_CCACHE:-1} != 0 ]]; then
+  mkdir -p "$cache/ccache/kernel"
+  compiler_cache=(--bind "$cache/ccache/kernel:/compiler_cache:rw")
+fi
 source="$work/source"
 build_output="$work/output"
 applied="$work/applied-patches"
@@ -150,10 +158,18 @@ echo 'Compiling kernel image, modules and device trees...'
 # shellcheck disable=SC2016 # Variables below belong to the recipe shell.
 "$python" -m orchard_hardware.buildenv run \
   --bind "$source:/src:ro" --bind "$build_output:/out:rw" --bind "$here/configs:/config:ro" \
+  ${compiler_cache[@]+"${compiler_cache[@]}"} \
   --image localhost/orchard-hardware-kernel-toolchain:bookworm -- bash -euc '
     platform=$1
     export KBUILD_BUILD_USER=orchard KBUILD_BUILD_HOST=builder
     export KBUILD_BUILD_VERSION=1 KBUILD_BUILD_TIMESTAMP="2026-10-22T00:00:00Z"
+    if [[ -n ${ORCHARD_COMPILER_CACHE:-} ]]; then
+      # ccache answers as clang-19 from PATH, so the compiler command lines Kbuild
+      # records stay the same with and without it and switching rebuilds nothing.
+      mkdir -p "$ORCHARD_TMP/compiler-cache-bin"
+      ln -sf "$(command -v ccache)" "$ORCHARD_TMP/compiler-cache-bin/clang-19"
+      export PATH="$ORCHARD_TMP/compiler-cache-bin:$PATH" CCACHE_DIR=$ORCHARD_COMPILER_CACHE
+    fi
     make -C "$ORCHARD_SRC" O="$ORCHARD_OUT" LLVM=-19 ARCH=arm64 olddefconfig
     cmp "$ORCHARD_OUT/.config" "$ORCHARD_CONFIG/$platform/config"
     make -C "$ORCHARD_SRC" O="$ORCHARD_OUT" -j"$2" LLVM=-19 ARCH=arm64 \
