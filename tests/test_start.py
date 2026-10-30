@@ -54,3 +54,28 @@ class Start(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class Partition(unittest.TestCase):
+    """The root to start is found through its disk's GPT, as orchard's initrd does."""
+    def test_a_partuuid_names_the_partition_of_its_gpt_entry(self):
+        import sys as system
+        system.path.insert(0, str(ROOT / 'tests'))
+        from test_root_initrd import gpt
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            dev, sysfs = work / 'dev', work / 'sys/class/block'
+            dev.mkdir()
+            gpt(dev / 'nvme0n1', 4096, [OTHER, ROOTFS])
+            disk = work / 'sys/devices/nvme0n1'
+            (disk / 'queue').mkdir(parents=True)
+            (disk / 'queue/logical_block_size').write_text('4096\n')
+            sysfs.mkdir(parents=True)
+            (sysfs / 'nvme0n1').symlink_to(disk)
+            for number in (1, 2):
+                (disk / f'nvme0n1p{number}').mkdir()
+                (disk / f'nvme0n1p{number}/partition').write_text(f'{number}\n')
+                (sysfs / f'nvme0n1p{number}').symlink_to(disk / f'nvme0n1p{number}')
+            self.assertEqual(start.partition(ROOTFS.upper(), sysfs, dev), str(dev / 'nvme0n1p2'))
+            with self.assertRaisesRegex(ValueError, 'No partition'):
+                start.partition('00000000-1111-4222-8333-444455556666', sysfs, dev)

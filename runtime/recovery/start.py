@@ -11,8 +11,10 @@ has to be started from its entry: `orchard launch`.
 import json
 import os
 from pathlib import Path
+import struct
 import subprocess
 import sys
+import uuid
 
 REQUEST = Path('/run/orchard/start.json')
 NEWROOT = Path('/newroot')
@@ -26,11 +28,32 @@ def run(*argv):
         raise RuntimeError(f'{argv[0]}: {result.stderr.strip()[-500:]}')
 
 
-def partition(partuuid):
-    for uevent in SYSFS.glob('*/uevent'):
+def gpt_partuuid(disk, sector, number):
+    """The unique GUID of GPT entry NUMBER on DISK, or None."""
+    with open(disk, 'rb') as stream:
+        stream.seek(sector)
+        header = stream.read(92)
+        if header[:8] != b'EFI PART':
+            return None
+        lba, _, size = struct.unpack_from('<QII', header, 72)
+        stream.seek(lba * sector + (number - 1) * size + 16)
+        guid = stream.read(16)
+    return None if guid == bytes(16) else str(uuid.UUID(bytes_le=guid))
+
+
+def partition(partuuid, sysfs=None, dev=Path('/dev')):
+    """The partition device with PARTUUID: from its uevent where the kernel reports it, else its disk's GPT."""
+    sysfs = sysfs or SYSFS
+    for uevent in sysfs.glob('*/uevent'):
         fields = dict(line.split('=', 1) for line in uevent.read_text().splitlines() if '=' in line)
         if fields.get('PARTUUID', '').lower() == partuuid.lower():
-            return '/dev/' + fields['DEVNAME']
+            return str(dev / fields['DEVNAME'])
+    for number in sorted(sysfs.glob('*/partition')):
+        part = number.parent
+        disk = part.resolve().parent.name
+        sector = int((sysfs / disk / 'queue/logical_block_size').read_text())
+        if gpt_partuuid(dev / disk, sector, int(number.read_text())) == partuuid.lower():
+            return str(dev / part.name)
     raise ValueError(f'No partition {partuuid}')
 
 
