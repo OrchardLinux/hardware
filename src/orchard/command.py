@@ -22,18 +22,20 @@ def main():
     parser.add_argument('--version', action='version', version=version('orchard'))
     parser.add_argument('--verbose', action='store_true', help='show internal device events')
     commands = parser.add_subparsers(dest='action', required=True)
-    build = commands.add_parser('build', help='build DIRECTORY/init and optional DIRECTORY/rootfs into a RAM payload')
-    build.add_argument('directory', type=Path, nargs='?', default=Path('.'),
-                       help='a directory containing init and optional rootfs/ (default: this one)')
-    build.add_argument('--hardware', type=Path, help='use the hardware data and recipes of another orchard checkout')
-    build.add_argument('--device', help='the board to build for; default from orchard.local.toml or ~/.config/orchard/config.toml')
-    build.add_argument('--cache', type=Path, help='override the shared component cache')
-    build.add_argument('--kernel-dir', type=Path, help='reuse a staged kernel/DTB/module tree')
-    for component in ('pongo', 'busybox', 'loader'):
-        build.add_argument('--' + component, type=Path, help='reuse this local component')
-    build.add_argument('--modules', action='store_true', help='include matching modules for manual use; does not load them')
-    build.add_argument('--firmware', action='store_true',
-                       help="include the device's firmware from its recipe (read from the IPSW once, then cached)")
+    build = commands.add_parser('build', help='build DIRECTORY/init and optional DIRECTORY/rootfs into a RAM payload '
+                                'for every board of one platform')
+    run = commands.add_parser('run', help='build what is missing for the attached board, then boot it')
+    for command, what in ((build, 'a directory containing init and optional rootfs/'),
+                          (run, 'the payload directory')):
+        command.add_argument('directory', type=Path, nargs='?', default=Path('.'), help=what + ' (default: this one)')
+        command.add_argument('--device', help='a board; its platform is built (default: orchard.local.toml, '
+                             'else the attached device)')
+        command.add_argument('--platform', help='the platform to build, e.g. apple-16k')
+        command.add_argument('--hardware', type=Path, help='use the hardware data and recipes of another orchard checkout')
+        command.add_argument('--cache', type=Path, help='override the shared component cache')
+        command.add_argument('--kernel-dir', type=Path, help='reuse a staged kernel/DTB/module tree')
+        for component in ('pongo', 'busybox', 'loader'):
+            command.add_argument('--' + component, type=Path, help='reuse this local component')
     cached = commands.add_parser('cache', help='list, remove or prune shared build components; no device access')
     cached.add_argument('remove', nargs='*', metavar='COMPONENT[/KEY]',
                         help='entries to delete, e.g. kernel-j71b/0bd1204e; lists entries when omitted')
@@ -41,9 +43,7 @@ def main():
                         help='keep only the most recently used entries of each component')
     cached.add_argument('--keep', type=int, default=5, help='entries per component that --prune keeps (default 5)')
     cached.add_argument('--cache', type=Path, help='override the shared component cache')
-    run = commands.add_parser('run', help='boot the last successful RAM payload for DIRECTORY')
-    run.add_argument('directory', type=Path, nargs='?', default=Path('.'),
-                     help='a directory whose out/ contains the built payload (default: this one)')
+    run.add_argument('--no-build', action='store_true', help='boot the last build without rebuilding')
     run.add_argument('-y', '--yes', action='store_true',
                      help='boot without prompting, including without an interactive terminal')
     commands.add_parser('shell', help='open a root shell on the running RAM payload over USB SSH')
@@ -91,8 +91,7 @@ def main():
             from orchard.ram import build_directory
             build_directory(args.directory, hardware=args.hardware, cache=args.cache,
                             kernel=args.kernel_dir, busybox=args.busybox, loader=args.loader,
-                            pongo=args.pongo, modules=args.modules, device=args.device,
-                            firmware=args.firmware)
+                            pongo=args.pongo, device=args.device, platform=args.platform)
             return
         if args.action in ('shell', 'exec', 'push', 'pull'):
             from orchard import ram_session
@@ -124,7 +123,9 @@ def main():
             return
         if args.action == 'run':
             from orchard.boot import run_directory
-            run_directory(args.directory, yes=args.yes)
+            run_directory(args.directory, yes=args.yes, build=not args.no_build, device=args.device,
+                          platform=args.platform, hardware=args.hardware, cache=args.cache,
+                          kernel=args.kernel_dir, busybox=args.busybox, loader=args.loader, pongo=args.pongo)
             return
         with ExitStack() as stack:
             if args.action in ('boot', 'capture-adt'):

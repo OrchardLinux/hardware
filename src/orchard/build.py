@@ -26,8 +26,8 @@ _BASE_PRODUCER = kernels.build_base
 
 PAYLOAD = 'payload.toml'
 LOCAL = 'orchard.local.toml'
-NO_DEVICE = ('No device selected: pass --device BOARD, or set device = "BOARD" in '
-             'orchard.local.toml or ~/.config/orchard/config.toml')
+NO_DEVICE = ('No device selected: pass --device BOARD, set device = "BOARD" in '
+             'orchard.local.toml, or connect the device')
 _BOARD = re.compile(r'[a-z0-9][a-z0-9_-]*')
 
 
@@ -43,16 +43,22 @@ def _toml(path, allowed):
     return settings
 
 
+PAYLOAD_DEFAULTS = {'transport': True, 'modules': False, 'firmware': False}
+
+
 def payload_settings(directory):
     """DIRECTORY/payload.toml: how this RAM payload is built. Optional.
 
-    transport = false leaves the USB session (network, SSH) out of the payload.
+    transport = false leaves the USB session (network, SSH) out; modules = true
+    stages the kernel's modules without loading them; firmware = true adds the
+    booted board's firmware when `orchard run` boots it.
     """
     path = Path(directory).expanduser().resolve() / PAYLOAD
-    settings = _toml(path, ('transport',)) if path.exists() else {}
-    if not isinstance(settings.get('transport', True), bool):
-        raise ValueError(f'{path}: transport must be true or false')
-    return {'transport': settings.get('transport', True)}
+    settings = _toml(path, tuple(PAYLOAD_DEFAULTS)) if path.exists() else {}
+    for name, value in settings.items():
+        if not isinstance(value, bool):
+            raise ValueError(f'{path}: {name} must be true or false')
+    return {**PAYLOAD_DEFAULTS, **settings}
 
 
 def local_settings(directory):
@@ -71,31 +77,24 @@ def local_settings(directory):
     return {}, None
 
 
-def user_settings():
-    """~/.config/orchard/config.toml: this person's defaults for every checkout."""
-    root = Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config')
-    path = root / 'orchard/config.toml'
-    return (_toml(path, ('device',)), path) if path.exists() else ({}, None)
-
-
 def resolve_device(directory, device=None):
-    """--device, else orchard.local.toml, else the user config; None if none chooses.
+    """--device, else this checkout's orchard.local.toml; None if neither chooses.
 
-    Projects and distributions name no device: which board you build for is
-    your choice, not the repository's.
+    Projects and distributions name no board, and neither does a per-person
+    setting: many work on several boards, one checkout or attached device each.
     """
     if device is not None:
         return device
-    for settings, path in (local_settings(directory), user_settings()):
-        if 'device' in settings:
-            if not isinstance(settings['device'], str) or not _BOARD.fullmatch(settings['device']):
-                raise ValueError(f'{path}: invalid device name')
-            return settings['device']
+    settings, path = local_settings(directory)
+    if 'device' in settings:
+        if not isinstance(settings['device'], str) or not _BOARD.fullmatch(settings['device']):
+            raise ValueError(f'{path}: invalid device name')
+        return settings['device']
     return None
 
 
 def configured_device(directory):
-    """The device chosen for DIRECTORY (orchard.local.toml or user config), or None."""
+    """The device chosen for DIRECTORY's checkout (orchard.local.toml), or None."""
     return resolve_device(directory)
 
 
@@ -436,10 +435,56 @@ def prepare_tools(hardware=None, cache=None, *, device):
         return _prepare_tools(hardware, cache / 'components-v2')
 
 
+RELEASES = 'https://github.com/OrchardLinux/orchard/releases/download'
+
+
+def released_pongo(hardware):
+    """(tag, sha256) of the latest release's Pongo, if this checkout's recipe is unchanged since.
+
+    Pongo needs macOS with Xcode and the iPhoneOS SDK to build, and it is the
+    same for every device, so an unchanged recipe uses the released binary.
+    """
+    def git(*arguments):
+        return subprocess.run(['git', '-C', str(hardware), *arguments], capture_output=True, text=True)
+    described = git('describe', '--tags', '--abbrev=0')
+    if described.returncode:
+        return None
+    tag = described.stdout.strip()
+    if git('diff', '--quiet', tag, '--', 'boot/quiet').returncode:
+        return None
+    from .http import open_url
+    for sums in ('SHA256SUMS', 'launcher.SHA256SUMS'):  # releases before 0.2 list it with the launcher
+        try:
+            with open_url(f'{RELEASES}/{tag}/{sums}') as response:
+                text = response.read(1024 * 1024).decode()
+        except (OSError, ValueError):
+            continue
+        for line in text.splitlines():
+            parts = line.split()
+            if len(parts) == 2 and parts[1].removeprefix('./') == 'pongo.bin' and re.fullmatch(r'[0-9a-f]{64}', parts[0]):
+                return tag, parts[0]
+    return None
+
+
 def _prepare_pongo(hardware, components):
+    released = released_pongo(hardware)
+    if released is not None:
+        tag, checksum = released
+        def fetch(stage):
+            from .http import open_url
+            print(f'Using the released Pongo of {tag}; its recipe is unchanged', flush=True)
+            with open_url(f'{RELEASES}/{tag}/pongo.bin') as response:
+                data = response.read(64 * 1024 * 1024 + 1)
+            if len(data) > 64 * 1024 * 1024 or hashlib.sha256(data).hexdigest() != checksum:
+                raise ValueError(f'The released Pongo of {tag} does not match its checksum')
+            (stage / 'pongo.bin').write_bytes(data)
+        return cached_component(components, 'pongo', lambda: 'release-' + checksum, fetch) / 'pongo.bin'
+
     def produce(stage):
-        if sys.platform != 'darwin':
-            raise ValueError('Building Pongo needs macOS/Xcode; use --pongo FILE on Linux')
+        if sys.platform != 'darwin' or not shutil.which('xcrun'):
+            raise ValueError('Pongo\'s recipe (boot/quiet) differs from the latest release, and building it '
+                             'needs macOS with Xcode and the iPhoneOS SDK. Pass --pongo FILE to use another, '
+                             'or build on a Mac.')
         work = recipe_work(components, 'pongo', recipe_key(hardware, ['boot/quiet']))
         argv = [sys.executable, hardware / 'boot/quiet/build-pongo.py',
                 '--work-dir', work, '--output', stage / 'pongo.bin']
@@ -489,7 +534,8 @@ def prepare_components(hardware=None, cache=None, *, device, kernel=None,
         if busybox is None:
             busybox = _prepare_tools(hardware, components) / 'busybox'
         if loader is None:
-            loader = _prepare_m1n1(hardware, components, device)
+            # One m1n1 starts every Apple device; the board only picks its DTB.
+            loader = _prepare_m1n1(hardware, components, 'apple')
     return {name: Path(path).resolve() for name, path in
             dict(kernel=kernel, busybox=busybox, loader=loader, pongo=pongo).items()}
 
