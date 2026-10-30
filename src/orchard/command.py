@@ -70,6 +70,9 @@ def main():
     check.add_argument('--boot', action='store_true', help='resolve only boot assets')
     commands.add_parser('devices', help='list USB devices without modifying them')
     commands.add_parser('setup-host', help='install missing boot tools and Linux USB permissions; no device access')
+    configure = commands.add_parser('setup', help='show what this host needs to build and boot, then set it up; safe to rerun')
+    configure.add_argument('-y', '--yes', action='store_true', help='apply without asking')
+    commands.add_parser('doctor', help='show what this host has and lacks for building and booting; changes nothing')
     boot = commands.add_parser('boot', help='boot recovery from a manifest or explicit image')
     boot.add_argument('source', nargs='?', help='registered distro, local TOML or exact HTTPS URL')
     boot.add_argument('--manifest', '--release', dest='manifest')
@@ -103,6 +106,11 @@ def main():
             else:
                 ram_session.pull(args.remote, args.local, serial=args.serial)
             return
+        if args.action in ('setup', 'doctor'):
+            from orchard import host_setup
+            if args.action == 'doctor':
+                raise SystemExit(host_setup.doctor())
+            raise SystemExit(host_setup.setup_interactive(yes=args.yes))
         if args.action == 'cache':
             from orchard import components
             if args.prune and args.remove:
