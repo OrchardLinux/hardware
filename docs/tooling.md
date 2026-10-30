@@ -63,7 +63,7 @@ No repository and no per-person setting names a board: many contributors work on
 
 ## Distributions (done)
 
-A distribution has no submodule, no launcher and no root configuration. `orchard` runs mainline, or the orchard checkout its `orchard.local.toml` names. CI checks out orchard `main` (`ORCHARD_REF` selects another); the compiled component bundle still comes from a published orchard release. A release's build receipt records the exact orchard commit (`orchard.hardware.revision()`), so the only pin is written by CI, for reproducing a release.
+A distribution has no submodule, no launcher and no root configuration. `orchard` runs mainline, or the orchard checkout its `orchard.local.toml` names. Distribution CI tests against orchard `main`; a release build uses one published orchard release whole, its tools and its per-platform component bundles alike (`ORCHARD_REF` overrides the tools). A release's manifest and build receipt record the exact orchard commit (`orchard.hardware.revision()`).
 
 ## Testing an install without a device
 
