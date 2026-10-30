@@ -1,0 +1,409 @@
+From e01452b95affefb2832bf9726e90fe8a59dd13d7 Mon Sep 17 00:00:00 2001
+From: Dalton Alexandre <alley.nightly_0b@icloud.com>
+Date: Fri, 30 Oct 2026 08:48:06 -0700
+Subject: [PATCH] soc: apple: Add an exclusive T8010 AOP DMA owner
+
+Provide bounded coherent DMA and DT-described MMIO for the orientation
+service. Stop the AOP before releasing buffers, retain allocations if it
+cannot stop, and require a fresh boot after starting the core. Do not
+expose arbitrary physical memory.
+
+Signed-off-by: Dalton Alexandre <alley.nightly_0b@icloud.com>
+---
+ MAINTAINERS                        |   2 +
+ drivers/soc/apple/Kconfig          |  10 +
+ drivers/soc/apple/Makefile         |   2 +
+ drivers/soc/apple/apple-aop-dma.c  | 310 +++++++++++++++++++++++++++++
+ include/uapi/linux/apple-aop-dma.h |  19 ++
+ 5 files changed, 343 insertions(+)
+ create mode 100644 drivers/soc/apple/apple-aop-dma.c
+ create mode 100644 include/uapi/linux/apple-aop-dma.h
+
+diff --git a/MAINTAINERS b/MAINTAINERS
+index ffdcf4a..2b5c326 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -2068,6 +2068,8 @@ APPLE T8010 AOP ORIENTATION
+ M:	Dalton Alexandre <alley.nightly_0b@icloud.com>
+ S:	Maintained
+ F:	Documentation/devicetree/bindings/soc/apple/apple,t8010-aop.yaml
++F:	drivers/soc/apple/apple-aop-dma.c
++F:	include/uapi/linux/apple-aop-dma.h
+ 
+ APPLETALK NETWORK LAYER
+ L:	netdev@vger.kernel.org
+diff --git a/drivers/soc/apple/Kconfig b/drivers/soc/apple/Kconfig
+index 4e8dfff..bd5c37c 100644
+--- a/drivers/soc/apple/Kconfig
++++ b/drivers/soc/apple/Kconfig
+@@ -4,6 +4,16 @@ if ARCH_APPLE || COMPILE_TEST
+ 
+ menu "Apple SoC drivers"
+ 
++config APPLE_AOP_DMA
++	tristate "Apple T8010 AOP userspace DMA owner"
++	depends on ARM64_16K_PAGES
++	depends on OF
++	help
++	  Provide exclusive root-only MMIO and bounded coherent DMA buffers for
++	  the T8010 AOP orientation service. The core is stopped before buffers
++	  are released. After starting it, a reboot is required to start again.
++	  This does not provide generic access to physical memory.
++
+ config APPLE_MAILBOX
+ 	tristate "Apple SoC mailboxes"
+ 	depends on PM
+diff --git a/drivers/soc/apple/Makefile b/drivers/soc/apple/Makefile
+index 73c8bd2..6d35fbf 100644
+--- a/drivers/soc/apple/Makefile
++++ b/drivers/soc/apple/Makefile
+@@ -18,3 +18,5 @@ obj-$(CONFIG_APPLE_PMP_T8015_V1) += pmp_t8015_v1.o
+ obj-$(CONFIG_APPLE_SIO) += apple-sio.o
+ apple-sio-y := apple-sio-core.o
+ obj-$(CONFIG_APPLE_T8010_WLAN) += apple-t8010-wlan.o
++
++obj-$(CONFIG_APPLE_AOP_DMA) += apple-aop-dma.o
+diff --git a/drivers/soc/apple/apple-aop-dma.c b/drivers/soc/apple/apple-aop-dma.c
+new file mode 100644
+index 0000000..a8daae4
+--- /dev/null
++++ b/drivers/soc/apple/apple-aop-dma.c
+@@ -0,0 +1,310 @@
++// SPDX-License-Identifier: GPL-2.0-only OR MIT
++/* J71b AOP userspace-driver memory owner. No framebuffer or /dev/mem DMA. */
++#include <linux/dma-mapping.h>
++#include <linux/fs.h>
++#include <linux/io.h>
++#include <linux/ioport.h>
++#include <linux/miscdevice.h>
++#include <linux/mm.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/slab.h>
++#include <linux/uaccess.h>
++#include <linux/delay.h>
++#include <linux/sizes.h>
++#include <uapi/linux/apple-aop-dma.h>
++
++#define AOP_RUN BIT(4)
++#define AOP_SLOTS 64
++#define AOP_MAX_BUFFER SZ_4M
++#define AOP_MAX_TOTAL SZ_16M
++
++struct aop_buffer {
++	void *cpu;
++	dma_addr_t dma;
++	size_t size;
++};
++
++struct aop_memory {
++	struct device *dev;
++	struct miscdevice misc;
++	struct mutex lock;
++	void __iomem *regs;
++	void __iomem *autoboot;
++	struct resource iop, sram;
++	struct aop_buffer buffers[AOP_SLOTS];
++	size_t total;
++	unsigned int count;
++	bool opened;
++	bool used;
++};
++
++static bool aop_halt(struct aop_memory *aop)
++{
++	u32 control = readl(aop->regs + 0x44);
++
++	if ((control & AOP_RUN) || readl(aop->autoboot)) {
++		writel(control & ~AOP_RUN, aop->regs + 0x44);
++		writel(0, aop->autoboot);
++		/* Order the stop and auto-boot writes before checking the run bit. */
++		wmb();
++		if (readl(aop->regs + 0x44) & AOP_RUN)
++			return false;
++		/* Do not read SRAM once the coprocessor has stopped. */
++		msleep(20);
++	}
++	return true;
++}
++
++static int aop_open(struct inode *inode, struct file *file)
++{
++	struct miscdevice *misc = file->private_data;
++	struct aop_memory *aop = container_of(misc, struct aop_memory, misc);
++	int ret = 0;
++
++	mutex_lock(&aop->lock);
++	if (aop->opened || aop->used ||
++	    (readl(aop->regs + 0x44) & AOP_RUN) || readl(aop->autoboot)) {
++		ret = -EBUSY;
++	} else {
++		aop->opened = true;
++		file->private_data = aop;
++	}
++	mutex_unlock(&aop->lock);
++	return ret;
++}
++
++static int aop_release(struct inode *inode, struct file *file)
++{
++	struct aop_memory *aop = file->private_data;
++	unsigned int i;
++
++	mutex_lock(&aop->lock);
++	/* The device must stop using its addresses before any DMA memory is freed. */
++	if (!aop->used && ((readl(aop->regs + 0x44) & AOP_RUN) || readl(aop->autoboot))) {
++		/* Starting again after stopping this firmware can stall its SRAM bus. */
++		aop->used = true;
++		__module_get(THIS_MODULE);
++	}
++	if (!aop_halt(aop)) {
++		dev_err(aop->dev, "AOP did not stop; retaining its DMA memory until reboot\n");
++		mutex_unlock(&aop->lock);
++		return 0;
++	}
++	for (i = 0; i < aop->count; i++) {
++		struct aop_buffer *buffer = &aop->buffers[i];
++
++		dma_free_coherent(aop->dev, buffer->size, buffer->cpu, buffer->dma);
++		memset(buffer, 0, sizeof(*buffer));
++	}
++	aop->count = 0;
++	aop->total = 0;
++	aop->opened = false;
++	mutex_unlock(&aop->lock);
++	return 0;
++}
++
++static long aop_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
++{
++	struct aop_memory *aop = file->private_data;
++	struct aop_dma_alloc request;
++	struct aop_buffer *buffer;
++	int ret = 0;
++
++	if (cmd == AOP_DMA_START) {
++		mutex_lock(&aop->lock);
++		if (aop->used || (readl(aop->regs + 0x44) & AOP_RUN)) {
++			ret = -EBUSY;
++		} else {
++			/* Never rebind or restart a core that may still hold DMA addresses. */
++			aop->used = true;
++			__module_get(THIS_MODULE);
++			/* Publish coherent image data before releasing the core. */
++			wmb();
++			writel(readl(aop->regs + 0x44) | AOP_RUN, aop->regs + 0x44);
++			writel(1, aop->autoboot);
++		}
++		mutex_unlock(&aop->lock);
++		return ret;
++	}
++	if (cmd != AOP_DMA_ALLOC)
++		return -ENOTTY;
++	if (copy_from_user(&request, (void __user *)arg, sizeof(request)))
++		return -EFAULT;
++	if (!request.size || request.size > AOP_MAX_BUFFER)
++		return -EINVAL;
++	request.size = PAGE_ALIGN(request.size);
++	mutex_lock(&aop->lock);
++	if (aop->count == AOP_SLOTS || request.size > AOP_MAX_TOTAL - aop->total) {
++		ret = -ENOSPC;
++		goto out;
++	}
++	buffer = &aop->buffers[aop->count];
++	buffer->size = request.size;
++	buffer->cpu = dma_alloc_coherent(aop->dev, buffer->size, &buffer->dma, GFP_KERNEL);
++	if (!buffer->cpu) {
++		ret = -ENOMEM;
++		goto out;
++	}
++	memset(buffer->cpu, 0, buffer->size);
++	request.address = buffer->dma;
++	request.index = AOP_DMA_MAP_BUFFER + aop->count;
++	if (copy_to_user((void __user *)arg, &request, sizeof(request))) {
++		dma_free_coherent(aop->dev, buffer->size, buffer->cpu, buffer->dma);
++		memset(buffer, 0, sizeof(*buffer));
++		ret = -EFAULT;
++		goto out;
++	}
++	aop->total += buffer->size;
++	aop->count++;
++out:
++	mutex_unlock(&aop->lock);
++	return ret;
++}
++
++static int aop_mmap(struct file *file, struct vm_area_struct *vma)
++{
++	struct aop_memory *aop = file->private_data;
++	unsigned long index = vma->vm_pgoff;
++	unsigned long length = vma->vm_end - vma->vm_start;
++	phys_addr_t phys = 0;
++	size_t size = 0;
++	int ret;
++
++	if (vma->vm_flags & VM_EXEC)
++		return -EPERM;
++	if (!(vma->vm_flags & VM_SHARED))
++		return -EINVAL;
++	mutex_lock(&aop->lock);
++	vma->vm_pgoff = 0;
++	vm_flags_set(vma, VM_DONTEXPAND | VM_DONTDUMP);
++	vm_flags_clear(vma, VM_MAYEXEC);
++	if (index >= AOP_DMA_MAP_BUFFER) {
++		struct aop_buffer *buffer;
++
++		index -= AOP_DMA_MAP_BUFFER;
++		if (index >= aop->count || length > aop->buffers[index].size) {
++			ret = -EINVAL;
++			goto out;
++		}
++		buffer = &aop->buffers[index];
++		ret = dma_mmap_coherent(aop->dev, vma, buffer->cpu, buffer->dma, buffer->size);
++		goto out;
++	}
++	switch (index) {
++	case AOP_DMA_MAP_IOP:
++		phys = aop->iop.start;
++		size = resource_size(&aop->iop);
++		break;
++	case AOP_DMA_MAP_SRAM:
++		phys = aop->sram.start;
++		size = resource_size(&aop->sram);
++		break;
++	default:
++		ret = -EINVAL;
++		goto out;
++	}
++	if (length > size) {
++		ret = -EINVAL;
++		goto out;
++	}
++	vm_flags_set(vma, VM_IO);
++	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
++	ret = remap_pfn_range(vma, vma->vm_start, phys >> PAGE_SHIFT, length, vma->vm_page_prot);
++out:
++	mutex_unlock(&aop->lock);
++	return ret;
++}
++
++static const struct file_operations aop_fops = {
++	.owner = THIS_MODULE,
++	.open = aop_open,
++	.release = aop_release,
++	.unlocked_ioctl = aop_ioctl,
++	.mmap = aop_mmap,
++};
++
++static int aop_probe(struct platform_device *pdev)
++{
++	struct aop_memory *aop;
++	struct resource *iop, *sram, *autoboot;
++	int ret;
++
++	aop = devm_kzalloc(&pdev->dev, sizeof(*aop), GFP_KERNEL);
++	if (!aop)
++		return -ENOMEM;
++	aop->dev = &pdev->dev;
++	mutex_init(&aop->lock);
++	ret = dma_coerce_mask_and_coherent(aop->dev, DMA_BIT_MASK(40));
++	if (ret)
++		return ret;
++	iop = platform_get_resource_byname(pdev, IORESOURCE_MEM, "iop");
++	sram = platform_get_resource_byname(pdev, IORESOURCE_MEM, "sram");
++	autoboot = platform_get_resource_byname(pdev, IORESOURCE_MEM, "autoboot");
++	if (!iop || !sram || !autoboot || !PAGE_ALIGNED(iop->start) ||
++	    !PAGE_ALIGNED(sram->start) || resource_size(iop) != 0x20000 ||
++	    resource_size(sram) != 0xa0000 || resource_size(autoboot) != 4)
++		return -EINVAL;
++	aop->iop = *iop;
++	aop->sram = *sram;
++	aop->regs = devm_ioremap_resource(aop->dev, iop);
++	if (IS_ERR(aop->regs))
++		return PTR_ERR(aop->regs);
++	if (!devm_request_mem_region(aop->dev, sram->start, resource_size(sram),
++				     dev_name(aop->dev)))
++		return -EBUSY;
++	aop->autoboot = devm_ioremap_resource(aop->dev, autoboot);
++	if (IS_ERR(aop->autoboot))
++		return PTR_ERR(aop->autoboot);
++
++	aop->misc.minor = MISC_DYNAMIC_MINOR;
++	aop->misc.name = "apple-aop-dma";
++	aop->misc.fops = &aop_fops;
++	aop->misc.mode = 0600;
++	aop->misc.parent = aop->dev;
++	ret = misc_register(&aop->misc);
++	if (ret)
++		return ret;
++	platform_set_drvdata(pdev, aop);
++	dev_info(aop->dev, "AOP DMA owner ready (exclusive userspace driver)\n");
++	return 0;
++}
++
++static void aop_remove(struct platform_device *pdev)
++{
++	struct aop_memory *aop = platform_get_drvdata(pdev);
++
++	misc_deregister(&aop->misc);
++}
++
++static void aop_shutdown(struct platform_device *pdev)
++{
++	struct aop_memory *aop = platform_get_drvdata(pdev);
++
++	mutex_lock(&aop->lock);
++	if (aop->opened)
++		aop_halt(aop);
++	mutex_unlock(&aop->lock);
++}
++
++static const struct of_device_id aop_of_match[] = {
++	{ .compatible = "apple,t8010-aop" },
++	{}
++};
++MODULE_DEVICE_TABLE(of, aop_of_match);
++
++static struct platform_driver aop_driver = {
++	.probe = aop_probe,
++	.remove = aop_remove,
++	.shutdown = aop_shutdown,
++	.driver = {
++		.name = "apple-aop-dma",
++		.of_match_table = aop_of_match,
++		.suppress_bind_attrs = true,
++	},
++};
++module_platform_driver(aop_driver);
++MODULE_LICENSE("Dual MIT/GPL");
++MODULE_DESCRIPTION("Apple AOP coherent DMA and MMIO owner");
+diff --git a/include/uapi/linux/apple-aop-dma.h b/include/uapi/linux/apple-aop-dma.h
+new file mode 100644
+index 0000000..223a36a
+--- /dev/null
++++ b/include/uapi/linux/apple-aop-dma.h
+@@ -0,0 +1,19 @@
++/* SPDX-License-Identifier: GPL-2.0-only OR MIT */
++#ifndef J71B_AOP_DMA_H
++#define J71B_AOP_DMA_H
++#include <linux/types.h>
++#include <linux/ioctl.h>
++
++/* mmap offsets are selector * AOP_DMA_PAGE_SIZE; no physical addresses accepted. */
++struct aop_dma_alloc {
++	__u64 size;
++	__u64 address;
++	__u64 index;
++};
++#define AOP_DMA_START _IO('A', 2)
++#define AOP_DMA_ALLOC _IOWR('A', 1, struct aop_dma_alloc)
++#define AOP_DMA_MAP_IOP 0
++#define AOP_DMA_MAP_SRAM 1
++#define AOP_DMA_MAP_BUFFER 0x100
++#define AOP_DMA_PAGE_SIZE 0x4000
++#endif
+-- 
+2.56.0
+

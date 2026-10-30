@@ -1,0 +1,35 @@
+From 3510bd036712b60a0e3c1978671fb52141ac0f45 Mon Sep 17 00:00:00 2001
+From: Dalton Alexandre <alley.nightly_0b@icloud.com>
+Date: Fri, 30 Oct 2026 08:48:06 -0700
+Subject: [PATCH] arm64: dts: apple: Enable the J71b always-on processor
+
+Describe the J71b IOP, SRAM and auto-boot resources. Keep other A10
+boards unchanged until their orientation path is validated.
+
+Signed-off-by: Dalton Alexandre <alley.nightly_0b@icloud.com>
+---
+ arch/arm64/boot/dts/apple/t8010-j71b.dts | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/t8010-j71b.dts b/arch/arm64/boot/dts/apple/t8010-j71b.dts
+index 2aada48..8f21ccd 100644
+--- a/arch/arm64/boot/dts/apple/t8010-j71b.dts
++++ b/arch/arm64/boot/dts/apple/t8010-j71b.dts
+@@ -20,3 +20,14 @@
+ &touchscreen {
+ 	firmware-name = "apple/j71b-fwstart.z2fw";
+ };
++
++/* The ARMv7 AOP transport is owned exclusively by the orientation service. */
++&{/soc} {
++	aop: coprocessor@210800000 {
++		compatible = "apple,t8010-aop";
++		reg = <0x2 0x10800000 0x0 0x20000>,
++		      <0x2 0x10e00000 0x0 0xa0000>,
++		      <0x2 0x10000500 0x0 0x4>;
++		reg-names = "iop", "sram", "autoboot";
++	};
++};
+-- 
+2.56.0
+

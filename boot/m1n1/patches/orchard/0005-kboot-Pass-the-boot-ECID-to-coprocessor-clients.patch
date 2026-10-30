@@ -1,0 +1,34 @@
+From fe4ef027ccb984077fa1b4c7d9bd1f7fcb90763e Mon Sep 17 00:00:00 2001
+From: Dalton Alexandre <alley.nightly_0b@icloud.com>
+Date: Fri, 30 Oct 2026 08:35:32 -0700
+Subject: [PATCH] kboot: Pass the boot ECID to coprocessor clients
+
+Copy the optional unique-chip-id from the boot ADT to chosen/apple,ecid as a big-endian u64. AOP firmware uses this identity in its entropy metadata. No identity is embedded in the public DTB or logged by this handoff.
+
+Signed-off-by: Dalton Alexandre <alley.nightly_0b@icloud.com>
+---
+ src/kboot.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/src/kboot.c b/src/kboot.c
+index 87f67200..31b768a5 100644
+--- a/src/kboot.c
++++ b/src/kboot.c
+@@ -318,6 +318,14 @@ static int dt_set_chosen(void)
+     if (fdt_setprop(dt, node, "asahi,m1n1-stage2-version", m1n1_version, strlen(m1n1_version) + 1))
+         bail("FDT: couldn't set asahi,m1n1-stage2-version\n");
+ 
++    /* Boot-time identity for coprocessor firmware entropy, never baked into a DTB. */
++    int chosen = adt_path_offset(adt, "/chosen");
++    u64 ecid;
++    if (chosen >= 0 && ADT_GETPROP(adt, chosen, "unique-chip-id", &ecid) >= 0 && ecid) {
++        if (fdt_setprop_u64(dt, node, "apple,ecid", ecid))
++            bail("FDT: couldn't set AOP boot identity\n");
++    }
++
+     if (dt_set_rng_seed_sep(node))
+         return dt_set_rng_seed_adt(node);
+ 
+-- 
+2.56.0
+
