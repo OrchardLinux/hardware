@@ -2,7 +2,7 @@
 
 For native GitHub Actions builds, see [GitHub builds](docs/ci.md). Local builds below use Podman by default.
 
-Run commands from a checkout of this repository. Kernel and recovery-tool builds use Podman; loader builds also require the tools listed in their producer scripts. The recipes need only Python 3.11+ and its standard library, run as `$ORCHARD_PYTHON` (default `python3`); `orchard` passes its own interpreter.
+Run commands from a checkout of this repository. Kernel and recovery-tool builds use Podman; loader builds also require the tools listed in their producer scripts. The recipes need only Python 3.11+ and its standard library, run as `` (default `python3`); `orchard` passes its own interpreter. They run `src/orchard/buildenv.py` by path, so no package needs to be installed.
 
 ## Kernel and loader
 

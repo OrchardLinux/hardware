@@ -79,12 +79,12 @@ if [[ -n "$include_header" ]]; then
   [[ -f "$include_header" ]] || { echo 'Missing include header' >&2; exit 1; }
   cp "$include_header" "$source/src/${include_header##*/}"
 fi
-"$python" "$here/../../buildenv.py" build --file "$here/Containerfile" \
+"$python" "$here/../../src/orchard/buildenv.py" build --file "$here/Containerfile" \
   --image localhost/orchard-hardware-m1n1:bookworm --context "$here"
 # Crates are the same for every patch set, so callers may share one Cargo home.
 cargo=${cargo_override:-"$work/cargo"}
 mkdir -p "$cargo"
-"$python" "$here/../../buildenv.py" run --network \
+"$python" "$here/../../src/orchard/buildenv.py" run --network \
   --bind "$source:/src:rw" --bind "$cargo:/cache:rw" --env CARGO_HOME=/cache \
   --cwd /src --image localhost/orchard-hardware-m1n1:bookworm -- make -j2 USE_CLANG=1 ARCH=aarch64-linux-gnu \
     TOOLCHAIN=/usr/lib/llvm-19/bin/ LLDDIR=/usr/lib/llvm-19/bin/ CHAINLOADING=1 \

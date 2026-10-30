@@ -134,7 +134,7 @@ class ComponentCacheTests(unittest.TestCase):
         hardware = self.cache / 'hardware'
         (hardware / 'boot/m1n1').mkdir(parents=True)
         (hardware / 'boot/m1n1/series').write_text('patches/orchard\n')
-        (hardware / 'buildenv.py').write_text('')
+        (hardware / 'src/orchard').mkdir(parents=True, exist_ok=True); (hardware / 'src/orchard/buildenv.py').write_text('')
         calls = []
 
         def fake_build(*argv, env=None):
@@ -163,8 +163,8 @@ class ComponentCacheTests(unittest.TestCase):
     def test_interrupted_m1n1_tree_is_started_again(self):
         hardware = self.cache / 'hardware'
         (hardware / 'boot/m1n1').mkdir(parents=True)
-        (hardware / 'buildenv.py').write_text('')
-        key = build.recipe_key(hardware, ['boot/m1n1', 'buildenv.py'])
+        (hardware / 'src/orchard').mkdir(parents=True, exist_ok=True); (hardware / 'src/orchard/buildenv.py').write_text('')
+        key = build.recipe_key(hardware, ['boot/m1n1', 'src/orchard/buildenv.py'])
         partial = self.cache / 'work/m1n1-j71b' / key
         (partial / 'source').mkdir(parents=True)
         seen = []

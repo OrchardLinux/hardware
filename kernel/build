@@ -163,11 +163,11 @@ fi
 mkdir -p "$build_output"
 cp "$config" "$build_output/.config"
 echo 'Preparing kernel build container...'
-"$python" "$here/../buildenv.py" build --file "$here/Containerfile" \
+"$python" "$here/../src/orchard/buildenv.py" build --file "$here/Containerfile" \
   --image localhost/orchard-hardware-kernel-toolchain:bookworm --context "$here"
 echo 'Compiling kernel image, modules and device trees...'
 # shellcheck disable=SC2016 # Variables below belong to the recipe shell.
-"$python" "$here/../buildenv.py" run \
+"$python" "$here/../src/orchard/buildenv.py" run \
   --bind "$source:/src:ro" --bind "$build_output:/out:rw" --bind "$here/configs:/config:ro" \
   ${compiler_cache[@]+"${compiler_cache[@]}"} \
   --image localhost/orchard-hardware-kernel-toolchain:bookworm -- bash -euc '

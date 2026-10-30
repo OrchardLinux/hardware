@@ -34,7 +34,7 @@ for directory in "$modules"/*; do
 done
 [[ ${#groups[@]} -gt 0 ]] || { echo 'No external module groups' >&2; exit 1; }
 # shellcheck disable=SC2016 # Variables below belong to the recipe shell.
-"$python" "$here/../buildenv.py" run \
+"$python" "$here/../src/orchard/buildenv.py" run \
   --bind "$source:/src:ro" --bind "$build:/out:rw" --bind "$output:/modules:rw" \
   --env "LOCALVERSION=$localversion" \
   --image localhost/orchard-hardware-kernel-toolchain:bookworm -- bash -euc '

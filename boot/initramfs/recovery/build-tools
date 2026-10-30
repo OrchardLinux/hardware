@@ -47,9 +47,9 @@ for component, filename in (('busybox', 'busybox.deb'),
         pathlib.Path(temporary.name).rename(target)
     print(f'Verified {component}: {target}')
 PY
-"$python" "$here/../../../buildenv.py" build --arch arm64 --file "$here/Containerfile" \
+"$python" "$here/../../../src/orchard/buildenv.py" build --arch arm64 --file "$here/Containerfile" \
   --image localhost/orchard-hardware-recovery-tools:bookworm --context "$here"
-"$python" "$here/../../../buildenv.py" run --arch arm64 \
+"$python" "$here/../../../src/orchard/buildenv.py" run --arch arm64 \
   --bind "$work:/work:rw" --bind "$here:/recipe:ro" \
   --image localhost/orchard-hardware-recovery-tools:bookworm -- bash /recipe/build-tools-in-container
 echo "Recovery tools: $work/bin"

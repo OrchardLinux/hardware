@@ -121,7 +121,7 @@ def kernel_base_inputs(hardware, device, cache):
     recipes = recipe_entries(hardware, [
         'kernel/upstream.lock', 'kernel/configs/' + platform + '/config', 'kernel/series/' + platform,
         'kernel/series.py', 'kernel/build', 'kernel/Containerfile', 'kernel/install-toolchain',
-        'kernel/stage-modules.py', 'buildenv.py',
+        'kernel/stage-modules.py', 'src/orchard/buildenv.py',
     ])
     # Hash only the binary/SDK producer, not unrelated functions in kernel.py.
     return {
@@ -355,7 +355,7 @@ def has_loader_patches(hardware):
 # recovery runtime and doesn't change them.
 TOOL_INPUTS = ['boot/initramfs/recovery/' + name for name in
                ('build-tools', 'build-tools-in-container', 'Containerfile',
-                'install-toolchain', 'upstream.lock')] + ['buildenv.py']
+                'install-toolchain', 'upstream.lock')] + ['src/orchard/buildenv.py']
 
 
 def recipe_work(components, recipe, key):
@@ -409,7 +409,7 @@ def _prepare_pongo(hardware, components):
 
 def _prepare_m1n1(hardware, components, device):
     def key():
-        return recipe_key(hardware, ['boot/m1n1', 'buildenv.py'])
+        return recipe_key(hardware, ['boot/m1n1', 'src/orchard/buildenv.py'])
 
     def produce(stage):
         # One tree per patch set: a changed series starts a fresh tree instead

@@ -55,7 +55,7 @@ jobs:
           mkdir -p out/native-source out/native-output
           printf 'int main(void) { return 0; }\n' > out/native-source/test.c
           # shellcheck disable=SC2016
-          python buildenv.py run --image unused-native \
+          python src/orchard/buildenv.py run --image unused-native \
             --bind "$PWD/out/native-source:/src:ro" --bind "$PWD/out/native-output:/out:rw" --cwd /src -- \
             bash -euc 'cc "$ORCHARD_SRC/test.c" -o "$ORCHARD_OUT/test"; "$ORCHARD_OUT/test"'
           test -s out/native-output/test

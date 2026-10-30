@@ -6,8 +6,7 @@ import unittest
 from unittest.mock import patch
 
 import sys
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import buildenv  # noqa: E402  (a recipe helper beside the checkout root, not a package)
+from orchard import buildenv  # noqa: E402
 
 
 class BuildEnvironment(unittest.TestCase):
