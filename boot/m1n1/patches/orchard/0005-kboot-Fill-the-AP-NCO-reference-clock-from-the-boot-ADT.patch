@@ -1,0 +1,70 @@
+From 588a8148b52770e0f73fe9afedcd14f15e93820d Mon Sep 17 00:00:00 2001
+From: Dalton Alexandre <alley.nightly_0b@icloud.com>
+Date: Fri, 30 Oct 2026 09:21:23 -0700
+Subject: [PATCH] kboot: Fill the AP NCO reference clock from the boot ADT
+
+The NCO reference is not the 24 MHz crystal. When a tree requests the
+nco-ref alias, fill its fixed-clock rate from input zero of the NCO
+provider clock table. Do not embed an inferred rate or any device IDs.
+
+Signed-off-by: Dalton Alexandre <alley.nightly_0b@icloud.com>
+---
+ src/kboot.c | 35 +++++++++++++++++++++++++++++++++++
+ 1 file changed, 35 insertions(+)
+
+diff --git a/src/kboot.c b/src/kboot.c
+index 87f67200..26db705f 100644
+--- a/src/kboot.c
++++ b/src/kboot.c
+@@ -380,6 +380,38 @@ static int dt_set_nvme_hmb(void)
+     return 0;
+ }
+ 
++/* NCO input zero is a boot-provided clock, not the 24 MHz reference crystal. */
++static int dt_set_nco_reference(void)
++{
++    int node = fdt_path_offset(dt, "nco-ref");
++    if (node < 0)
++        return 0;
++
++    int nco = adt_path_offset(adt, "/arm-io/nco");
++    int arm_io = adt_path_offset(adt, "/arm-io");
++    if (nco < 0 || arm_io < 0) {
++        printf("FDT: NCO clock provider unavailable; audio remains disabled\n");
++        return 0;
++    }
++    u32 ids_len, rates_len;
++    const u32 *ids = adt_getprop(adt, nco, "clock-ids", &ids_len);
++    const u64 *rates = adt_getprop(adt, arm_io, "clock-frequencies", &rates_len);
++    if (!ids || ids_len < sizeof(*ids) ||
++        !rates || ids[0] < 0x100 || ids[0] - 0x100 >= rates_len / sizeof(*rates)) {
++        printf("FDT: NCO reference clock unavailable; audio remains disabled\n");
++        return 0;
++    }
++
++    u64 rate = rates[ids[0] - 0x100];
++    if (!rate || rate > 0xffffffffULL) {
++        printf("FDT: invalid NCO reference frequency; audio remains disabled\n");
++        return 0;
++    }
++    if (fdt_setprop_u32(dt, node, "clock-frequency", rate))
++        bail("FDT: failed to set NCO reference frequency\n");
++    return 0;
++}
++
+ static int dt_set_memory(void)
+ {
+     int anode = adt_path_offset(adt, "/chosen");
+@@ -3167,6 +3199,9 @@ int kboot_prepare_dt(void *fdt)
+      * in one of the above devicetree prep functions, and we want an up-to-date value
+      * for the usable memory span to make it into the devicetree.
+      */
++    if (dt_set_nco_reference())
++        return -1;
++
+     if (dt_set_memory())
+         return -1;
+     if (dt_set_nvme_hmb())
+-- 
+2.56.0
+

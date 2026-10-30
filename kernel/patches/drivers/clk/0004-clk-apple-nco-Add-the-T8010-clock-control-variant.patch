@@ -1,0 +1,149 @@
+From c4b22e5ab34887490d6f91aa40f8ac34f9b515ff Mon Sep 17 00:00:00 2001
+From: Dalton Alexandre <alley.nightly_0b@icloud.com>
+Date: Fri, 30 Oct 2026 09:21:23 -0700
+Subject: [PATCH] clk: apple-nco: Add the T8010 clock control variant
+
+The T8010 NCO uses bit 12 as its enable and bit 31 as its control mode,
+unlike T8103. Select these semantics only for apple,t8010-nco. Select
+input zero, whose rate the loader supplies from the boot clock table.
+Keep all existing compatibles and their clock programming unchanged.
+
+Signed-off-by: Dalton Alexandre <alley.nightly_0b@icloud.com>
+---
+ drivers/clk/clk-apple-nco.c | 50 +++++++++++++++++++++++++++++++++++++++++----
+ 1 file changed, 46 insertions(+), 4 deletions(-)
+
+diff --git c/drivers/clk/clk-apple-nco.c w/drivers/clk/clk-apple-nco.c
+index 434c067..78a5518 100644
+--- c/drivers/clk/clk-apple-nco.c
++++ w/drivers/clk/clk-apple-nco.c
+@@ -8,7 +8,9 @@
+ 
+ #include <linux/bits.h>
+ #include <linux/bitfield.h>
++#include <linux/clk.h>
+ #include <linux/clk-provider.h>
++#include <linux/property.h>
+ #include <linux/io.h>
+ #include <linux/kernel.h>
+ #include <linux/math64.h>
+@@ -64,7 +66,14 @@ struct applnco_tables {
+ 	u16 inv[LFSR_TBLSIZE];
+ };
+ 
++struct applnco_hw {
++	u32 enable_mask;
++	u32 control_set;
++	u32 control_clear;
++};
++
+ struct applnco_channel {
++	const struct applnco_hw *soc;
+ 	void __iomem *base;
+ 	struct applnco_tables *tbl;
+ 	struct clk_hw hw;
+@@ -80,7 +89,8 @@ static void applnco_enable_nolock(struct clk_hw *hw)
+ 	u32 val;
+ 
+ 	val = readl_relaxed(chan->base + REG_CTRL);
+-	writel_relaxed(val | CTRL_ENABLE, chan->base + REG_CTRL);
++	writel_relaxed(val | (chan->soc ? chan->soc->enable_mask : CTRL_ENABLE),
++		       chan->base + REG_CTRL);
+ }
+ 
+ static void applnco_disable_nolock(struct clk_hw *hw)
+@@ -89,14 +99,16 @@ static void applnco_disable_nolock(struct clk_hw *hw)
+ 	u32 val;
+ 
+ 	val = readl_relaxed(chan->base + REG_CTRL);
+-	writel_relaxed(val & ~CTRL_ENABLE, chan->base + REG_CTRL);
++	writel_relaxed(val & ~(chan->soc ? chan->soc->enable_mask : CTRL_ENABLE),
++		       chan->base + REG_CTRL);
+ }
+ 
+ static int applnco_is_enabled(struct clk_hw *hw)
+ {
+ 	struct applnco_channel *chan = to_applnco_channel(hw);
+ 
+-	return (readl_relaxed(chan->base + REG_CTRL) & CTRL_ENABLE) != 0;
++	return (readl_relaxed(chan->base + REG_CTRL) &
++		(chan->soc ? chan->soc->enable_mask : CTRL_ENABLE)) != 0;
+ }
+ 
+ static void applnco_compute_tables(struct applnco_tables *tbl)
+@@ -158,6 +170,7 @@ static int applnco_set_rate(struct clk_hw *hw, unsigned long rate,
+ 	unsigned long flags;
+ 	u32 div, inc1, inc2;
+ 	bool was_enabled;
++	u32 control;
+ 
+ 	div = 2 * parent_rate / rate;
+ 	inc1 = 2 * parent_rate - div * rate;
+@@ -171,13 +184,21 @@ static int applnco_set_rate(struct clk_hw *hw, unsigned long rate,
+ 	spin_lock_irqsave(&chan->lock, flags);
+ 	was_enabled = applnco_is_enabled(hw);
+ 	applnco_disable_nolock(hw);
++	if (chan->soc) {
++		/* T8010: choose input zero and the fractional accumulator mode. */
++		control = readl_relaxed(chan->base + REG_CTRL);
++		control &= ~chan->soc->control_clear;
++		control |= chan->soc->control_set;
++		writel_relaxed(control, chan->base + REG_CTRL);
++	}
+ 
+ 	writel_relaxed(div,  chan->base + REG_DIV);
+ 	writel_relaxed(inc1, chan->base + REG_INC1);
+ 	writel_relaxed(inc2, chan->base + REG_INC2);
+ 
+ 	/* Presumably a neutral initial value for accumulator */
+-	writel_relaxed(1 << 31, chan->base + REG_ACCINIT);
++	writel_relaxed(chan->soc ? (inc1 ^ BIT(31)) - rate : BIT(31),
++		       chan->base + REG_ACCINIT);
+ 
+ 	if (was_enabled)
+ 		applnco_enable_nolock(hw);
+@@ -264,8 +285,20 @@ static int applnco_probe(struct platform_device *pdev)
+ 	struct resource *res;
+ 	struct applnco_tables *tbl;
+ 	unsigned int nchannels;
++	const struct applnco_hw *soc = device_get_match_data(&pdev->dev);
+ 	int ret, i;
+ 
++	if (soc) {
++		struct clk *reference = devm_clk_get(&pdev->dev, NULL);
++
++		if (IS_ERR(reference))
++			return dev_err_probe(&pdev->dev, PTR_ERR(reference),
++					     "failed to get NCO reference\n");
++		if (!clk_get_rate(reference))
++			return dev_err_probe(&pdev->dev, -EINVAL,
++					     "NCO reference missing: update m1n1 clock handoff\n");
++	}
++
+ 	base = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
+ 	if (IS_ERR(base))
+ 		return PTR_ERR(base);
+@@ -292,6 +325,7 @@ static int applnco_probe(struct platform_device *pdev)
+ 		chan = devm_kzalloc(&pdev->dev, sizeof(*chan), GFP_KERNEL);
+ 		if (!chan)
+ 			return -ENOMEM;
++		chan->soc = soc;
+ 		chan->base = base + NCO_CHANNEL_STRIDE * i;
+ 		chan->tbl = tbl;
+ 		spin_lock_init(&chan->lock);
+@@ -319,7 +353,15 @@ static int applnco_probe(struct platform_device *pdev)
+ 							onecell_data);
+ }
+ 
++/* AppleS5L8960XNCO: parent 0, no alternate prescaler, accumulator mode. */
++static const struct applnco_hw t8010_nco_hw = {
++	.enable_mask = BIT(12),
++	.control_set = BIT(31),
++	.control_clear = BIT(24) | BIT(29),
++};
++
+ static const struct of_device_id applnco_ids[] = {
++	{ .compatible = "apple,t8010-nco", .data = &t8010_nco_hw },
+ 	{ .compatible = "apple,t8103-nco" },
+ 	{ .compatible = "apple,nco" },
+ 	{ }
