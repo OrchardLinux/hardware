@@ -29,9 +29,213 @@
       },
       "device": "/usr/share/firmware/multitouch/J72s.mtprops",
       "sha256": "69f27fe207cc5810a748dac3dfe640b1c5a755709f49513b4b5125660784f0fc"
+    },
+    "P-fearb_M-YSBU_V-m__m-1.1.txt": {
+      "ipsw": {
+        "rootfs": "System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C0/P-fearb_M-YSBU_V-m__m-1.1.txt"
+      },
+      "device": "/System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C0/P-fearb_M-YSBU_V-m__m-1.1.txt",
+      "sha256": "c570c2155119f4d01175839943158d92dffb2c1783dbfbaaec8f2b86cce8eaaa"
+    },
+    "P-fearb_M-YSBU_V-m__m-2.1.txt": {
+      "ipsw": {
+        "rootfs": "System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C0/P-fearb_M-YSBU_V-m__m-2.1.txt"
+      },
+      "device": "/System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C0/P-fearb_M-YSBU_V-m__m-2.1.txt",
+      "sha256": "c570c2155119f4d01175839943158d92dffb2c1783dbfbaaec8f2b86cce8eaaa"
+    },
+    "P-fearb_M-YSBU_V-m__m-2.3.txt": {
+      "ipsw": {
+        "rootfs": "System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C0/P-fearb_M-YSBU_V-m__m-2.3.txt"
+      },
+      "device": "/System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C0/P-fearb_M-YSBU_V-m__m-2.3.txt",
+      "sha256": "c570c2155119f4d01175839943158d92dffb2c1783dbfbaaec8f2b86cce8eaaa"
+    },
+    "P-fearb_M-YSBU_V-m__m-3.1.txt": {
+      "ipsw": {
+        "rootfs": "System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C0/P-fearb_M-YSBU_V-m__m-3.1.txt"
+      },
+      "device": "/System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C0/P-fearb_M-YSBU_V-m__m-3.1.txt",
+      "sha256": "c570c2155119f4d01175839943158d92dffb2c1783dbfbaaec8f2b86cce8eaaa"
+    },
+    "P-fearb_M-YSBU_V-u__m-1.1.txt": {
+      "ipsw": {
+        "rootfs": "System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C0/P-fearb_M-YSBU_V-u__m-1.1.txt"
+      },
+      "device": "/System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C0/P-fearb_M-YSBU_V-u__m-1.1.txt",
+      "sha256": "265750811a782ebbb5c82495a32174a122602fb71e6452cb615158bb8b299789"
+    },
+    "P-fearb_M-YSBU_V-u__m-2.1.txt": {
+      "ipsw": {
+        "rootfs": "System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C0/P-fearb_M-YSBU_V-u__m-2.1.txt"
+      },
+      "device": "/System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C0/P-fearb_M-YSBU_V-u__m-2.1.txt",
+      "sha256": "265750811a782ebbb5c82495a32174a122602fb71e6452cb615158bb8b299789"
+    },
+    "P-fearb_M-YSBU_V-u__m-3.1.txt": {
+      "ipsw": {
+        "rootfs": "System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C0/P-fearb_M-YSBU_V-u__m-3.1.txt"
+      },
+      "device": "/System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C0/P-fearb_M-YSBU_V-u__m-3.1.txt",
+      "sha256": "265750811a782ebbb5c82495a32174a122602fb71e6452cb615158bb8b299789"
+    },
+    "P-fearb_M-YSBU_V-u__m-3.3.txt": {
+      "ipsw": {
+        "rootfs": "System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C0/P-fearb_M-YSBU_V-u__m-3.3.txt"
+      },
+      "device": "/System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C0/P-fearb_M-YSBU_V-u__m-3.3.txt",
+      "sha256": "265750811a782ebbb5c82495a32174a122602fb71e6452cb615158bb8b299789"
+    },
+    "P-fearb_M-YSBU_V-u__m-4.1.txt": {
+      "ipsw": {
+        "rootfs": "System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C0/P-fearb_M-YSBU_V-u__m-4.1.txt"
+      },
+      "device": "/System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C0/P-fearb_M-YSBU_V-u__m-4.1.txt",
+      "sha256": "265750811a782ebbb5c82495a32174a122602fb71e6452cb615158bb8b299789"
+    },
+    "fearb.clmb": {
+      "ipsw": {
+        "rootfs": "System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C0/fearb.clmb"
+      },
+      "device": "/System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C0/fearb.clmb",
+      "sha256": "18a84c9ffdfe50e52f23a661a7e855a1aa114506364134eb8d511c1cb8aef3fb"
+    },
+    "fearb.trx": {
+      "ipsw": {
+        "rootfs": "System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C0/fearb.trx"
+      },
+      "device": "/System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C0/fearb.trx",
+      "sha256": "e695aabcf313eddac486a1468a53382c44ef6fcae424f77598a4a79c90393d54"
+    },
+    "fearb.txcb": {
+      "ipsw": {
+        "rootfs": "System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C0/fearb.txcb"
+      },
+      "device": "/System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4355__s-C0/fearb.txcb",
+      "sha256": "7d036b6b063bcbf2643f689dd97f9949ebce06926dc5d05e4811e0f738c3aa1f"
     }
   },
   "outputs": [
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355-pcie.apple,fearb-YSBU-m-1.1.txt",
+      "sha256": "c570c2155119f4d01175839943158d92dffb2c1783dbfbaaec8f2b86cce8eaaa",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-fearb_M-YSBU_V-m__m-1.1.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355-pcie.apple,fearb-YSBU-m-2.1.txt",
+      "sha256": "c570c2155119f4d01175839943158d92dffb2c1783dbfbaaec8f2b86cce8eaaa",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-fearb_M-YSBU_V-m__m-2.1.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355-pcie.apple,fearb-YSBU-m-2.3.txt",
+      "sha256": "c570c2155119f4d01175839943158d92dffb2c1783dbfbaaec8f2b86cce8eaaa",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-fearb_M-YSBU_V-m__m-2.3.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355-pcie.apple,fearb-YSBU-m-3.1.txt",
+      "sha256": "c570c2155119f4d01175839943158d92dffb2c1783dbfbaaec8f2b86cce8eaaa",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-fearb_M-YSBU_V-m__m-3.1.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355-pcie.apple,fearb-YSBU-u-1.1.txt",
+      "sha256": "265750811a782ebbb5c82495a32174a122602fb71e6452cb615158bb8b299789",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-fearb_M-YSBU_V-u__m-1.1.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355-pcie.apple,fearb-YSBU-u-2.1.txt",
+      "sha256": "265750811a782ebbb5c82495a32174a122602fb71e6452cb615158bb8b299789",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-fearb_M-YSBU_V-u__m-2.1.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355-pcie.apple,fearb-YSBU-u-3.1.txt",
+      "sha256": "265750811a782ebbb5c82495a32174a122602fb71e6452cb615158bb8b299789",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-fearb_M-YSBU_V-u__m-3.1.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355-pcie.apple,fearb-YSBU-u-3.3.txt",
+      "sha256": "265750811a782ebbb5c82495a32174a122602fb71e6452cb615158bb8b299789",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-fearb_M-YSBU_V-u__m-3.3.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355-pcie.apple,fearb-YSBU-u-4.1.txt",
+      "sha256": "265750811a782ebbb5c82495a32174a122602fb71e6452cb615158bb8b299789",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-fearb_M-YSBU_V-u__m-4.1.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355-pcie.apple,fearb.clm_blob",
+      "sha256": "18a84c9ffdfe50e52f23a661a7e855a1aa114506364134eb8d511c1cb8aef3fb",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "fearb.clmb"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355-pcie.apple,fearb.bin",
+      "sha256": "e695aabcf313eddac486a1468a53382c44ef6fcae424f77598a4a79c90393d54",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "fearb.trx"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355-pcie.apple,fearb.txcap_blob",
+      "sha256": "7d036b6b063bcbf2643f689dd97f9949ebce06926dc5d05e4811e0f738c3aa1f",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "fearb.txcb"
+        }
+      ]
+    },
     {
       "destination": "lib/firmware/brcm/BCM.apple,j72s.hcd",
       "sha256": "85db6624fe5e9fe63a5dc0a5244be8326e2e861e974d519e79b8c34b8e7dc822",
