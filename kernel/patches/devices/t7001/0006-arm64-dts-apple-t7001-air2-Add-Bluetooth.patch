@@ -1,0 +1,63 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <henrik@goat-code.com>
+Date: Fri, 30 Oct 2026 21:02:48 +0800
+Subject: [PATCH] arm64: dts: apple: t7001-air2: Add Bluetooth
+
+Describe the BCM4350C2's Bluetooth on UART3 from the ADT uart3/bluetooth
+node: 3 Mbit/s, power enable on D2207 GPIO 2 and BT_WAKE on AP GPIO 164.
+m1n1 adds the device address through the bluetooth0 alias.
+
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/arm64/boot/dts/apple/t7001-air2.dtsi | 26 +++++++++++++++++++++--
+ 1 file changed, 24 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/apple/t7001-air2.dtsi b/arch/arm64/boot/dts/apple/t7001-air2.dtsi
+index 0440b4a..6004c12 100644
+--- a/arch/arm64/boot/dts/apple/t7001-air2.dtsi
++++ b/arch/arm64/boot/dts/apple/t7001-air2.dtsi
+@@ -11,6 +11,8 @@
+ 	chassis-type = "tablet";
+ 
+ 	aliases {
++		bluetooth0 = &bluetooth;
++		serial3 = &serial3;
+ 		touchscreen0 = &touchscreen;
+ 		wifi0 = &wifi0;
+ 	};
+@@ -111,8 +113,8 @@
+ 			compatible = "apple,d2207-pmic-gpio";
+ 			gpio-controller;
+ 			#gpio-cells = <2>;
+-			/* Only Wi-Fi REG_ON (3) is used; the other lines stay as iBoot left them. */
+-			gpio-reserved-ranges = <0 3>, <4 17>;
++			/* Only Bluetooth (2) and Wi-Fi (3) REG_ON are used; the other lines stay as iBoot left them. */
++			gpio-reserved-ranges = <0 2>, <4 17>;
+ 		};
+ 
+ 		rtc@5c0 {
+@@ -217,3 +219,23 @@
+ &touchclk {
+ 	status = "okay";
+ };
++
++/*
++ * The BCM4350C2's Bluetooth on UART3, from the ADT uart3/bluetooth node:
++ * 3 Mbit/s, power enable on D2207 GPIO 2, BT_WAKE on GPIO 164. m1n1 adds
++ * the device address.
++ */
++&serial3 {
++	pinctrl-0 = <&uart3_pins>;
++	pinctrl-names = "default";
++	uart-has-rtscts;
++	status = "okay";
++
++	bluetooth: bluetooth {
++		compatible = "apple,j81-bcm4350c2-bt";
++		current-speed = <115200>;
++		max-speed = <3000000>;
++		shutdown-gpios = <&pmu_gpio 2 GPIO_ACTIVE_HIGH>;
++		device-wakeup-gpios = <&pinctrl 164 GPIO_ACTIVE_HIGH>;
++	};
++};

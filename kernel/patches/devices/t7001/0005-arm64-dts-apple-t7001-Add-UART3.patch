@@ -1,0 +1,58 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Martin=20Pu=C5=A1k=C3=A1=C4=8D?= <martin@icebear.sk>
+Date: Fri, 30 Oct 2026 21:02:48 +0800
+Subject: [PATCH] arm64: dts: apple: t7001: Add UART3
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Describe UART3, the Bluetooth UART, disabled until a board enables it,
+with its TX/RX and RTS/CTS pins. It reaches 3 Mbit/s with the T8010
+oversampling of the apple,t7000-uart compatible.
+
+[Orchard: from mattonik/ipad-nixos b94d42f kernel/patches/0001-t7001-add-uart3-node.patch and 0002-t7001-air2-enable-uart3.patch, handed to Orchard by micro23 (ipadair2-omarchy 7ea2b2b); the pins are TX/RX 14, 15 and RTS/CTS 32, 33 in function 1, from the ADT uart3 function-tx and function-rts, whose flags UART5's working function 1 calibrates, instead of function 2 on 14 and 32 only; the 3 Mbit/s baud factor (0092, 0093) comes from the apple,t7000-uart compatible.]
+Signed-off-by: Martin Puškáč <martin@icebear.sk>
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/arm64/boot/dts/apple/t7001.dtsi | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/t7001.dtsi b/arch/arm64/boot/dts/apple/t7001.dtsi
+index 92b08b0..1a666e7 100644
+--- a/arch/arm64/boot/dts/apple/t7001.dtsi
++++ b/arch/arm64/boot/dts/apple/t7001.dtsi
+@@ -154,6 +154,18 @@
+ 			status = "disabled";
+ 		};
+ 
++		serial3: serial@20a0cc000 {
++			compatible = "apple,t7000-uart", "apple,t8010-uart", "apple,s5l-uart";
++			reg = <0x2 0x0a0cc000 0x0 0x4000>;
++			reg-io-width = <4>;
++			interrupt-parent = <&aic>;
++			interrupts = <AIC_IRQ 161 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&clkref>, <&clkref>;
++			clock-names = "uart", "clk_uart_baud0";
++			power-domains = <&ps_uart3>;
++			status = "disabled";
++		};
++
+ 		serial5: serial@20a0d4000 {
+ 			compatible = "apple,t7000-uart", "apple,t8010-uart", "apple,s5l-uart";
+ 			reg = <0x2 0x0a0d4000 0x0 0x4000>;
+@@ -362,6 +374,13 @@
+ 					 <APPLE_PINMUX(134, 1)>;
+ 			};
+ 
++			uart3_pins: uart3-pins {
++				pinmux = <APPLE_PINMUX(14, 1)>,
++					 <APPLE_PINMUX(15, 1)>,
++					 <APPLE_PINMUX(32, 1)>,
++					 <APPLE_PINMUX(33, 1)>;
++			};
++
+ 			uart5_pins: uart5-pins {
+ 				pinmux = <APPLE_PINMUX(34, 1)>;
+ 			};

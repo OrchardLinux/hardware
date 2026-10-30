@@ -162,6 +162,12 @@
       },
       "device": "/usr/share/firmware/multitouch/J82.mtprops",
       "sha256": "457c7af556629df442414d47c36bddbf6607cb623d099afa260a06e4ca4165f1"
+    },
+    "BlueTool": {
+      "ipsw": {
+        "rootfs": "usr/sbin/BlueTool"
+      },
+      "device": "/usr/sbin/BlueTool"
     }
   },
   "outputs": [
@@ -385,6 +391,16 @@
           "profile": "C1F15,2",
           "calibration_address": 268472320,
           "calibration_size": 1024
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/BCM.apple,j82.hcd",
+      "sha256": "4ef117a4833777ab334804a5f3279c6bfb762cfabdf475239148b88e5bc45cdf",
+      "steps": [
+        {
+          "step": "bluetool-hcd@1",
+          "input": "BlueTool"
         }
       ]
     }
