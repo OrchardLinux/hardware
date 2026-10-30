@@ -122,3 +122,13 @@ class RecipeInterpreter(unittest.TestCase):
             build.command(script, root / 'explicit', env={**os.environ, 'EXTRA': 'kept'})
         self.assertEqual((root / 'default').read_text(), sys.executable + ':')
         self.assertEqual((root / 'explicit').read_text(), sys.executable + ':kept')
+
+
+class RevisionTests(unittest.TestCase):
+    def test_a_receipt_names_the_exact_orchard_commit(self):
+        from orchard import hardware
+        import subprocess
+        expected = subprocess.check_output(['git', '-C', str(hardware.ROOT), 'rev-parse', 'HEAD'], text=True).strip()
+        revision = hardware.revision()
+        self.assertEqual(revision['commit'], expected)
+        self.assertIsInstance(revision['modified'], bool)
