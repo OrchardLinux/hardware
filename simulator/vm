@@ -1,0 +1,55 @@
+#!/bin/sh
+set -eu
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+D=$(CDPATH= cd -- "$HERE/../out/ipad-simulator/vm" 2>/dev/null && pwd) || { echo 'VM is not prepared.' >&2; exit 1; }
+QEMU=/opt/glustore/bin/qemu-system-aarch64
+running() {
+    [ -f "$D/qemu.pid" ] || return 1
+    pid=$(cat "$D/qemu.pid")
+    case "$pid" in *[!0-9]*|'') return 1;; esac
+    command=$(ps -p "$pid" -o command= 2>/dev/null || true)
+    case "$command" in *qemu-system-aarch64*"$D/root.raw"*) return 0;; *) return 1;; esac
+}
+case "${1:-status}" in
+  start)
+    if running; then echo "VM already running (PID $pid)"; exit 0; fi
+    [ -x "$QEMU" ] || { echo 'Install qemu using glu first.' >&2; exit 1; }
+    [ -f "$D/root.raw" ] && [ -f "$D/vmlinuz" ] || { echo 'VM disk/kernel not prepared.' >&2; exit 1; }
+    if lsof -nP -iTCP:5908 -sTCP:LISTEN >/dev/null 2>&1; then echo 'Port 5908 is already in use; refusing to attach to an unknown server.' >&2; exit 1; fi
+    umask 077
+    rm -f "$D/qmp.sock" "$D/display.sock" "$D/control.sock"
+    nohup "$QEMU" -machine virt,accel=hvf -cpu host -m 2048 -smp 1 \
+      -kernel "$D/vmlinuz" -append 'root=/dev/vda rootwait rw console=ttyAMA0 console=tty0 systemd.show_status=1' \
+      -drive "file=$D/root.raw,format=raw,if=virtio" \
+      -device virtio-gpu-pci,xres=768,yres=1024 -device qemu-xhci -device usb-tablet -device virtio-multitouch-pci -device virtio-keyboard-pci \
+      -device virtio-serial-pci -chardev "socket,id=screen,path=$D/display.sock,server=on,wait=off" \
+      -device virtserialport,chardev=screen,name=org.orchard.display \
+      -chardev "socket,id=control,path=$D/control.sock,server=on,wait=off" \
+      -device virtserialport,chardev=control,name=org.orchard.control \
+      -netdev user,id=guestnet -device virtio-net-pci,netdev=guestnet,mac=52:54:00:71:00:01 \
+      -display none -vnc 127.0.0.1:8 -qmp "unix:$D/qmp.sock,server=on,wait=off" \
+      -serial "file:$D/serial.log" -no-reboot > "$D/qemu.log" 2>&1 &
+    echo $! > "$D/qemu.pid"
+    sleep 1
+    running || { echo "VM failed to start; see $D/qemu.log" >&2; exit 1; }
+    echo "VM started (PID $pid)"
+    ;;
+  status)
+    if running; then echo "VM running (PID $pid)"; else echo 'VM stopped'; exit 1; fi
+    ;;
+  stop)
+    if ! running; then echo 'VM is not running'; exit 0; fi
+    python3 - "$D/control.sock" <<'PY'
+import socket, sys
+s = socket.socket(socket.AF_UNIX)
+s.settimeout(4)
+s.connect(sys.argv[1])
+s.sendall(b'shutdown\n')
+s.close()
+PY
+    for i in $(seq 1 30); do if ! running; then echo 'VM stopped cleanly'; rm -f "$D/qemu.pid"; exit 0; fi; sleep 1; done
+    echo 'Shutdown request sent, but VM is still running; not forcing it off.' >&2
+    exit 1
+    ;;
+  *) echo "Usage: $0 {start|stop|status}" >&2; exit 2;;
+esac
