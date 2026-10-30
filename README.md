@@ -73,6 +73,7 @@ distribution's own scripts or `orchard python -m unittest discover -s tests`. Se
 - [Quiet boot patches](boot/quiet/README.md)
 - [J71b compatibility audit and validation limits](docs/j71b-compatibility-audit.md)
 - [GitHub builds](docs/ci.md)
+- [Tooling design](docs/tooling.md)
 - [Contributing](CONTRIBUTING.md)
 
 The repository contains recipes and code, not private Apple firmware, calibration,
