@@ -31,13 +31,30 @@ for module in $(cat /etc/orchard/modules); do
     modprobe "$module" || stop "could not load $module"
 done
 
-# The kernel reports each partition's PARTUUID in its uevent.
+# gpt_partuuid DISK SECTOR_SIZE NUMBER: the unique GUID of GPT entry NUMBER,
+# read from the disk itself: the kernel's uevent does not report PARTUUID.
+gpt_partuuid() {
+    set -- $(od -An -tx1 -v -j "$2" -N 92 "$1") "$1" "$2" "$3"
+    [ "$1$2$3$4$5$6$7$8" = 4546492050415254 ] || return 1
+    lba=$((0x${80}${79}${78}${77}${76}${75}${74}${73}))
+    size=$((0x${88}${87}${86}${85}))
+    disk=${93} sector=${94} number=${95}
+    set -- $(od -An -tx1 -v -j $((lba * sector + (number - 1) * size + 16)) -N 16 "$disk")
+    [ "$*" != '00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00' ] || return 1
+    echo "$4$3$2$1-$6$5-$8$7-$9${10}-${11}${12}${13}${14}${15}${16}"
+}
+
 device=
 seconds=0
 while [ -z "$device" ]; do
-    for uevent in /sys/class/block/*/uevent; do
-        if grep -qix "PARTUUID=$root" "$uevent"; then
-            device=/dev/$(sed -n 's/^DEVNAME=//p' "$uevent")
+    for number in /sys/class/block/*/partition; do
+        [ -e "$number" ] || continue
+        part=${number%/partition}
+        disk=$(basename "$(dirname "$(readlink -f "$part")")")
+        sector=$(cat "/sys/class/block/$disk/queue/logical_block_size")
+        if [ "$(gpt_partuuid "/dev/$disk" "$sector" "$(cat "$number")")" = "$root" ]; then
+            device=/dev/${part##*/}
+            break
         fi
     done
     [ -n "$device" ] && break
