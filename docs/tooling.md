@@ -59,7 +59,7 @@ Parallel work gets one orchard worktree per branch (`git worktree add ../orchard
 | `payload.toml` beside a payload's `init` | yes | the payload's own settings: `transport`, `modules`, `firmware`; commented, since the examples teach the system |
 | `orchard.local.toml` | never | this checkout's choices: `orchard = "PATH"`, `device = "BOARD"` |
 
-No repository and no per-person setting names a board: many contributors work on several. A payload serves every board of one platform (`out/PLATFORM/`); `orchard run` takes the platform from the attached board, builds what is missing and adds that board's firmware as its own layer from the private cache; `orchard build` takes it from `--platform`, `--device`, `orchard.local.toml` or the attached board (listing USB devices only). A distribution release that is one board's (today's `release/j71b`) names that board itself until the device layer generalizes it.
+No repository and no per-person setting names a board: many contributors work on several. A payload serves every board of one platform (`out/PLATFORM/`); `orchard run` takes the platform from the attached board, builds what is missing and adds that board's firmware as its own layer from the private cache; `orchard build` takes it from `--platform`, `--device`, `orchard.local.toml` or the attached board (listing USB devices only). A distribution release serves every board: one root image, and per platform a recovery and orchard's platform layer (kernel, DTBs, modules; see [boot contract](boot-contract.md#kernel-dtbs-and-modules)). Which boards are supported, and how well, is only orchard's device data (`status`, `caveats`), which the installer shows.
 
 ## Distributions (done)
 
@@ -90,8 +90,9 @@ Recipes run `$ORCHARD_PYTHON` (default `python3`), which `orchard` sets to its o
 One step, because all three need a distribution build that does not depend on the
 board:
 
-- **Device layer:** device files out of the distributions (`system/j71b`,
-  `release/j71b`) into orchard, so a distribution builds one image per platform.
+- **Device layer** (done): kernel, DTBs and modules are orchard's platform layer,
+  which the installer writes into the root; a distribution builds one root image for
+  every platform and names no board. Release format: `schemas/v2`.
 - **A distribution as a project:** `distro.toml` names its build entry. In a
   distribution checkout, `orchard build` builds the whole image (root filesystem,
   recovery, release directory with `index.toml`), and `orchard run` builds what is

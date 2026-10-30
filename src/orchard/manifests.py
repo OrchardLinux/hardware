@@ -14,8 +14,8 @@ from .hardware import ROOT
 
 SCHEMA_DIR = ROOT / 'schemas/v1'
 SCHEMAS = {
-    'orchard.index': SCHEMA_DIR / 'index.schema.json',
-    'orchard.install': SCHEMA_DIR / 'install.schema.json',
+    'orchard.index': ROOT / 'schemas/v2/index.schema.json',
+    'orchard.install': ROOT / 'schemas/v2/install.schema.json',
     'orchard.boot': SCHEMA_DIR / 'boot.schema.json',
     'hardware.device': SCHEMA_DIR / 'device.schema.json',
 }
@@ -32,13 +32,14 @@ class ManifestError(ValueError):
 
 def sources(document):
     if document['kind'] == 'orchard.index':
-        for device, methods in document['devices'].items():
-            for method, source in methods.items():
-                yield f'devices.{device}.{method}', source
+        yield 'release', document['release']
     elif document['kind'] in ('orchard.install', 'orchard.boot'):
         for name in ('root', 'boot', 'pongo'):
             if name in document:
                 yield name, document[name]
+        for platform, row in document.get('platforms', {}).items():
+            for name in ('boot', 'layer'):
+                yield f'platforms.{platform}.{name}', row[name]
 
 
 def check_source(source, where):
@@ -110,29 +111,33 @@ def verify_file(receipt, bundle):
     return path
 
 
-def resolve_local(index, bundle, device, method):
-    """Select one pinned installation manifest, then check its scope matches."""
+def resolve_local(index, bundle):
+    """The index's pinned installation manifest, checked to belong to its distro."""
     validate(index)
     if index['kind'] != 'orchard.index':
         raise ManifestError('Expected distro index')
-    receipt = index['devices'].get(device, {}).get(method)
-    if receipt is None:
-        raise ManifestError(f'No supported installation for {device}/{method}')
-    path = verify_file(receipt, bundle)
+    path = verify_file(index['release'], bundle)
     manifest = load(path)
-    if (manifest['kind'] != 'orchard.install' or manifest['distro'] != index['distro'] or
-            manifest['device'] != device or manifest['boot_method'] != method):
-        raise ManifestError('Resolved manifest does not match distro/device/boot method')
+    if manifest['kind'] != 'orchard.install' or manifest['distro'] != index['distro']:
+        raise ManifestError('Resolved manifest does not match the index distro')
     return path, manifest
+
+
+def platform_for(manifest, board):
+    """The platform of MANIFEST that covers BOARD."""
+    matches = [name for name, row in manifest['platforms'].items() if board in row['boards']]
+    if len(matches) != 1:
+        covered = ', '.join(sorted(b for row in manifest['platforms'].values() for b in row['boards']))
+        raise ManifestError(f'This release does not cover {board}' + (f' (it covers {covered})' if covered else '')
+                            if not matches else f'{board} is listed under several platforms')
+    return matches[0]
 
 
 def verify_local_receipts(document, bundle):
     validate(document)
     if document['kind'] == 'orchard.index':
-        for device, methods in document['devices'].items():
-            for method in methods:
-                path, manifest = resolve_local(document, bundle, device, method)
-                verify_local_receipts(manifest, path.parent)
+        path, manifest = resolve_local(document, bundle)
+        verify_local_receipts(manifest, path.parent)
     elif document['kind'] == 'hardware.device':
         path = local_file(document['firmware']['recipe'], bundle)
         recipe = json.loads(path.read_text())

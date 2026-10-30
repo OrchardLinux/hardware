@@ -15,8 +15,20 @@ ext4 partition, launcher kernel, `switch_root`). Old installs are not migrated.
 | Part | Does | Never does |
 |---|---|---|
 | Bootloader (m1n1 + host) | Reads the boot partition, lists the entries, loads the chosen entry's kernel, initrd and DTB, applies the ADT fill-ins, boots | Mount or read a root filesystem, write to storage |
-| Installer | Creates the boot partition once; creates a root partition per system; runs the system's own install | Touch APFS beyond the agreed resize; touch another system's partition or files |
+| Installer | Creates the boot partition once; creates a root partition per system; unpacks the system's root image and orchard's platform layer into it; runs the system's own install | Touch APFS beyond the agreed resize; touch another system's partition or files |
 | Installed system | Owns its root partition and its own files and entry on the boot partition; updates them with its normal kernel-install hooks | Touch another system's files |
+
+## Kernel, DTBs and modules
+
+They are orchard's, not the distribution's. A distribution's root image holds no
+`/usr/lib/modules`; one image serves every platform. orchard's platform layer
+(`orchard.image.platform`, one per platform) holds `/usr/lib/modules/RELEASE/`
+with `vmlinuz`, the DTB of every board of the platform under `dtb/` and the
+modules, plus the regulatory database and hardware defaults under `/usr/lib`
+(orchard's `system/`). The installer writes it into the new root after the root
+image and refuses a file the image already has. Then it names the board's DTB in
+`/etc/kernel/devicetree` and runs the system's `kernel-install`, which writes the
+entry below.
 
 ## Partitions (GPT)
 

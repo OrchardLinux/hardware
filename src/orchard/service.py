@@ -135,9 +135,13 @@ def install(manifest=None, *, input_fn=input, secrets_fn=ask_secrets, progress=N
         with tempfile.TemporaryDirectory(prefix='installation-', dir=private) as directory:
             mixin, mixin_record = adapter.prepare_mixin(firmware, Path(directory) / 'mixin')
             remote.put(connection, mixin.read_bytes(), 'firmware.tar.gz')
+        layer = record['assets']['layer']
+        remote.put(connection, assets['layer'].read_bytes(), 'platform.tar.gz', timeout=600)
         image = {key: root[key] for key in ('bytes', 'sha256', 'expanded_bytes')}
         image['compression'] = root.get('compression', 'zstd')
-        plan = install_layout.plan(layout, option, image, entry_for(record, adapter.DEVICETREE), account=True, firmware={
+        plan = install_layout.plan(layout, option, image, entry_for(record, adapter.DEVICETREE), account=True, layer={
+            'path': remote.DIRECTORY + '/platform.tar.gz',
+            **{key: layer[key] for key in ('bytes', 'sha256', 'expanded_bytes')}}, firmware={
             'path': remote.DIRECTORY + '/firmware.tar.gz',
             'bytes': mixin_record['bytes'], 'sha256': mixin_record['sha256']})
         remote.put(connection, json.dumps(plan).encode(), 'plan.json')

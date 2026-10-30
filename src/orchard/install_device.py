@@ -392,7 +392,7 @@ def extract(source, destination, *, size, sha256, expanded_limit, compression):
 
 def check_plan(plan, info, partitions, free):
     """The plan's new partitions lie in free space or the removed partition, nowhere else."""
-    if plan.get('version') != 1:
+    if plan.get('version') != 2:
         raise InstallError('plan-version', 'Unsupported plan version')
     if info['table_sha256'] != plan['disk']['table_sha256'] or info['sector'] != plan['disk']['sector']:
         raise InstallError('layout-changed', 'The partition table changed since it was inspected; inspect again')
@@ -481,6 +481,47 @@ def check_entry(boot_root, partuuid, devicetree):
                 raise InstallError('entry-invalid', f'{entry.name}: initrd {path} is missing')
         return entry.name
     raise InstallError('entry-missing', 'The system did not write a boot entry for its root')
+
+
+def install_layer(path, root, *, size, sha256, expanded_limit):
+    """Orchard's platform layer (kernel, DTBs, modules, /usr/lib defaults) into the new root.
+
+    Regular files under usr/lib/ and usr/share/licenses/ only, and none the
+    root image already has: the root image carries no kernel, and a
+    collision means the image and the layer disagree about who owns a file.
+    """
+    with open(path, 'rb') as stream:
+        data = stream.read(size + 1)
+    if len(data) != size or hashlib.sha256(data).hexdigest() != sha256:
+        raise InstallError('layer-mismatch', 'Platform layer size or hash differs from the plan')
+    root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    count = expanded = 0
+    try:
+        with tarfile.open(fileobj=io.BytesIO(data), mode='r:gz') as archive:
+            for member in archive:
+                name = safe_name(member.name)
+                if not (member.isfile() and name.startswith(('usr/lib/', 'usr/share/licenses/'))):
+                    raise InstallError('unsafe-archive', 'Platform layer may contain only files under /usr/lib')
+                expanded += member.size
+                if expanded > expanded_limit:
+                    raise InstallError('stream-too-long', 'Platform layer exceeds its expanded size')
+                parent, leaf = parent_fd(root_fd, name)
+                try:
+                    try:
+                        fd = os.open(leaf, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=parent)
+                    except FileExistsError:
+                        raise InstallError('layer-collision', f'The root image already has /{name}, '
+                                           'which the platform layer provides') from None
+                    with os.fdopen(fd, 'wb') as output:
+                        output.write(archive.extractfile(member).read())
+                        os.fchown(output.fileno(), 0, 0)
+                        os.fchmod(output.fileno(), 0o644)
+                    count += 1
+                finally:
+                    os.close(parent)
+    finally:
+        os.close(root_fd)
+    return count
 
 
 def install_firmware(bundle, root, *, size, sha256):
@@ -628,6 +669,11 @@ def install(plan, stream):
                          expanded_limit=plan['root']['blocks'] * info['sector'],
                          compression=plan['image'].get('compression', 'zstd'))
         emit('step', step='extract-root', state='done', **result)
+        layer = plan['layer']
+        files = install_layer(layer['path'], TARGET, size=layer['bytes'], sha256=layer['sha256'],
+                              expanded_limit=layer['expanded_bytes'])
+        Path(layer['path']).unlink()
+        emit('step', step='platform-layer', state='done', files=files)
         firmware = plan.get('firmware')
         if firmware:
             with open(firmware['path'], 'rb') as bundle:
@@ -645,8 +691,8 @@ def install(plan, stream):
         write_text(TARGET / 'etc/kernel/cmdline',
                    f'root=PARTUUID={plan["root"]["partuuid"]} rw {entry.get("options", "")}'.strip() + '\n')
         write_text(TARGET / 'etc/kernel/entry-token', entry['id'] + '\n')
-        # One root serves every board of its kernel platform; kernel-install
-        # copies the DTB this file names (see hardware docs/boot-contract.md).
+        # The layer holds the DTB of every board of its platform; kernel-install
+        # copies the one this file names (see docs/boot-contract.md).
         write_text(TARGET / 'etc/kernel/devicetree', entry['devicetree'] + '\n')
         write_text(TARGET / 'etc/fstab',
                    f'PARTUUID={plan["root"]["partuuid"]} / ext4 rw,relatime 0 1\n'

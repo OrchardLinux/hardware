@@ -55,8 +55,9 @@ class InstallFlow(unittest.TestCase):
         root = Path(work.name)
         store = root / 'device'
         store.mkdir()
-        image, mixin = root / 'rootfs', root / 'mixin.tar.gz'
+        image, mixin, layer = root / 'rootfs', root / 'mixin.tar.gz', root / 'platform.tar.gz'
         image.write_bytes(b'root-stream')
+        layer.write_bytes(b'platform-layer')
         mixin.write_bytes(b'firmware-bundle')
         adapter = Mock(NAME='Supported tablet', PROFILE='device', INSTALL=True, STATUS='supported',
                        CAVEATS=[], FEATURES={}, REBOOT_MESSAGE='reboot', DEVICETREE='t8010-j171.dtb')
@@ -69,12 +70,13 @@ class InstallFlow(unittest.TestCase):
             yield Connection([sys.executable, str(fake), str(store), json.dumps(disk), outcome], SCOPE, lambda: None)
         adapter.connect = connect
         record = {'release': '1.0', 'name': 'Omarchy', 'assets': {'root': {
-            'bytes': 11, 'sha256': 'a' * 64, 'expanded_bytes': 2 * GIB, 'compression': 'zstd'}}}
+            'bytes': 11, 'sha256': 'a' * 64, 'expanded_bytes': 2 * GIB, 'compression': 'zstd'}, 'layer': {
+            'bytes': 14, 'sha256': 'c' * 64, 'expanded_bytes': 100 << 20, 'compression': 'gzip'}}}
         status = self.status = Mock()
         status.call.return_value = {'release': '1.0'}
         replies, prompts = iter(answers), []
         with patch('orchard.service.choose', return_value=(adapter, {'mode': 'linux', 'ecid': 1, 'resumed': True})), \
-             patch('orchard.service.resolve', return_value=(record, {'root': image})), \
+             patch('orchard.service.resolve', return_value=(record, {'root': image, 'layer': layer})), \
              patch('orchard.service.Client', return_value=status), \
              patch('orchard.state.cache_root', return_value=root / 'cache'):
             output = io.StringIO()
@@ -100,6 +102,9 @@ class InstallFlow(unittest.TestCase):
         self.assertEqual(plan['entry'], {'id': 'omarchy', 'title': 'Omarchy', 'options': 'rootwait',
                                          'devicetree': 't8010-j171.dtb'})
         self.assertEqual(plan['firmware'], {'path': '/run/orchard/firmware.tar.gz', 'bytes': 15, 'sha256': 'b' * 64})
+        self.assertEqual((store / 'platform.tar.gz').read_bytes(), b'platform-layer')
+        self.assertEqual(plan['layer'], {'path': '/run/orchard/platform.tar.gz', 'bytes': 14, 'sha256': 'c' * 64,
+                                         'expanded_bytes': 100 << 20})
         self.assertEqual(result['root'], plan['root']['partuuid'])
         self.assertIn('orchard launch', output)
         self.assertTrue(result['started'])

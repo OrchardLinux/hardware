@@ -1,10 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Orchard index manifest v1",
+  "title": "Orchard index manifest v2",
+  "description": "A distro's entry point: the pinned install manifest of its current release.",
   "type": "object",
   "properties": {
     "schema": {
-      "const": 1
+      "const": 2
     },
     "kind": {
       "const": "orchard.index"
@@ -13,31 +14,15 @@
       "type": "string",
       "pattern": "^[a-z0-9][a-z0-9._-]*$"
     },
-    "devices": {
-      "type": "object",
-      "minProperties": 1,
-      "propertyNames": {
-        "type": "string",
-        "pattern": "^[a-z0-9][a-z0-9._-]*$"
-      },
-      "additionalProperties": {
-        "type": "object",
-        "minProperties": 1,
-        "propertyNames": {
-          "type": "string",
-          "pattern": "^[a-z0-9][a-z0-9._-]*$"
-        },
-        "additionalProperties": {
-          "$ref": "#/$defs/receipt"
-        }
-      }
+    "release": {
+      "$ref": "#/$defs/receipt"
     }
   },
   "required": [
     "schema",
     "kind",
     "distro",
-    "devices"
+    "release"
   ],
   "additionalProperties": false,
   "$defs": {

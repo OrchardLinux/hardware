@@ -62,16 +62,16 @@ class DownloadUI(unittest.TestCase):
             self.assertEqual(Path(progress.log_path).stat().st_mode & 0o777, 0o600)
 
     def test_release_assets_start_concurrently(self):
-        barrier = threading.Barrier(3)
-        document = {'protocol': 1, 'version': '1', 'name': 'Test Linux',
-                    'pongo': {}, 'boot': {}, 'root': {}}
+        barrier = threading.Barrier(4)
+        document = {'kind': 'orchard.install', 'protocol': 1, 'version': '1', 'name': 'Test Linux',
+                    'pongo': {}, 'root': {}, 'platforms': {'apple-16k': {'boards': ['j71b'], 'boot': {}, 'layer': {}}}}
         def materialize(*args, **kwargs):
             barrier.wait(timeout=2)
             return Path('verified')
         with patch.object(releases, 'select_manifest', return_value=(document, None)), \
              patch.object(releases, 'materialize', side_effect=materialize):
             _, paths = releases.resolve('test', 'j71b')
-        self.assertEqual(set(paths), {'pongo', 'recovery', 'root'})
+        self.assertEqual(set(paths), {'pongo', 'recovery', 'root', 'layer'})
 
     def test_resume_is_verified_before_cache_promotion(self):
         data = b'full verified content'
