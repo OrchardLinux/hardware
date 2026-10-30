@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# The interpreter that has orchard_hardware installed; Orchard passes its own.
+python=${ORCHARD_PYTHON:-python3}
 
 here=$(cd "$(dirname "$0")" && pwd)
 device=${1:-}
@@ -76,10 +78,10 @@ if [[ -n "$include_header" ]]; then
   [[ -f "$include_header" ]] || { echo 'Missing include header' >&2; exit 1; }
   cp "$include_header" "$source/src/${include_header##*/}"
 fi
-python3 -m orchard_hardware.buildenv build --file "$here/Containerfile" \
+"$python" -m orchard_hardware.buildenv build --file "$here/Containerfile" \
   --image localhost/orchard-hardware-m1n1:bookworm --context "$here"
 mkdir -p "$work/cargo"
-python3 -m orchard_hardware.buildenv run --network \
+"$python" -m orchard_hardware.buildenv run --network \
   --bind "$source:/src:rw" --bind "$work/cargo:/cache:rw" --env CARGO_HOME=/cache \
   --cwd /src --image localhost/orchard-hardware-m1n1:bookworm -- make -j2 USE_CLANG=1 ARCH=aarch64-linux-gnu \
     TOOLCHAIN=/usr/lib/llvm-19/bin/ LLDDIR=/usr/lib/llvm-19/bin/ CHAINLOADING=1 \

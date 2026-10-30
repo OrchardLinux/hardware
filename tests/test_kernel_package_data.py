@@ -7,10 +7,7 @@ import sys
 import unittest
 import zipfile
 
-try:
-    import tomllib
-except ImportError:
-    import tomli as tomllib
+import tomllib
 
 
 ROOT = Path(__file__).resolve().parents[1]

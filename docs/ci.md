@@ -1,6 +1,6 @@
 # GitHub builds
 
-`.github/workflows/build.yml` tests the installed wheel on Python 3.9 and 3.12 and runs a native ARM64 compile/execute smoke test for pull requests and `main`. Tags matching `v*` and manual dispatches additionally build:
+`.github/workflows/build.yml` tests the installed wheel on Python 3.11 and 3.14 and runs a native ARM64 compile/execute smoke test for pull requests and `main`. Tags matching `v*` and manual dispatches additionally build:
 
 - Linux ARM64: kernel, modules, DTB, static recovery tools and quiet m1n1.
 - macOS: quiet Pongo with the pinned newlib revision.

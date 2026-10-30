@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Acquire pinned public inputs and build static AArch64 recovery tools.
 set -euo pipefail
+# The interpreter that has orchard_hardware installed; Orchard passes its own.
+python=${ORCHARD_PYTHON:-python3}
 here=$(cd "$(dirname "$0")" && pwd)
 work="${OMA_RECOVERY_TOOLS_WORK:-$here/.work/tools}"
 mkdir -p "$work"
-python3 - "$here/upstream.lock" "$work" <<'PY'
+"$python" - "$here/upstream.lock" "$work" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -45,9 +47,9 @@ for component, filename in (('busybox', 'busybox.deb'),
         pathlib.Path(temporary.name).rename(target)
     print(f'Verified {component}: {target}')
 PY
-python3 -m orchard_hardware.buildenv build --arch arm64 --file "$here/Containerfile" \
+"$python" -m orchard_hardware.buildenv build --arch arm64 --file "$here/Containerfile" \
   --image localhost/orchard-hardware-recovery-tools:bookworm --context "$here"
-python3 -m orchard_hardware.buildenv run --arch arm64 \
+"$python" -m orchard_hardware.buildenv run --arch arm64 \
   --bind "$work:/work:rw" --bind "$here:/recipe:ro" \
   --image localhost/orchard-hardware-recovery-tools:bookworm -- bash /recipe/build-tools-in-container
 echo "Recovery tools: $work/bin"

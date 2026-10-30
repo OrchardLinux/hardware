@@ -10,10 +10,7 @@ import shutil
 import tempfile
 
 from orchard_hardware.image.integrity import sha
-try:
-    import tomllib
-except ImportError:
-    import tomli as tomllib
+import tomllib
 
 
 def toml(document, prefix=()):
