@@ -50,7 +50,7 @@ runtime inspects the systemd ELF header before executing the new root.
 The trusted host controls the writable export after this check.
 
 ```sh
-python -m orchard_hardware.boot.initramfs.nfs.stage \
+python -m orchard.image.nfs \
   --receipt /path/to/root/etc/orchard/nfs-root.json \
   --busybox /path/to/static-aarch64-busybox \
   --kernel-dir /path/to/staged-kernel \

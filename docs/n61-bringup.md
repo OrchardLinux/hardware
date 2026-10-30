@@ -65,10 +65,10 @@ firmware at `rootfs/lib/firmware/apple/n61-fwstart.z2fw`, and build with the
 matching kernel, loader and complete module tree:
 
 ```sh
-python -m orchard_cli build <minimal-boot-copy> --hardware <hardware-checkout> \
+orchard build <minimal-boot-copy> --hardware <hardware-checkout> \
   --device n61 --cache <cache> --kernel-dir <kernel-output> \
   --loader <m1n1.bin> --pongo <Pongo.bin> --busybox <busybox> --modules
-python -m orchard_cli run <minimal-boot-copy> --yes
+orchard run <minimal-boot-copy> --yes
 ```
 
 From the physical serial shell, record the boot UUID, `uname -r`,

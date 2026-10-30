@@ -15,17 +15,17 @@ def job(document, name):
 
 
 class CIEfficiency(unittest.TestCase):
-    def test_one_wheel_build_is_reused_by_every_consumer(self):
+    def test_recipes_build_from_the_checkout_without_a_package(self):
         workflow = (ROOT / '.github/workflows/build.yml').read_text()
-        self.assertEqual(workflow.count('python -m build'), 1)
-        self.assertIn('python -m build', job(workflow, 'package'))
-        self.assertNotRegex(workflow, r'pip install \.(?:\s|$)')
-        for name in ('test', 'native-smoke', 'kernel', 'tools'):
-            body = job(workflow, name)
-            self.assertIn('name: hardware-packages', body)
-            self.assertIn('pip install out/packages/*.whl', body)
-        self.assertIn('name: hardware-kernel', job(workflow, 'kernel'))
-        self.assertIn('name: hardware-tools', job(workflow, 'tools'))
+        # No wheel: the tests run the checkout, and recipes need only python3.
+        self.assertNotIn('python -m build', workflow)
+        self.assertNotIn('.whl', workflow)
+        self.assertIn('pip install -e .', job(workflow, 'test'))
+        for name in ('native-smoke', 'kernel', 'tools'):
+            self.assertNotIn('pip install', job(workflow, name))
+            self.assertNotIn('venv', job(workflow, name))
+        self.assertIn('name: orchard-kernel', job(workflow, 'kernel'))
+        self.assertIn('name: orchard-tools', job(workflow, 'tools'))
         self.assertNotIn('kernel/build j71b', job(workflow, 'tools'))
         self.assertNotIn('build-pongo.py', job(workflow, 'assets'))
 

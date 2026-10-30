@@ -4,7 +4,11 @@ import argparse
 from pathlib import Path
 import shutil
 import subprocess
-from orchard_hardware import buildenv
+import sys
+
+# buildenv.py sits at the repository root; recipes find it by path, not as a package.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import buildenv  # noqa: E402
 
 
 def main():

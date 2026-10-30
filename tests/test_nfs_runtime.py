@@ -11,9 +11,9 @@ import sys
 import tempfile
 import unittest
 
-from orchard_hardware.boot.initramfs.nfs import stage
+from orchard.image import nfs as stage
 
-HERE = Path(stage.__file__).resolve().parent
+HERE = stage.HERE
 
 
 def elf(machine=183, interpreter=False):

@@ -1,8 +1,0 @@
-Default project license: GPL-2.0-or-later (LICENSE).
-Pongo/libusb uploader: checkra1n team, MIT (LICENSES/Pongo.txt).
-Touch conversion (apple/z2fw.py): GPL-2.0-or-later. Packet layouts and Z2FW
-framing are informed by Corellium's Project Sandcastle and Paul Praschl's
-(Pauli1Go) makez2fw. convert_packets() and convert_mtfw() port makez2fw's
-Gen2 mtprops and MTFW HBPP item conversions (mtfw.c, makez2fw.c):
-https://github.com/Pauli1Go/HoolockLinux-linux-firmware
-Reference revision: 944541e67b4c603df328c77d30093551de802c17.

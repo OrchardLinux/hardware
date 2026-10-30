@@ -5,7 +5,9 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
-from orchard_hardware import buildenv
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import buildenv  # noqa: E402  (a recipe helper beside the checkout root, not a package)
 
 
 class BuildEnvironment(unittest.TestCase):

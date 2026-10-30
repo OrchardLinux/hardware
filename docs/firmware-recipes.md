@@ -31,7 +31,7 @@ at boot.
 
 The CLI never downloads the whole IPSW (about 7 GB). It reads only the byte
 ranges it needs from Apple's server, about 20-40 MB per device
-(`orchard_cli/apple/remote_ipsw.py`, standard library only):
+(`src/orchard/apple/remote_ipsw.py`, standard library only):
 
 1. The ZIP central directory at the end of the file lists the members.
 2. `{"zip": member}` inputs are read and inflated directly.
@@ -54,7 +54,7 @@ The same reader explores an IPSW by hand, by URL or by the IPSW of a device
 whose recipe already exists:
 
 ```sh
-R="python -m orchard_cli.apple.remote_ipsw"
+R="python -m orchard.apple.remote_ipsw"
 $R https://updates.cdn-apple.com/…/iPad_…_Restore.ipsw members   # ZIP members
 $R j71b ls usr/share/firmware/multitouch                           # a system directory
 $R j71b get usr/share/firmware/multitouch/J71b.mtprops J71b.mtprops
@@ -89,8 +89,8 @@ Then:
    server, into an empty cache:
 
    ```sh
-   ORCHARD_HOME=$(mktemp -d) python -c "from orchard_cli import firmware
-   from orchard_cli.progress import Clock, Progress
+   ORCHARD_HOME=$(mktemp -d) python -c "from orchard import firmware
+   from orchard.progress import Clock, Progress
    print(firmware.ensure('<profile>', Clock(), Progress(), hardware='.'))"
    ```
 

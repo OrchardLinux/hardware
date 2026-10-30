@@ -6,7 +6,7 @@ import re
 import unittest
 
 HARDWARE = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location('n61_hardware_data', HARDWARE / '__init__.py')
+spec = importlib.util.spec_from_file_location('n61_hardware_data', HARDWARE / 'src/orchard/hardware.py')
 data = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(data)
 

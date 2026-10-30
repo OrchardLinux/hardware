@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from orchard_hardware.apple import adt
+from orchard.apple import adt
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('orchard_identity_test', ROOT/'runtime/recovery/identity.py')
