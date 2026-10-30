@@ -1,6 +1,6 @@
 # J71b audio: MCA/transport preparation
 
-This is an unbooted speaker bring-up candidate for J71b (iPad 6 Wi-Fi).
+This is a speaker bring-up candidate for J71b (iPad 6 Wi-Fi).
 It is based directly on current hardware main, not on the rotation PR.
 The device descriptor deliberately retains its existing audio status.
 
@@ -41,7 +41,7 @@ T8010-compatible control data selects bit 12 for enable, bit 31 for the
 control mode, input zero and the corresponding accumulator initial state.
 Existing NCO compatibles keep their original control behaviour. The
 reference rate is copied by m1n1 from the NCO's first clock ID in the boot
-ADT's clock-frequency table; it is not assumed to be the 24 MHz crystal.
+ADT's 32-bit clock-frequency table; it is not assumed to be the 24 MHz crystal.
 The J71b `nco-ref` alias requests this handoff. Missing clock information
 leaves audio disabled and still permits Linux to boot; the NCO driver
 rejects a zero reference without touching the speaker clock registers.
@@ -73,17 +73,25 @@ selections are retained. These options are not specific to page size.
 
 Host regression checks also require the entire iPad 5 J71t DTB to remain
 byte-identical and execute the actual frame, route and NCO helpers against
-RAM-backed register stubs. Physical touch responsiveness under playback
-load is still a required next-stage test.
+RAM-backed register stubs. The subsequent RAM diagnostic also captured
+physical touch events during playback and after its shutdown.
 
 ## Qualification boundary
 
 Kernel/module/DTB compilation, binding and compiled-DT validation,
-checkpatch, config resolution and repository tests are host checks. They
-do not establish audible output. The next authorized test must first
-verify the NCO reference, PCM/card enumeration and touch, then play a
-short -36 dBFS fixture, identify channel mapping, repeat start/stop and
-exercise touch throughout sustained playback.
+checkpatch, config resolution and repository tests are host checks. A
+subsequent RAM diagnostic verified the boot-clock handoff and playback-card
+enumeration. The user confirmed correct left/right/both output from quiet
+48 kHz stereo S16_LE fixtures, a clean 30-second tone while touching the
+screen, and five clean starts/stops. Input events continued during playback
+without dropped synchronization events; the PCM, amp and bitclock shut down
+afterward, with no new kernel messages. A separate touch-only capture after
+the last stop confirmed continued input events with the amplifier off.
+All diagnostic readers and playback were then stopped.
+
+This is a quiet speaker test on one J71b, not qualification of S32_LE or
+every physical speaker/data lane. Desktop coordinate alignment and audio
+integration remain later checks.
 
 No microphone/PDM driver, AOP clock or firmware RPC, UCM2/WirePlumber
 policy, headphone detection, GPU change or persistent installation is

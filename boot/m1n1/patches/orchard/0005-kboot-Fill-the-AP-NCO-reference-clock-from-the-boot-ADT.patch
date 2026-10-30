@@ -5,7 +5,7 @@ Subject: [PATCH] kboot: Fill the AP NCO reference clock from the boot ADT
 
 The NCO reference is not the 24 MHz crystal. When a tree requests the
 nco-ref alias, fill its fixed-clock rate from input zero of the NCO
-provider clock table. Do not embed an inferred rate or any device IDs.
+provider's 32-bit clock table. Do not embed an inferred rate or device IDs.
 
 Signed-off-by: Dalton Alexandre <alley.nightly_0b@icloud.com>
 ---
@@ -35,7 +35,7 @@ index 87f67200..26db705f 100644
 +    }
 +    u32 ids_len, rates_len;
 +    const u32 *ids = adt_getprop(adt, nco, "clock-ids", &ids_len);
-+    const u64 *rates = adt_getprop(adt, arm_io, "clock-frequencies", &rates_len);
++    const u32 *rates = adt_getprop(adt, arm_io, "clock-frequencies", &rates_len);
 +    if (!ids || ids_len < sizeof(*ids) ||
 +        !rates || ids[0] < 0x100 || ids[0] - 0x100 >= rates_len / sizeof(*rates)) {
 +        printf("FDT: NCO reference clock unavailable; audio remains disabled\n");
