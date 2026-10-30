@@ -120,6 +120,13 @@
       },
       "device": "/usr/share/firmware/wifi/C-4350__s-C2/rieslinga.txcb",
       "sha256": "feb78b7deeb85ae4d10f2a8479dbb3eb1210ba984a2eb51f8d2b3da4f6a68346"
+    },
+    "J81.mtprops": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/multitouch/J81.mtprops"
+      },
+      "device": "/usr/share/firmware/multitouch/J81.mtprops",
+      "sha256": "457c7af556629df442414d47c36bddbf6607cb623d099afa260a06e4ca4165f1"
     }
   },
   "outputs": [
@@ -280,6 +287,19 @@
         {
           "step": "copy@1",
           "input": "rieslinga.txcb"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/apple/j81-fwstart.z2fw",
+      "sha256": "b9b4a072e9498bfac4e6dbb124fa5a758719ad0edfaf052855c955285369afaf",
+      "steps": [
+        {
+          "step": "z2fw-from-z2-packet@1",
+          "input": "J81.mtprops",
+          "profile": "C1F15,2",
+          "calibration_address": 268472320,
+          "calibration_size": 1024
         }
       ]
     }

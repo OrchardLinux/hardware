@@ -1,0 +1,82 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Martin=20Pu=C5=A1k=C3=A1=C4=8D?= <martin@icebear.sk>
+Date: Fri, 30 Oct 2026 20:24:01 +0800
+Subject: [PATCH] arm64: dts: apple: t7001: Add SPI3 and the touch clock
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Describe the touchscreen's SPI controller and the PMGR touch clock,
+disabled until a board enables them. SPI3 runs from a 60 MHz clock (ADT
+clock ID 0x12e, clock-frequencies[46]); with the 24 MHz reference every
+transfer ran about 2.5 times too fast.
+
+[Orchard: from mattonik/ipad-nixos b94d42f kernel/patches/0008-t7001-add-spi3-node.patch and 0100-t7001-spi3-60mhz-functional-clock.patch, handed to Orchard by micro23 (ipadair2-omarchy 7ea2b2b); SPI3 uses the iPhone 6's T7000 SPI support instead of a separate s5l8960x driver, whose FIFO and word-delay fixes (0096, 0098) it already covers, and takes no pinmux, as the chip select is a GPIO; the touch clock is the T7000 one at the same PMGR offset, with the same ADT clock arguments.]
+Signed-off-by: Martin Puškáč <martin@icebear.sk>
+Co-developed-by: Henrik Klee <henrik@goat-code.com>
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/arm64/boot/dts/apple/t7001-pmgr.dtsi | 10 ++++++++++
+ arch/arm64/boot/dts/apple/t7001.dtsi      | 20 ++++++++++++++++++++
+ 2 files changed, 30 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/t7001-pmgr.dtsi b/arch/arm64/boot/dts/apple/t7001-pmgr.dtsi
+index 7321cfd..d61f865 100644
+--- a/arch/arm64/boot/dts/apple/t7001-pmgr.dtsi
++++ b/arch/arm64/boot/dts/apple/t7001-pmgr.dtsi
+@@ -6,6 +6,16 @@
+  */
+ 
+ &pmgr {
++	touchclk: clock-controller@1e000 {
++		compatible = "apple,t7000-touch-clock";
++		reg = <0x1e000 0x4>;
++		#clock-cells = <0>;
++		clocks = <&clkref>;
++		clock-output-names = "touchclk";
++		clock-frequency = <32768>;
++		status = "disabled";
++	};
++
+ 	ps_cpu0: power-controller@20000 {
+ 		compatible = "apple,t7000-pmgr-pwrstate", "apple,pmgr-pwrstate";
+ 		reg = <0x20000 4>;
+diff --git a/arch/arm64/boot/dts/apple/t7001.dtsi b/arch/arm64/boot/dts/apple/t7001.dtsi
+index c3ff5e0..92b08b0 100644
+--- a/arch/arm64/boot/dts/apple/t7001.dtsi
++++ b/arch/arm64/boot/dts/apple/t7001.dtsi
+@@ -29,6 +29,14 @@
+ 		clock-output-names = "clkref";
+ 	};
+ 
++	spi3_clk: clock-spi3 {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++		/* ADT clock ID 0x12e: clock-frequencies[46]. */
++		clock-frequency = <60000000>;
++		clock-output-names = "spi3";
++	};
++
+ 	cpus {
+ 		#address-cells = <2>;
+ 		#size-cells = <0>;
+@@ -214,6 +222,18 @@
+ 			status = "disabled";
+ 		};
+ 
++		spi3: spi@20a08c000 {
++			compatible = "apple,t7000-spi", "apple,spi";
++			reg = <0x2 0x0a08c000 0x0 0x4000>;
++			interrupt-parent = <&aic>;
++			interrupts = <AIC_IRQ 155 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&spi3_clk>;
++			power-domains = <&ps_spi3>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			status = "disabled";
++		};
++
+ 		bus@20c000000 {
+ 			compatible = "apple,t7000-usb-complex", "apple,s5l8960x-usb-complex", "simple-pm-bus";
+ 			#address-cells = <2>;
