@@ -1,0 +1,136 @@
+From e7f27bd39c5a70b5fcdef60b4cafc87818e14bb6 Mon Sep 17 00:00:00 2001
+From: Dalton Alexandre <alley.nightly_0b@icloud.com>
+Date: Fri, 30 Oct 2026 09:21:23 -0700
+Subject: [PATCH] arm64: dts: apple: Add J71b MCA2 speaker transport
+
+Describe the T8010 AP NCO, switch and MCA2, and enable them only on
+J71b. Route aud2 to pin2 with MCA as clock provider. Model the amplifier
+bank through its common GPIO 20 SD_MODE line and a stereo I2S link.
+
+Leave all touch nodes, SPI3 wiring, clocks and DMA specifiers unchanged.
+The four physical speaker channels still require device qualification.
+
+Signed-off-by: Dalton Alexandre <alley.nightly_0b@icloud.com>
+---
+ arch/arm64/boot/dts/apple/t8010-j71b.dts | 43 ++++++++++++++++++++++++
+ arch/arm64/boot/dts/apple/t8010.dtsi     | 39 +++++++++++++++++++++
+ 2 files changed, 82 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/t8010-j71b.dts b/arch/arm64/boot/dts/apple/t8010-j71b.dts
+index 2aada48..a875fd7 100644
+--- a/arch/arm64/boot/dts/apple/t8010-j71b.dts
++++ b/arch/arm64/boot/dts/apple/t8010-j71b.dts
+@@ -11,6 +11,36 @@
+ / {
+ 	compatible = "apple,j71b", "apple,t8010", "apple,arm-platform";
+ 	model = "Apple iPad 6 (Wi-Fi)";
++
++	aliases {
++		nco-ref = &nco_ref;
++	};
++
++	/* One logical codec models the amplifier bank's shared SD_MODE line. */
++	speaker_amps: amplifier {
++		compatible = "maxim,max98357a";
++		#sound-dai-cells = <0>;
++		sdmode-gpios = <&pinctrl_ap 20 GPIO_ACTIVE_HIGH>;
++	};
++
++	sound {
++		compatible = "simple-audio-card";
++		simple-audio-card,name = "J71b Speakers";
++		simple-audio-card,format = "i2s";
++		simple-audio-card,bitclock-master = <&speaker_cpu>;
++		simple-audio-card,frame-master = <&speaker_cpu>;
++		simple-audio-card,widgets = "Speaker", "Speakers";
++		simple-audio-card,routing = "Speakers", "Speaker";
++		simple-audio-card,pin-switches = "Speakers";
++
++		speaker_cpu: simple-audio-card,cpu {
++			sound-dai = <&mca2>;
++		};
++
++		simple-audio-card,codec {
++			sound-dai = <&speaker_amps>;
++		};
++	};
+ };
+ 
+ &wifi {
+@@ -20,3 +50,16 @@
+ &touchscreen {
+ 	firmware-name = "apple/j71b-fwstart.z2fw";
+ };
++
++&mca2 {
++	apple,i2s-switch = <&i2s_switch 2 2>;
++	status = "okay";
++};
++
++&i2s_switch {
++	status = "okay";
++};
++
++&nco {
++	status = "okay";
++};
+diff --git a/arch/arm64/boot/dts/apple/t8010.dtsi b/arch/arm64/boot/dts/apple/t8010.dtsi
+index 5ff9aa1..e89f233 100644
+--- a/arch/arm64/boot/dts/apple/t8010.dtsi
++++ b/arch/arm64/boot/dts/apple/t8010.dtsi
+@@ -25,6 +25,14 @@
+ 		clock-output-names = "clkref";
+ 	};
+ 
++	/* Filled from this boot's ADT NCO input-zero frequency by m1n1. */
++	nco_ref: clock-nco-ref {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++		clock-frequency = <0>;
++		clock-output-names = "nco-ref";
++	};
++
+ 	cpus {
+ 		#address-cells = <2>;
+ 		#size-cells = <0>;
+@@ -146,6 +154,37 @@
+ 		nonposted-mmio;
+ 		ranges;
+ 
++		i2s_switch: syscon@20a004000 {
++			compatible = "apple,t8010-i2s-switch", "syscon";
++			reg = <0x2 0x0a004000 0x0 0x1000>;
++			status = "disabled";
++		};
++
++		mca2: mca@20a0a8000 {
++			compatible = "apple,t8010-mca";
++			reg = <0x2 0x0a0a8000 0x0 0x4000>,
++			      <0x2 0x0a002008 0x0 0x4>;
++			reg-names = "mca", "mclk";
++			interrupts = <AIC_IRQ 229 IRQ_TYPE_LEVEL_HIGH>;
++			power-domains = <&ps_mca2>;
++			clocks = <&nco 2>;
++			clock-names = "bitclk";
++			dmas = <&sio 0x2c>;
++			dma-names = "tx";
++			#clock-cells = <0>;
++			clock-output-names = "mca2-mclk";
++			#sound-dai-cells = <0>;
++			status = "disabled";
++		};
++
++		nco: clock-controller@20e044000 {
++			compatible = "apple,t8010-nco";
++			reg = <0x2 0x0e044000 0x0 0x14000>;
++			clocks = <&nco_ref>;
++			#clock-cells = <1>;
++			status = "disabled";
++		};
++
+ 		cpufreq: performance-controller@202f20000 {
+ 			compatible = "apple,t8010-cluster-cpufreq", "apple,t8103-cluster-cpufreq", "apple,cluster-cpufreq";
+ 			reg = <0x2 0x02f20000 0 0x1000>;
+-- 
+2.56.0
+
