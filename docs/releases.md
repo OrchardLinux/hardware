@@ -1,7 +1,7 @@
 # Releases
 
 Until the installer that ships with each distribution release exists, users install
-the released Orchard 0.1.11: the `requirements.txt` of the
+the released Orchard 0.1.10: the `requirements.txt` of the
 [cli releases](https://github.com/OrchardLinux/cli/releases) selects the paired
 CLI and hardware wheels. Those releases stay as they are.
 

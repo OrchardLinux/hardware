@@ -18,7 +18,7 @@ The iPhone 6 (`iPhone7,2`, N61AP) has experimental tethered support. See the [br
 
 Follow the install instructions of a distribution, e.g. omarchy-a. Until the
 installer that ships with each distribution release exists, published systems
-install with the released Orchard 0.1.11 ([OrchardLinux/cli releases](https://github.com/OrchardLinux/cli/releases)).
+install with the released Orchard 0.1.10 ([OrchardLinux/cli releases](https://github.com/OrchardLinux/cli/releases)).
 
 To start an installed system again, connect the device in DFU mode and run
 `orchard launch`. The host sends only Pongo and m1n1; m1n1 reads the boot entries
