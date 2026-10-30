@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <henrik@goat-code.com>
+Date: Fri, 30 Oct 2026 20:24:01 +0800
+Subject: [PATCH] dt-bindings: regulator: apple,pmic-touch-regulator: Add D2207
+
+Add the touchscreen analog supply of the D2207 PMIC in the iPad Air 2.
+
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../bindings/regulator/apple,pmic-touch-regulator.yaml       | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/regulator/apple,pmic-touch-regulator.yaml b/Documentation/devicetree/bindings/regulator/apple,pmic-touch-regulator.yaml
+index ef1cc77..ad29023 100644
+--- a/Documentation/devicetree/bindings/regulator/apple,pmic-touch-regulator.yaml
++++ b/Documentation/devicetree/bindings/regulator/apple,pmic-touch-regulator.yaml
+@@ -10,8 +10,8 @@ maintainers:
+   - Paul Praschl <praschlpaul@g-p.at>
+ 
+ description:
+-  Fixed touchscreen supply switches provided by the D2186, Adelyn, Angel and
+-  Chestnut PMICs. The compatible identifies both the PMIC and the physical supply;
++  Fixed touchscreen supply switches provided by the D2186, D2207, Adelyn,
++  Angel and Chestnut PMICs. The compatible identifies both the PMIC and the physical supply;
+   register layout is an implementation detail of the regulator driver.
+ 
+ allOf:
+@@ -24,6 +24,7 @@ properties:
+       - apple,angel-touch-analog-regulator
+       - apple,chestnut-touch-hv-regulator
+       - apple,d2186-touch-core-regulator
++      - apple,d2207-touch-analog-regulator
+ 
+ required:
+   - compatible

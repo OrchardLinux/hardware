@@ -1,0 +1,105 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <henrik@goat-code.com>
+Date: Fri, 30 Oct 2026 20:24:01 +0800
+Subject: [PATCH] arm64: dts: apple: t7001-air2: Add the touchscreen
+
+Describe the iPad Air 2's N1 touchscreen on SPI3 from the ADT's
+spi3/multi-touch functions: chip select GPIO 51, reset GPIO 82,
+interrupt GPIO 84, LDO enable GPIO 95, the D2207 analog supply and the
+touch clock. Each model names its firmware. m1n1 adds the calibration
+through the touchscreen0 alias.
+
+The Y axis is inverted as on the iPad 5, whose sensor and parser the
+Air 2 shares; that is unconfirmed on the Air 2.
+
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/arm64/boot/dts/apple/t7001-air2.dtsi | 37 +++++++++++++++++++++++
+ arch/arm64/boot/dts/apple/t7001-j81.dts   |  4 +++
+ arch/arm64/boot/dts/apple/t7001-j82.dts   |  4 +++
+ 3 files changed, 45 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/t7001-air2.dtsi b/arch/arm64/boot/dts/apple/t7001-air2.dtsi
+index 637744c..0440b4a 100644
+--- a/arch/arm64/boot/dts/apple/t7001-air2.dtsi
++++ b/arch/arm64/boot/dts/apple/t7001-air2.dtsi
+@@ -11,6 +11,7 @@
+ 	chassis-type = "tablet";
+ 
+ 	aliases {
++		touchscreen0 = &touchscreen;
+ 		wifi0 = &wifi0;
+ 	};
+ 
+@@ -101,6 +102,11 @@
+ 		#address-cells = <1>;
+ 		#size-cells = <1>;
+ 
++		touch_analog: regulator-touch-analog {
++			compatible = "apple,d2207-touch-analog-regulator";
++			regulator-name = "touch-analog";
++		};
++
+ 		pmu_gpio: gpio {
+ 			compatible = "apple,d2207-pmic-gpio";
+ 			gpio-controller;
+@@ -180,3 +186,34 @@
+ 		};
+ 	};
+ };
++
++/*
++ * The N1 touchscreen, from the ADT spi3/multi-touch functions: chip select
++ * GPIO 51, reset GPIO 82, interrupt GPIO 84, LDO enable GPIO 95, analog
++ * supply pmuL(0x20e) and the PMGR touch clock at 32768 Hz. Its display
++ * sync (GPIO 55) stays an input, as in iOS.
++ */
++&spi3 {
++	cs-gpios = <&pinctrl 51 GPIO_ACTIVE_LOW>;
++	status = "okay";
++
++	touchscreen: touchscreen@0 {
++		compatible = "apple,j81-touchscreen";
++		reg = <0>;
++		/* N1 selects 83 ns; the controller rounds up to divider 5 */
++		spi-max-frequency = <12048192>;
++		interrupts-extended = <&pinctrl 84 IRQ_TYPE_EDGE_FALLING>;
++		reset-gpios = <&pinctrl 82 GPIO_ACTIVE_LOW>;
++		power-ldo-gpios = <&pinctrl 95 GPIO_ACTIVE_HIGH>;
++		ana-supply = <&touch_analog>;
++		clocks = <&touchclk>;
++		touchscreen-size-x = <1536>;
++		touchscreen-size-y = <2048>;
++		/* As the iPad 5's C1F15 sensor; unconfirmed on the Air 2 */
++		touchscreen-inverted-y;
++	};
++};
++
++&touchclk {
++	status = "okay";
++};
+diff --git a/arch/arm64/boot/dts/apple/t7001-j81.dts b/arch/arm64/boot/dts/apple/t7001-j81.dts
+index ede4205..aaf8b41 100644
+--- a/arch/arm64/boot/dts/apple/t7001-j81.dts
++++ b/arch/arm64/boot/dts/apple/t7001-j81.dts
+@@ -16,3 +16,7 @@
+ &wifi0 {
+ 	brcm,board-type = "apple,rieslinga";
+ };
++
++&touchscreen {
++	firmware-name = "apple/j81-fwstart.z2fw";
++};
+diff --git a/arch/arm64/boot/dts/apple/t7001-j82.dts b/arch/arm64/boot/dts/apple/t7001-j82.dts
+index 8668e25..9fa64a1 100644
+--- a/arch/arm64/boot/dts/apple/t7001-j82.dts
++++ b/arch/arm64/boot/dts/apple/t7001-j82.dts
+@@ -16,3 +16,7 @@
+ &wifi0 {
+ 	brcm,board-type = "apple,rieslingb";
+ };
++
++&touchscreen {
++	firmware-name = "apple/j82-fwstart.z2fw";
++};

@@ -1,0 +1,75 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <henrik@goat-code.com>
+Date: Fri, 30 Oct 2026 20:24:01 +0800
+Subject: [PATCH] regulator: apple-pmic-touch: Add D2207 touch analog supply
+
+The iPad Air 2's touchscreen analog supply is D2207 function
+pmuL(0x20e): LDO index 14, enable only. iOS's D2207 LDO table gives
+register 0x84 bit 2. LDOs 14 to 16 share bits 0 and 1 of that register,
+which iOS sets with any of them; enabling sets them too, and disabling
+clears only the touch bit.
+
+The same decoding gives register 0x85 bit 1 for D2186 LDO 14, the
+iPhone 6's working touch core supply.
+
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../regulator/apple-pmic-touch-regulator.c    | 37 +++++++++++++++++++
+ 1 file changed, 37 insertions(+)
+
+diff --git a/drivers/regulator/apple-pmic-touch-regulator.c b/drivers/regulator/apple-pmic-touch-regulator.c
+index 1047078..6984db4 100644
+--- a/drivers/regulator/apple-pmic-touch-regulator.c
++++ b/drivers/regulator/apple-pmic-touch-regulator.c
+@@ -60,6 +60,39 @@ static const struct regulator_desc apple_angel_touch_analog = {
+ 	.disable_val = 0,
+ };
+ 
++/*
++ * D2207 (Arabela, iPad Air 2) pmuL(0x20e): LDO index 14, enable-only, at
++ * register 0x84 bit 2 (iOS LDO table 0xfffffff005a98774, setLDO
++ * 0xfffffff006cec138). LDOs 14 to 16 share bits 0 and 1 of the register,
++ * which iOS sets with any of them; they stay set when the touchscreen
++ * supply turns off, as other users may need them.
++ */
++#define APPLE_D2207_LDO14_SHARED	0x03
++
++static int apple_d2207_touch_analog_enable(struct regulator_dev *rdev)
++{
++	return regmap_update_bits(rdev_get_regmap(rdev), rdev->desc->enable_reg,
++				  rdev->desc->enable_mask | APPLE_D2207_LDO14_SHARED,
++				  rdev->desc->enable_val | APPLE_D2207_LDO14_SHARED);
++}
++
++static const struct regulator_ops apple_d2207_touch_analog_ops = {
++	.enable = apple_d2207_touch_analog_enable,
++	.disable = regulator_disable_regmap,
++	.is_enabled = regulator_is_enabled_regmap,
++};
++
++static const struct regulator_desc apple_d2207_touch_analog = {
++	.name = "d2207-touch-analog",
++	.ops = &apple_d2207_touch_analog_ops,
++	.type = REGULATOR_VOLTAGE,
++	.owner = THIS_MODULE,
++	.enable_reg = 0x84,
++	.enable_mask = 0x04,
++	.enable_val = 0x04,
++	.disable_val = 0,
++};
++
+ static const struct regulator_desc apple_chestnut_touch_hv = {
+ 	.name = "chestnut-touch-hv",
+ 	.ops = &apple_pmic_touch_regulator_ops,
+@@ -112,6 +145,10 @@ static const struct of_device_id apple_pmic_touch_regulator_of_match[] = {
+ 		.compatible = "apple,angel-touch-analog-regulator",
+ 		.data = &apple_angel_touch_analog,
+ 	},
++	{
++		.compatible = "apple,d2207-touch-analog-regulator",
++		.data = &apple_d2207_touch_analog,
++	},
+ 	{
+ 		.compatible = "apple,chestnut-touch-hv-regulator",
+ 		.data = &apple_chestnut_touch_hv,
