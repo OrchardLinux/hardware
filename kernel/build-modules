@@ -38,7 +38,7 @@ done
   --env "LOCALVERSION=$localversion" \
   --image localhost/orchard-hardware-kernel-toolchain:bookworm -- bash -euc '
     for group in "$ORCHARD_MODULES"/*; do
-      make -C "$ORCHARD_SRC" O="$ORCHARD_OUT" -j2 LLVM=-19 ARCH=arm64 \
+      make -C "$ORCHARD_SRC" O="$ORCHARD_OUT" -j"$(nproc)" LLVM=-19 ARCH=arm64 \
         LOCALVERSION="$LOCALVERSION" M="$group" modules
     done
   '

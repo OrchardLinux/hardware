@@ -22,7 +22,9 @@ into a compiler cache (ccache) next to the trees, `.../orchard/ccache/kernel/`,
 so a tree that returns to a patch set built before, in any worktree, compiles it
 from the cache. ccache stands in for `clang-19` on the recipe's PATH, so the
 recorded compiler commands are the same with and without it; `ORCHARD_CCACHE=0`
-builds without it and rebuilds nothing by itself. `--output` must name a new
+builds without it and rebuilds nothing by itself. `make` runs one job per CPU of
+the build environment (the Podman machine's CPUs); `ORCHARD_KERNEL_JOBS=N`
+chooses another number. `--output` must name a new
 directory; it receives `Image.gz`, `<device>.dtb`, `dtbs/`, `kernel.release` and
 `lib/modules/`.
 
