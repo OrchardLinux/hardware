@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 
 HARDWARE = Path(__file__).resolve().parents[1]
 DEVICE = HARDWARE / 'devices/j71b/device.toml'
-RECIPE_SHA256 = 'a5c157f40e221c133e91a321429e69e7c4b12ac3ca2cc3d90ddafa8c2564711a'
+RECIPE_SHA256 = '84989247671c3c1c9704da7112e30dd80c76c8a06d0cbb58824d0adace315d9c'
 
 
 class J71bData(unittest.TestCase):
@@ -68,7 +68,7 @@ class J71bData(unittest.TestCase):
 
     def test_every_output_is_pinned_and_uses_known_inputs(self):
         outputs = self.recipe['outputs']
-        self.assertEqual(len(outputs), 10)
+        self.assertEqual(len(outputs), 11)
         self.assertEqual(len({o['destination'] for o in outputs}), len(outputs))
         for output in outputs:
             self.assertRegex(output['sha256'], r'^[0-9a-f]{64}$')
@@ -76,6 +76,14 @@ class J71bData(unittest.TestCase):
                 self.assertIn(step['input'], self.recipe['inputs'])
         touch = [o for o in outputs if o['destination'] == 'lib/firmware/apple/j71b-fwstart.z2fw']
         self.assertEqual(touch[0]['steps'][0]['step'], 'z2fw-from-mtprops@1')
+
+    def test_aop_uses_the_cached_ipsw_without_embedded_firmware(self):
+        aop = self.recipe['inputs']['aop.im4p']
+        self.assertEqual(aop['ipsw'], {'zip': 'Firmware/AOP/aopfw-ipad7baop.RELEASE.im4p'})
+        self.assertEqual(aop['sha256'], '58fb27cfcd42cab4f3154fb47d92cc7d51e4329caad9b2432ec5130a2423607e')
+        output, = [o for o in self.recipe['outputs'] if o['destination'].endswith('/j71b-aop.osbin')]
+        self.assertEqual(output['steps'], [{'step': 'im4p-payload@1', 'input': 'aop.im4p'}])
+        self.assertFalse((HARDWARE / output['destination']).exists())
 
     def test_no_orchard_or_distro_dependency_in_device_definition(self):
         self.assertNotIn('requires', self.device)
