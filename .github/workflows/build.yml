@@ -65,12 +65,17 @@ jobs:
     runs-on: ubuntu-24.04-arm
     container: debian:bookworm
     timeout-minutes: 360
+    strategy:
+      matrix:
+        # Every platform with a kernel series; distribution releases cover all of them.
+        platform: [apple-16k, apple-4k]
     defaults:
       run:
         shell: bash
     env:
       ORCHARD_BUILD_NATIVE: '1'
       ORCHARD_BUILD_ENV_ID: debian-bookworm-arm64-llvm19
+      PLATFORM: ${{ matrix.platform }}
     steps:
       - run: apt-get update && apt-get install -y git ca-certificates python3
       - uses: actions/checkout@v4
@@ -81,18 +86,18 @@ jobs:
         run: bash kernel/install-toolchain
       - name: Build the platform kernel, modules and all device trees once
         run: |
-          bash kernel/build apple-16k --work-dir "$PWD/out/kernel-work" --output "$PWD/out/components/kernel"
+          bash kernel/build "$PLATFORM" --work-dir "$PWD/out/kernel-work" --output "$PWD/out/components/kernel"
           dpkg-query -W > out/components/kernel-toolchain-packages.lock
       - name: Archive components and corresponding kernel source
         run: |
-          tar -C out -czf out/kernel-components.tar.gz components
-          tar -C out/kernel-work/source --exclude=.git -czf out/kernel-source.tar.gz .
+          tar -C out -czf "out/kernel-components-$PLATFORM.tar.gz" components
+          tar -C out/kernel-work/source --exclude=.git -czf "out/kernel-source-$PLATFORM.tar.gz" .
       - uses: actions/upload-artifact@v4
         with:
-          name: orchard-kernel
+          name: orchard-kernel-${{ matrix.platform }}
           path: |
-            out/kernel-components.tar.gz
-            out/kernel-source.tar.gz
+            out/kernel-components-${{ matrix.platform }}.tar.gz
+            out/kernel-source-${{ matrix.platform }}.tar.gz
           compression-level: 0
           if-no-files-found: error
           retention-days: 2
@@ -230,13 +235,18 @@ jobs:
       - name: Assemble public component bundle without rebuilding
         run: |
           mkdir -p out/publication
-          tar -xzf out/downloads/kernel-components.tar.gz -C out
           tar -xzf out/downloads/tool-components.tar.gz -C out
           tar -xzf out/downloads/quiet-pongo.tar.gz -C out/components/quiet
-          # The platform bundle carries the kernel, modules, every DTB and the shared
-          # loader; devices/<device>/device.toml names the DTB a device uses.
-          python ci/package_components.py --platform apple-16k --directory out/components \
-            --output out/publication/apple-16k-components.tar.gz
+          # One bundle per platform carries its kernel, modules and every DTB, and the
+          # shared tools and loaders; devices/<device>/device.toml names a device's DTB.
+          for platform in apple-16k apple-4k; do
+            mkdir -p "out/platforms/$platform"
+            tar -xzf "out/downloads/kernel-components-$platform.tar.gz" -C "out/platforms/$platform"
+            cp -R out/components/boot out/components/quiet out/components/*.lock "out/platforms/$platform/components/"
+            python ci/package_components.py --platform "$platform" --directory "out/platforms/$platform/components" \
+              --output "out/publication/$platform-components.tar.gz"
+          done
+          tar -xzf out/downloads/kernel-components-apple-16k.tar.gz -C out
           # Compatibility: the shared launcher still reads the J71b bundle layout.
           bundle=out/bundles/j71b/components
           mkdir -p "$bundle/kernel"
@@ -251,7 +261,7 @@ jobs:
           # orchard launch starts any device with only Pongo and the storage-capable
           # m1n1 (orchard.hardware.loader); they are release assets of their own.
           cp out/components/quiet/m1n1.bin out/components/quiet/pongo.bin out/publication/
-          rm out/publication/kernel-components.tar.gz out/publication/tool-components.tar.gz out/publication/quiet-pongo.tar.gz
+          rm out/publication/kernel-components-*.tar.gz out/publication/tool-components.tar.gz out/publication/quiet-pongo.tar.gz
           git archive --format=tar.gz -o out/publication/orchard-source.tar.gz HEAD
           (cd out/publication && sha256sum ./*.tar.gz ./*.bin > SHA256SUMS)
       - name: Attest public build

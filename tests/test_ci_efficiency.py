@@ -29,6 +29,13 @@ class CIEfficiency(unittest.TestCase):
         self.assertNotIn('kernel/build j71b', job(workflow, 'tools'))
         self.assertNotIn('build-pongo.py', job(workflow, 'assets'))
 
+    def test_every_platform_kernel_is_built_once_and_bundled(self):
+        from orchard.image.platform import platforms
+        workflow = (ROOT / '.github/workflows/build.yml').read_text()
+        matrix = re.search(r'platform: \[([^\]]*)\]', job(workflow, 'kernel')).group(1)
+        self.assertEqual([name.strip() for name in matrix.split(',')], platforms())
+        self.assertIn('for platform in ' + ' '.join(platforms()) + '; do', job(workflow, 'assets'))
+
     def test_apple_build_has_exact_input_cache_and_one_compiler_invocation(self):
         body = job((ROOT / '.github/workflows/build.yml').read_text(), 'pongo')
         self.assertEqual(body.count('python boot/quiet/build-pongo.py'), 1)

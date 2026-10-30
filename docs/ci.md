@@ -2,9 +2,9 @@
 
 `.github/workflows/build.yml` tests the checkout on Python 3.11 and 3.14 and runs a native ARM64 compile/execute smoke test for pull requests and `main`. Tags matching `v*` and manual dispatches additionally build:
 
-- Linux ARM64: kernel, modules, DTB, static recovery tools and quiet m1n1.
+- Linux ARM64: per platform (one job each) the kernel, modules and every DTB; static recovery tools and quiet m1n1.
 - macOS: quiet Pongo with the pinned newlib revision.
-- Assembly: `apple-16k-components.tar.gz`, `j71b-components.tar.gz`, the loaders `m1n1.bin` and `pongo.bin`, source archives and `SHA256SUMS`.
+- Assembly: one `PLATFORM-components.tar.gz` per platform, `j71b-components.tar.gz` (for the released 0.1.10 tools), the loaders `m1n1.bin` and `pongo.bin`, source archives and `SHA256SUMS`.
 
 The standard GitHub job image is Debian Bookworm, matching the local toolchain base. There is no nested Podman invocation. Native jobs set `ORCHARD_BUILD_NATIVE=1` and `ORCHARD_BUILD_ENV_ID`, run the same `install-toolchain` files used by the Containerfiles, and execute the same compiler recipes. Shared `ORCHARD_*` recipe variables select native filesystem paths in CI and mounted paths locally. Native execution is not a security sandbox: it does not enforce read-only inputs or isolate networking. Native mode is only for trusted, disposable Linux ARM64 workers. Local builds continue to use Podman by default.
 
