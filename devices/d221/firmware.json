@@ -1,0 +1,95 @@
+{
+  "schema": 2,
+  "device": "iPhone10,6",
+  "ipsw": {
+    "version": "16.7.16",
+    "build": "20H392",
+    "url": "https://updates.cdn-apple.com/2025FallFCS/fullrestores/122-77006/1158E502-D76D-4226-AA06-ED5E30CD1111/iPhone10,3,iPhone10,6_16.7.16_20H392_Restore.ipsw",
+    "bytes": 6171035648,
+    "sha256": "ece1194f7e233e9109c5790a8d23a4564a10a254e15ec5b09978a343265568fb"
+  },
+  "inputs": {
+    "herculesk.trx": {
+      "ipsw": {
+        "rootfs": "System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4357__s-B1/herculesk.trx"
+      },
+      "sha256": "ded920eb11579fffc644a61b26b86df4a465cf654a9fbe916af4fb62e8746e9d"
+    },
+    "herculesk.clmb": {
+      "ipsw": {
+        "rootfs": "System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4357__s-B1/herculesk.clmb"
+      },
+      "sha256": "7780b40434027f15eb1e934fa457cfd04744769fb1e77201320e1f8848c75d67"
+    },
+    "herculesk.txcb": {
+      "ipsw": {
+        "rootfs": "System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4357__s-B1/herculesk.txcb"
+      },
+      "sha256": "5196b4f40fba08880d040dc22acd1bb02b780dcb3bfd714243dea163809da329"
+    },
+    "P-herculesk_M-GINS_V-m__m-5.3.txt": {
+      "ipsw": {
+        "rootfs": "System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4357__s-B1/P-herculesk_M-GINS_V-m__m-5.3.txt"
+      },
+      "sha256": "4e0855fbe6b4d1d3031167c42a58d57bb557f97acf7001b50222dd10b01edaef"
+    },
+    "P-herculesk_M-GINS_V-u__m-6.1.txt": {
+      "ipsw": {
+        "rootfs": "System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/Firmware/C-4357__s-B1/P-herculesk_M-GINS_V-u__m-6.1.txt"
+      },
+      "sha256": "c3cf7f2260bb73c979d8995a608a47926127fc6e9c6e05bc308924f62a24a8c9"
+    }
+  },
+  "outputs": [
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4357-pcie.apple,herculesk.bin",
+      "sha256": "ded920eb11579fffc644a61b26b86df4a465cf654a9fbe916af4fb62e8746e9d",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "herculesk.trx"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4357-pcie.apple,herculesk.clm_blob",
+      "sha256": "7780b40434027f15eb1e934fa457cfd04744769fb1e77201320e1f8848c75d67",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "herculesk.clmb"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4357-pcie.apple,herculesk.txcap_blob",
+      "sha256": "5196b4f40fba08880d040dc22acd1bb02b780dcb3bfd714243dea163809da329",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "herculesk.txcb"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4357-pcie.apple,herculesk-GINS-m-5.3.txt",
+      "sha256": "4e0855fbe6b4d1d3031167c42a58d57bb557f97acf7001b50222dd10b01edaef",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-herculesk_M-GINS_V-m__m-5.3.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4357-pcie.apple,herculesk-GINS-u-6.1.txt",
+      "sha256": "c3cf7f2260bb73c979d8995a608a47926127fc6e9c6e05bc308924f62a24a8c9",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-herculesk_M-GINS_V-u__m-6.1.txt"
+        }
+      ]
+    }
+  ]
+}
