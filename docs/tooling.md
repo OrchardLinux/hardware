@@ -65,6 +65,16 @@ No repository and no per-person setting names a board: many contributors work on
 
 A distribution has no submodule, no launcher and no root configuration. `orchard` runs mainline, or the orchard checkout its `orchard.local.toml` names. CI checks out orchard `main` (`ORCHARD_REF` selects another); the compiled component bundle still comes from a published orchard release. A release's build receipt records the exact orchard commit (`orchard.hardware.revision()`), so the only pin is written by CI, for reproducing a release.
 
+## Testing an install without a device
+
+`orchard python tools/qemu-install/run RELEASE_DIRECTORY --board BOARD` runs orchard's real
+device installer against a 16 GiB loop disk (an APFS-like partition first, as on an
+iPad): partitions, root image, the board's platform layer, account and boot entry. Then
+QEMU cold-boots that disk as NVMe through orchard's initrd into the system's init. QEMU
+cannot run orchard's Apple kernels, so the boot uses Alpine's virt kernel with its storage
+modules in orchard's initrd; drivers and the desktop stay for the device. It needs Podman
+with a rootful connection (loop devices) and `qemu-system-aarch64`.
+
 ## Build caches (done)
 
 All shared by every checkout in `~/.cache/orchard`:

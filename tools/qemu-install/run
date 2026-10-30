@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+"""Install a distribution release onto a virtual disk and cold-boot it in QEMU; no device.
+
+    orchard python tools/qemu-install/run RELEASE_DIRECTORY [--board j71b] [--seconds 90]
+
+What it checks is orchard's side of an installed system: the real device
+installer (install_device.py) partitions a 16 GiB loop disk with an
+APFS-like first partition, unpacks the root image and the board's platform
+layer, sets the account and writes the boot entry; QEMU then boots that
+disk as NVMe through orchard's initrd (its init and BusyBox) into the
+system's own init. QEMU cannot run orchard's Apple kernels, so the boot
+uses Alpine's virt kernel and its storage modules in that initrd: kernel,
+drivers and the desktop stay untested. Needs Podman with a rootful
+connection (loop devices) and qemu-system-aarch64.
+"""
+import argparse
+import json
+import os
+from pathlib import Path
+import platform as host
+import shutil
+import subprocess
+import sys
+import time
+import tomllib
+
+HERE = Path(__file__).resolve().parent
+ROOT = HERE.parents[1]
+sys.path.insert(0, str(ROOT / 'src'))
+from orchard import kernel as kernels  # noqa: E402
+from orchard.build import cache_root  # noqa: E402
+from orchard.manifests import platform_for  # noqa: E402
+
+IMAGE = 'docker.io/library/alpine:3.22'
+PACKAGES = 'python3 sfdisk losetup e2fsprogs util-linux zstd xz linux-virt'
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
+    parser.add_argument('release', type=Path)
+    parser.add_argument('--board', default='j71b', help='the board whose platform layer and DTB to install')
+    parser.add_argument('--seconds', type=int, default=90, help='how long the boot may take')
+    parser.add_argument('--connection', default='podman-machine-default-root' if sys.platform == 'darwin' else None,
+                        help='rootful Podman connection (default on macOS: podman-machine-default-root)')
+    args = parser.parse_args()
+    release = args.release.resolve()
+    manifest = tomllib.loads((release / 'release.toml').read_text())
+    platform = platform_for(manifest, args.board)
+    devicetree = kernels.layout(ROOT, args.board)[1] + '.dtb'
+    work = cache_root() / 'work/qemu-install' / manifest['distro']
+    if work.exists():
+        shutil.rmtree(work)
+    work.mkdir(parents=True)
+    podman = ['podman', *(['--connection', args.connection] if args.connection else [])]
+    if not args.connection and os.geteuid():
+        podman.insert(0, 'sudo')
+    subprocess.run([*podman, 'run', '--rm', '--privileged', '-v', f'{ROOT / "src/orchard"}:/orchard:ro',
+                    '-v', f'{release}:/release:ro', '-v', f'{HERE}:/tool:ro', '-v', f'{work}:/work', IMAGE, 'sh', '-c',
+                    f'mount -t devtmpfs devtmpfs /dev && apk add -q {PACKAGES} >/dev/null && '
+                    f'python3 /tool/inside.py {args.board} {platform} {devicetree}'], check=True)
+    partuuid = json.loads((work / 'root.json').read_text())['partuuid']
+    accel = ['-accel', 'hvf', '-cpu', 'host'] if sys.platform == 'darwin' else (
+        ['-accel', 'kvm', '-cpu', 'host'] if host.machine() == 'aarch64' else ['-cpu', 'max'])
+    log = work / 'serial.log'
+    with log.open('wb') as output:
+        qemu = subprocess.Popen(['qemu-system-aarch64', '-M', 'virt', *accel, '-m', '2048', '-nographic',
+                                 '-kernel', str(work / 'Image'), '-initrd', str(work / 'initrd'),
+                                 '-append', f'root=PARTUUID={partuuid} rw rootwait console=ttyAMA0',
+                                 '-drive', f'file={work / "disk.img"},if=none,id=disk,format=raw',
+                                 '-device', 'nvme,drive=disk,serial=orchard,logical_block_size=4096,physical_block_size=4096'],
+                                stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT)
+        deadline = time.monotonic() + args.seconds
+        markers = {'mounted': b'mounted filesystem', 'openrc': b'OpenRC', 'systemd': b'systemd[1]',
+                   'initrd failed': b'orchard initrd:', 'login': b'login:'}
+        try:
+            while time.monotonic() < deadline and qemu.poll() is None:
+                time.sleep(2)
+                text = log.read_bytes()
+                if b'orchard initrd:' in text or b'login:' in text or b'Reached target' in text and b'Multi-User' in text:
+                    time.sleep(3)
+                    break
+        finally:
+            qemu.terminate()
+            qemu.wait()
+    text = log.read_bytes()
+    seen = {name: marker in text for name, marker in markers.items()}
+    for line in text.decode(errors='replace').splitlines():
+        if 'orchard initrd' in line or 'mounted filesystem' in line or 'Reached target' in line:
+            print(line.strip())
+    print(json.dumps({'release': manifest['version'], 'board': args.board, 'platform': platform,
+                      **seen, 'serial_log': str(log)}, indent=2))
+    started = seen['openrc'] or seen['systemd']
+    raise SystemExit(0 if seen['mounted'] and started and not seen['initrd failed'] else 1)
+
+
+if __name__ == '__main__':
+    main()
