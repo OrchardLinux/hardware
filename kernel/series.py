@@ -29,7 +29,10 @@ def resolve(name):
 
 
 def patches(name):
-    series = ROOT / 'series' / resolve(name)[0]
+    platform = resolve(name)[0]
+    if producer(name) != 'linux-arm64':
+        raise ValueError(f'{platform} patches are managed by its own producer')
+    series = ROOT / 'series' / platform
     result = []
     for line in series.read_text().splitlines():
         line = line.split('#', 1)[0].strip()
@@ -42,10 +45,41 @@ def patches(name):
     return result
 
 
+def producer(name):
+    """Resolve a platform producer within the packaged kernel resources."""
+    platform, device_dtb = resolve(name)
+    metadata = ROOT / 'platforms' / (platform + '.toml')
+    if metadata.is_symlink():
+        raise ValueError(f'Invalid platform metadata: {metadata}')
+    if not metadata.exists():
+        return 'linux-arm64'
+    if not metadata.is_file():
+        raise ValueError(f'Invalid platform metadata: {metadata}')
+    try:
+        import tomllib
+    except ImportError:
+        import tomli as tomllib
+    value = tomllib.loads(metadata.read_text())
+    selected = value.get('producer')
+    if (value.get('schema') != 1 or not isinstance(selected, str) or
+            not re.fullmatch(r'[a-z0-9][a-z0-9_-]*(?:/[a-z0-9][a-z0-9_-]*)+', selected)):
+        raise ValueError(f'Unsupported platform producer in {metadata}')
+    path = ROOT.joinpath(*selected.split('/'))
+    if (not path.is_file() or path.is_symlink() or ROOT.resolve() not in path.resolve().parents or
+            any(parent.is_symlink() for parent in path.parents if parent != ROOT and ROOT in parent.parents)):
+        raise ValueError(f'Invalid platform producer path in {metadata}')
+    artifact_dtb = value.get('dtb')
+    if device_dtb and artifact_dtb is not None and artifact_dtb != device_dtb + '.dtb':
+        raise ValueError(f'Platform device tree differs from {metadata}')
+    return selected
+
+
 if __name__ == '__main__':
     if sys.argv[1] == '--resolve':
         platform, dtb = resolve(sys.argv[2])
         print(platform, dtb or '-')
+    elif sys.argv[1] == '--producer':
+        print(producer(sys.argv[2]))
     else:
         for patch in patches(sys.argv[1]):
             print(patch)

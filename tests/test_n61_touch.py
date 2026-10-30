@@ -48,7 +48,8 @@ class N61TouchPackets(unittest.TestCase):
         linux = root / 'linux'
         linux.mkdir()
         (linux / 'types.h').write_text('#include <stdbool.h>\n#include <stddef.h>\n#include <stdint.h>\ntypedef uint8_t u8; typedef uint16_t u16; typedef uint32_t u32;\n')
-        (linux / 'errno.h').write_text('#include <errno.h>\n')
+        # glibc's errno.h includes linux/errno.h; define kernel values directly.
+        (linux / 'errno.h').write_text('#define EIO 5\n#define EINVAL 22\n#define EMSGSIZE 90\n')
         (linux / 'string.h').write_text('#include <string.h>\n')
         (linux / 'unaligned.h').write_text('static inline void put_unaligned_be16(unsigned n, void *p) { unsigned char *b=p; b[0]=n>>8; b[1]=n; }\nstatic inline void put_unaligned_le16(unsigned n, void *p) { unsigned char *b=p; b[0]=n; b[1]=n>>8; }\nstatic inline unsigned get_unaligned_be16(const void *p) { const unsigned char *b=p; return (b[0]<<8)|b[1]; }\n')
         transport = function(files['drivers/input/touchscreen/apple_z2.c'],
