@@ -23,20 +23,22 @@ def pin_problem(pin):
     return None
 
 
-def _ask_twice(label, problem, ask, say):
+def _ask_twice(label, again, problem, ask, say):
     while True:
-        value = ask(f'{label}: ')
+        value = ask(f'  {label}: ')
         error = problem(value)
         if error:
-            say(error)
-        elif ask(f'{label} again: ') != value:
-            say('They do not match.')
+            say('  ' + error)
+        elif ask(f'  {again}: ') != value:
+            say('  They do not match.')
         else:
             return value
 
 
 def ask_secrets(ask=getpass.getpass, say=print):
-    say('The password is for sudo and system changes; the PIN only unlocks the screen.')
-    password = _ask_twice('Password for the new system', password_problem, ask, say)
-    pin = _ask_twice('6-digit lock-screen PIN', pin_problem, ask, say)
+    say('')
+    say('Setting up your account')
+    password = _ask_twice('Password (for sudo)', 'Repeat the password', password_problem, ask, say)
+    pin = _ask_twice('Lock-screen PIN (6 digits)', 'Repeat the PIN', pin_problem, ask, say)
+    say('')
     return {'password': password, 'pin': pin}

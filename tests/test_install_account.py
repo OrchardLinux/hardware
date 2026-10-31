@@ -20,8 +20,9 @@ class InstallAccount(unittest.TestCase):
         secrets = A.ask_secrets(answers('short', 'long enough', 'different', 'long enough', 'long enough',
                                         '12345', '１２３４５６', '654321', '654321'), said.append)
         self.assertEqual(secrets['pin'], '654321')
-        self.assertEqual(said[1:], ['Use at least 8 characters.', 'They do not match.',
-                                    'The PIN is exactly 6 digits.', 'The PIN is exactly 6 digits.'])
+        self.assertEqual([line.strip() for line in said if line.strip()],
+                         ['Setting up your account', 'Use at least 8 characters.', 'They do not match.',
+                          'The PIN is exactly 6 digits.', 'The PIN is exactly 6 digits.'])
 
 
 if __name__ == '__main__':

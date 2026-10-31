@@ -83,11 +83,17 @@ def bootstrap(request):
 
 
 def start(request):
-    """Ask PID 1 to start an installed root in this boot; it checks and switches within a second."""
+    """Ask PID 1 to start an installed root in this boot; it checks and switches within a second.
+
+    The started system keeps this session's SSH key only if the host asked for
+    it (keep_ssh); otherwise the key is removed first. Open sessions stay.
+    """
     target = {key: str(uuid.UUID(request[key])) for key in ('root', 'boot')}
     path = Path('/run/orchard/start.json')
     if path.exists():
         raise ValueError('A start was already requested in this boot')
+    if request.get('keep_ssh') is not True:
+        Path('/run/recovery/authorized_keys').unlink(missing_ok=True)
     temporary = path.with_suffix('.part')
     temporary.write_text(json.dumps(target))
     temporary.replace(path)

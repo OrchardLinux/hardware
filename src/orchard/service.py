@@ -136,6 +136,7 @@ def install(manifest=None, *, input_fn=input, secrets_fn=ask_secrets, progress=N
         if account:
             with clock.exclude('input'):
                 secrets = secrets_fn()
+        progress.phase('Copying the kernel and firmware to the device')
         with tempfile.TemporaryDirectory(prefix='installation-', dir=private) as directory:
             mixin, mixin_record = adapter.prepare_mixin(firmware, Path(directory) / 'mixin')
             remote.put(connection, mixin.read_bytes(), 'firmware.tar.gz')
@@ -167,8 +168,15 @@ def install(manifest=None, *, input_fn=input, secrets_fn=ask_secrets, progress=N
         save_report(path, report)
         # The recovery runs the same kernel the new entry boots, so it switches
         # into the new root right away: the first start needs no second DFU boot.
-        Client(connection, progress).call('start', {'root': report['root'], 'boot': report['boot']})
+        try:
+            answer = ask(clock, 'Keep SSH access for this boot session? [y/N] ', input_fn)
+        except EOFError:
+            answer = ''
+        report['ssh_access'] = 'retained' if answer.lower() in ('y', 'yes') else 'removed'
+        Client(connection, progress).call('start', {'root': report['root'], 'boot': report['boot'],
+                                                    'keep_ssh': report['ssh_access'] == 'retained'})
         report['started'] = True
+        report['phases'] = progress.timings
         save_report(path, report)
     progress.phase(record.get('name', 'Linux') + ' is starting on the device. To start it again later, '
                    'put the device in DFU mode and run: orchard launch')

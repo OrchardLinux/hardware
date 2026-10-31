@@ -50,6 +50,8 @@ class Progress:
         self.rows = {}
         self.rendered = 0
         self.log_path = None
+        self.opened = self.started
+        self.timings = []
 
     def task(self, name):
         return TaskProgress(self, name)
@@ -65,6 +67,8 @@ class Progress:
         with self.lock:
             self.end_line()
             print(message, file=self.output, flush=True)
+            # Where the time goes: kept for the operation's report, not shown.
+            self.timings.append([round(time.monotonic() - self.opened, 1), message])
 
     def diagnostic(self, message):
         with self.lock:
@@ -158,7 +162,7 @@ class TaskProgress(Progress):
     def reset_transfer(self):
         self.started, self.last, self.initial = time.monotonic(), None, None
 
-    def transfer(self, sent, total):
+    def transfer(self, sent, total, prefix=''):
         now = time.monotonic()
         if self.initial is None:
             self.initial = sent
@@ -166,7 +170,7 @@ class TaskProgress(Progress):
         if sent != total and self.last is not None and now - self.last < interval:
             return
         self.last = now
-        self.parent.row(self.name, transfer_text(sent, total, self.started, self.initial, now),
+        self.parent.row(self.name, prefix + transfer_text(sent, total, self.started, self.initial, now),
                         complete=sent == total or not self.parent.interactive)
 
     def diagnostic(self, message):

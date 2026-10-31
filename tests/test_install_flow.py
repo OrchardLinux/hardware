@@ -89,8 +89,9 @@ class InstallFlow(unittest.TestCase):
         disk = layout([{'number': 1, 'start': 6, 'blocks': 3 * GIB // 4096, 'type': APFS,
                         'partuuid': '00000000-0000-4000-8000-000000000001'}],
                       [{'start': 3 * GIB // 4096 + 6, 'blocks': 20 * GIB // 4096}])
-        result, store, prompts, output = self.run_install(disk, ['', ''])
-        self.assertEqual(prompts, ['Install Linux on Supported tablet? [Y/n] ', 'Choose [1]: '])
+        result, store, prompts, output = self.run_install(disk, ['', '', ''])
+        self.assertEqual(prompts, ['Install Linux on Supported tablet? [Y/n] ', 'Choose [1]: ',
+                                   'Keep SSH access for this boot session? [y/N] '])
         self.assertIn('free space, 20.0 GiB', output)
         self.assertEqual((store / 'install_device.py').read_bytes(), install_remote.SCRIPT.read_bytes())
         self.assertEqual((store / 'root-stream').read_bytes(), b'root-stream')
@@ -108,11 +109,12 @@ class InstallFlow(unittest.TestCase):
         self.assertEqual(result['root'], plan['root']['partuuid'])
         self.assertIn('orchard launch', output)
         self.assertTrue(result['started'])
-        self.assertEqual(self.status.call.call_args.args, ('start', {'root': plan['root']['partuuid'], 'boot': plan['boot']['partuuid']}))
+        self.assertEqual(self.status.call.call_args.args, ('start', {'root': plan['root']['partuuid'], 'boot': plan['boot']['partuuid'],
+                                    'keep_ssh': False}))
 
     def test_a_release_without_an_account_asks_for_no_secrets(self):
         disk = layout([], [{'start': 256, 'blocks': 20 * GIB // 4096}])
-        result, store, prompts, output = self.run_install(disk, ['', ''], account=False)
+        result, store, prompts, output = self.run_install(disk, ['', '', ''], account=False)
         self.assertFalse(json.loads((store / 'plan.json').read_text())['account'])
         self.assertFalse((store / 'secrets.json').exists())
         self.assertTrue(result['installed'])
@@ -124,8 +126,9 @@ class InstallFlow(unittest.TestCase):
                         'partuuid': '00000000-0000-4000-8000-000000000002', 'fs': 'ext4', 'label': 'OrchardLinux'}], [])
         with self.assertRaisesRegex(ValueError, 'Not confirmed'):
             self.run_install(disk, ['', '1', 'yes'])
-        result, store, prompts, output = self.run_install(disk, ['', '1', 'erase 2'])
-        self.assertEqual(prompts[-1], 'Type "erase 2" to confirm: ')
+        result, store, prompts, output = self.run_install(disk, ['', '1', 'erase 2', 'y'])
+        self.assertEqual(prompts[-2], 'Type "erase 2" to confirm: ')
+        self.assertEqual(self.status.call.call_args.args[1]['keep_ssh'], True)
         self.assertIn('previous Orchard installer', output)
         self.assertEqual(json.loads((store / 'plan.json').read_text())['remove']['number'], 2)
 
