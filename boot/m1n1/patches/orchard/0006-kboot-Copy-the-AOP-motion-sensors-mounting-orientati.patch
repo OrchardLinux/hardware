@@ -1,0 +1,77 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <henrik@goat-code.com>
+Date: Sat, 31 Oct 2026 17:28:38 +0000
+Subject: [PATCH] kboot: Copy the AOP motion sensors' mounting orientation
+
+The A10's AOP serves the accelerometer, gyroscope and compass, which are
+mounted per unit: iBoot resolves each sensor's "<name>-orientation"
+reference (e.g. "syscfg/ARot") into the unit's record before m1n1 runs.
+Copy it into the sensor's node below the AOP (alias aop) as
+apple,orientation, as the touchscreen and light sensor calibration
+already are. Unprovisioned units keep the syscfg reference and are
+skipped.
+
+Assisted-by: LLM
+---
+ src/kboot.c | 41 +++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 41 insertions(+)
+
+diff --git a/src/kboot.c b/src/kboot.c
+index 7dc5062..24685ab 100644
+--- a/src/kboot.c
++++ b/src/kboot.c
+@@ -1028,6 +1028,45 @@ static int dt_set_aop(void)
+     return 0;
+ }
+ 
++/*
++ * The AOP's motion sensors are mounted per unit: iBoot resolves each sensor's
++ * "<name>-orientation" (e.g. "syscfg/ARot") into the unit's record. Copy it
++ * into the sensor's node below the AOP as apple,orientation. Unprovisioned
++ * units keep the syscfg reference and are skipped.
++ */
++static int dt_set_aop_sensors(void)
++{
++    static const char *const sensors[] = {"accel", "gyro", "compass"};
++    const char *path = fdt_get_alias(dt, "aop");
++    if (path == NULL)
++        return 0;
++
++    int aop = fdt_path_offset(dt, path);
++    if (aop < 0)
++        bail("FDT: aop alias points at nonexistent node\n");
++
++    for (size_t i = 0; i < ARRAY_SIZE(sensors); i++) {
++        char adt_path[64], prop[32];
++        snprintf(adt_path, sizeof(adt_path), "/arm-io/aop/iop-aop-nub/%s", sensors[i]);
++        snprintf(prop, sizeof(prop), "%s-orientation", sensors[i]);
++
++        int anode = adt_path_offset(adt, adt_path);
++        int node = fdt_subnode_offset(dt, aop, sensors[i]);
++        if (anode < 0 || node < 0)
++            continue;
++
++        u32 len;
++        const u8 *value = adt_getprop(adt, anode, prop, &len);
++        if (!value || !len || (len >= 7 && !memcmp(value, "syscfg/", 7))) {
++            printf("ADT: %s not provisioned\n", prop);
++            continue;
++        }
++        if (fdt_setprop(dt, node, "apple,orientation", value, len) < 0)
++            bail("FDT: failed to set %s apple,orientation\n", sensors[i]);
++    }
++    return 0;
++}
++
+ static int dt_set_multitouch(void)
+ {
+     const char *path = fdt_get_alias(dt, "touchbar0");
+@@ -3149,6 +3188,8 @@ int kboot_prepare_dt(void *fdt)
+         return -1;
+     if (dt_set_aop())
+         return -1;
++    if (dt_set_aop_sensors())
++        return -1;
+     if (dt_set_sep())
+         return -1;
+     if (dt_set_pmp())
