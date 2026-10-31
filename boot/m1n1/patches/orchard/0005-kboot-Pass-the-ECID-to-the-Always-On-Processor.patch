@@ -1,0 +1,64 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Dalton Alexandre <alley.nightly_0b@icloud.com>
+Date: Fri, 30 Oct 2026 08:35:32 -0700
+Subject: [PATCH] kboot: Pass the ECID to the Always-On Processor
+
+The A10's AOP firmware carries the chip's ECID in its boot arguments,
+which the kernel fills in when it loads the firmware. Copy the ADT's
+/chosen/unique-chip-id into the AOP's node (alias aop) as apple,ecid,
+and nowhere else; the kernel driver removes it once read.
+
+[Orchard: from dl-alexandre/orchard db7f4e7 (orchard PR #36): the ECID
+ goes into the AOP's node instead of /chosen.]
+Signed-off-by: Dalton Alexandre <alley.nightly_0b@icloud.com>
+Assisted-by: LLM
+---
+ src/kboot.c | 28 ++++++++++++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+
+diff --git a/src/kboot.c b/src/kboot.c
+index 87f6720..7dc5062 100644
+--- a/src/kboot.c
++++ b/src/kboot.c
+@@ -1002,6 +1002,32 @@ static int dt_set_als(void)
+     return 0;
+ }
+ 
++/*
++ * The AOP's firmware carries the chip's ECID in its boot arguments. Pass it
++ * only to the AOP's node; the driver removes it from the tree once read.
++ */
++static int dt_set_aop(void)
++{
++    const char *path = fdt_get_alias(dt, "aop");
++    if (path == NULL)
++        return 0;
++
++    int node = fdt_path_offset(dt, path);
++    if (node < 0)
++        bail("FDT: aop alias points at nonexistent node\n");
++
++    int chosen = adt_path_offset(adt, "/chosen");
++    u64 ecid;
++    if (chosen < 0 || ADT_GETPROP(adt, chosen, "unique-chip-id", &ecid) < 0 || !ecid) {
++        printf("ADT: no unique-chip-id for the AOP\n");
++        return 0;
++    }
++
++    if (fdt_setprop_u64(dt, node, "apple,ecid", ecid))
++        bail("FDT: failed to set apple,ecid\n");
++    return 0;
++}
++
+ static int dt_set_multitouch(void)
+ {
+     const char *path = fdt_get_alias(dt, "touchbar0");
+@@ -3121,6 +3147,8 @@ int kboot_prepare_dt(void *fdt)
+         return -1;
+     if (dt_set_als())
+         return -1;
++    if (dt_set_aop())
++        return -1;
+     if (dt_set_sep())
+         return -1;
+     if (dt_set_pmp())

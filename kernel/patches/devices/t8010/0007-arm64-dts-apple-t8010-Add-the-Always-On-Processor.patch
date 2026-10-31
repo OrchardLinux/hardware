@@ -1,0 +1,92 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Dalton Alexandre <alley.nightly_0b@icloud.com>
+Date: Fri, 30 Oct 2026 15:49:43 +0000
+Subject: [PATCH] arm64: dts: apple: t8010: Add the Always-On Processor
+
+Describe the AOP and its A7 IOP mailbox, and enable them on the J71b
+with the firmware from its iPadOS restore image (ipad7baop).
+
+The registers and interrupts are those of the iPadOS device tree's
+/arm-io/aop node, which is the same on all four T8010 iPads.
+
+[Orchard: from dl-alexandre/orchard db7f4e7 (orchard PR #36); reworked
+ for the in-kernel driver.]
+Signed-off-by: Dalton Alexandre <alley.nightly_0b@icloud.com>
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/apple/t8010-common.dtsi |  1 +
+ arch/arm64/boot/dts/apple/t8010-j71b.dts    |  9 ++++++++
+ arch/arm64/boot/dts/apple/t8010.dtsi        | 25 +++++++++++++++++++++
+ 3 files changed, 35 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/t8010-common.dtsi b/arch/arm64/boot/dts/apple/t8010-common.dtsi
+index 92df55da6..ae29a9430 100644
+--- a/arch/arm64/boot/dts/apple/t8010-common.dtsi
++++ b/arch/arm64/boot/dts/apple/t8010-common.dtsi
+@@ -11,6 +11,7 @@
+ 
+ / {
+ 	aliases {
++		aop = &aop; /* Used by loader */
+ 		ausbphy0 = &ausbphy0; /* Used by loader */
+ 		nvme-hmb = &nvme_hmb; /* Used by loader */
+ 		serial0 = &serial0;
+diff --git a/arch/arm64/boot/dts/apple/t8010-j71b.dts b/arch/arm64/boot/dts/apple/t8010-j71b.dts
+index 2aada4855..d3ffa347c 100644
+--- a/arch/arm64/boot/dts/apple/t8010-j71b.dts
++++ b/arch/arm64/boot/dts/apple/t8010-j71b.dts
+@@ -17,6 +17,15 @@ &wifi {
+ 	brcm,board-type = "apple,j71b";
+ };
+ 
++&aop {
++	firmware-name = "apple/aop-ipad7b.bin", "apple/aop-ipad7b-ext.bin";
++	status = "okay";
++};
++
++&aop_mbox {
++	status = "okay";
++};
++
+ &touchscreen {
+ 	firmware-name = "apple/j71b-fwstart.z2fw";
+ };
+diff --git a/arch/arm64/boot/dts/apple/t8010.dtsi b/arch/arm64/boot/dts/apple/t8010.dtsi
+index 5ff9aa100..668c19275 100644
+--- a/arch/arm64/boot/dts/apple/t8010.dtsi
++++ b/arch/arm64/boot/dts/apple/t8010.dtsi
+@@ -561,6 +561,31 @@ wdt: watchdog@2102b0000 {
+ 			interrupt-parent = <&aic>;
+ 			interrupts = <AIC_IRQ 4 IRQ_TYPE_LEVEL_HIGH>;
+ 		};
++
++		aop: aop@210800000 {
++			compatible = "apple,t8010-aop";
++			reg = <0x2 0x10800000 0x0 0x4000>,
++			      <0x2 0x10000500 0x0 0x100>,
++			      <0x2 0x10e00000 0x0 0xa0000>;
++			reg-names = "akf", "control", "sram";
++			mboxes = <&aop_mbox>;
++			mbox-names = "mbox";
++			status = "disabled";
++		};
++
++		aop_mbox: mbox@210804000 {
++			compatible = "apple,t8010-a7iop-mailbox";
++			reg = <0x2 0x10804000 0x0 0x1000>;
++			interrupt-parent = <&aic>;
++			interrupts = <AIC_IRQ 145 IRQ_TYPE_LEVEL_HIGH>,
++				     <AIC_IRQ 146 IRQ_TYPE_LEVEL_HIGH>,
++				     <AIC_IRQ 147 IRQ_TYPE_LEVEL_HIGH>,
++				     <AIC_IRQ 148 IRQ_TYPE_LEVEL_HIGH>;
++			interrupt-names = "send-empty", "send-not-empty",
++					  "recv-empty", "recv-not-empty";
++			#mbox-cells = <0>;
++			status = "disabled";
++		};
+ 	};
+ 
+ 	timer {
+-- 
+2.54.0 (Apple Git-157)
+

@@ -1,0 +1,1112 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Dalton Alexandre <alley.nightly_0b@icloud.com>
+Date: Fri, 30 Oct 2026 15:49:43 +0000
+Subject: [PATCH] soc: apple: Add the T8010 Always-On Processor driver
+
+The AOP of the A10 runs RTKit firmware for the motion sensors and the
+always-on microphones. Unlike on later SoCs, the bootloader does not
+load it, so this driver does:
+
+- the main image goes into the AOP's SRAM and the external segment into
+  coherent memory. The boot argument block, located through the image
+  header, gets fresh random PRNG and NONC values, the ECID that the
+  bootloader put into the AOP's node (removed from the tree once read),
+  and the external segment's address (EC0p);
+- the AOP is started through its CPU control and boot control registers
+  and booted with mainline RTKit over the A7 IOP mailbox, sending the
+  initial power state as m1n1 does for these coprocessors.
+
+Its services talk AFK/EPIC over shared rings on the application
+endpoints, as on later SoCs (the Asahi Linux AOP driver). Each service
+announced by the firmware gets a child platform device if the AOP's node
+has a child of the same name. The child's driver receives the service's
+reports through apple_aop_listen() and sends requests with
+apple_aop_call(). Reports nobody listens to are dumped as debug output.
+
+The firmware cannot be restarted once stopped, so the AOP starts once
+per boot: the driver cannot be unbound and keeps its module loaded, and
+it halts the AOP at shutdown.
+
+[Orchard: from dl-alexandre/orchard db7f4e7 and dl-alexandre/omarchy-a
+ 6734dd5 (aop.c, firmware.py; orchard PR #36, omarchy-a PR #23): the
+ tested boot sequence, firmware patching, AFK handshake and ring
+ handling, moved from the userspace service and its DMA owner into the
+ kernel on mainline RTKit; the bootargs block is found through the image
+ header instead of fixed offsets.]
+Signed-off-by: Dalton Alexandre <alley.nightly_0b@icloud.com>
+Assisted-by: LLM
+---
+ MAINTAINERS                   |   7 +
+ drivers/soc/apple/Kconfig     |  12 +
+ drivers/soc/apple/Makefile    |   3 +
+ drivers/soc/apple/aop.c       | 956 ++++++++++++++++++++++++++++++++++
+ include/linux/soc/apple/aop.h |  39 ++
+ 5 files changed, 1017 insertions(+)
+ create mode 100644 drivers/soc/apple/aop.c
+ create mode 100644 include/linux/soc/apple/aop.h
+
+diff --git a/MAINTAINERS b/MAINTAINERS
+index b02280b36..a4a69643c 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -2064,6 +2064,13 @@ L:	linux-hwmon@vger.kernel.org
+ S:	Odd fixes
+ F:	drivers/hwmon/applesmc.c
+ 
++APPLE T8010 ALWAYS-ON PROCESSOR
++M:	Dalton Alexandre <alley.nightly_0b@icloud.com>
++S:	Maintained
++F:	Documentation/devicetree/bindings/soc/apple/apple,t8010-aop.yaml
++F:	drivers/soc/apple/aop.c
++F:	include/linux/soc/apple/aop.h
++
+ APPLETALK NETWORK LAYER
+ L:	netdev@vger.kernel.org
+ S:	Obsolete
+diff --git a/drivers/soc/apple/Kconfig b/drivers/soc/apple/Kconfig
+index 26ccd74ce..05de875ad 100644
+--- a/drivers/soc/apple/Kconfig
++++ b/drivers/soc/apple/Kconfig
+@@ -38,6 +38,18 @@ config APPLE_RTKIT
+ 
+ 	  Say 'y' here if you have an Apple SoC.
+ 
++config APPLE_AOP_T8010
++	tristate "Apple T8010 Always-On Processor"
++	depends on APPLE_RTKIT
++	depends on ARCH_APPLE || COMPILE_TEST
++	help
++	  The Always-On Processor (AOP) of the Apple A10 runs the firmware for
++	  the motion sensors and the always-on microphones. This driver loads
++	  and starts that firmware and provides its services to the sensor
++	  drivers.
++
++	  Say 'y' or 'm' here if you have an A10-based iPad or iPhone.
++
+ config APPLE_PMP_T8015_V1
+ 	tristate "Apple T8015 PMP"
+ 	depends on ARCH_APPLE || COMPILE_TEST
+diff --git a/drivers/soc/apple/Makefile b/drivers/soc/apple/Makefile
+index 73c8bd23b..f99975cc6 100644
+--- a/drivers/soc/apple/Makefile
++++ b/drivers/soc/apple/Makefile
+@@ -14,6 +14,9 @@ apple-sart-y = sart.o
+ obj-$(CONFIG_APPLE_TUNABLE) += apple-tunable.o
+ apple-tunable-y = tunable.o
+ 
++obj-$(CONFIG_APPLE_AOP_T8010) += apple-aop.o
++apple-aop-y := aop.o
++
+ obj-$(CONFIG_APPLE_PMP_T8015_V1) += pmp_t8015_v1.o
+ obj-$(CONFIG_APPLE_SIO) += apple-sio.o
+ apple-sio-y := apple-sio-core.o
+diff --git a/drivers/soc/apple/aop.c b/drivers/soc/apple/aop.c
+new file mode 100644
+index 000000000..824b8688f
+--- /dev/null
++++ b/drivers/soc/apple/aop.c
+@@ -0,0 +1,956 @@
++// SPDX-License-Identifier: GPL-2.0-only OR MIT
++/*
++ * Apple T8010 Always-On Processor (AOP)
++ *
++ * The AOP runs RTKit firmware that the operating system loads: a main image
++ * into the AOP's SRAM and an external segment into system memory, with boot
++ * arguments filled in. Its services talk AFK/EPIC over shared ring buffers on
++ * the RTKit application endpoints, as on later SoCs (see the Asahi Linux AOP
++ * driver). Each service with a device tree child node of the same name gets a
++ * child platform device; its driver receives the service's reports through
++ * apple_aop_listen() and sends requests with apple_aop_call().
++ *
++ * The firmware cannot be restarted once stopped, so the AOP starts once per
++ * boot and the driver cannot be unbound or unloaded after that.
++ */
++
++#include <linux/bitfield.h>
++#include <linux/completion.h>
++#include <linux/dma-mapping.h>
++#include <linux/firmware.h>
++#include <linux/io.h>
++#include <linux/iopoll.h>
++#include <linux/list.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/random.h>
++#include <linux/slab.h>
++#include <linux/soc/apple/aop.h>
++#include <linux/soc/apple/rtkit.h>
++#include <linux/string.h>
++#include <linux/unaligned.h>
++#include <linux/workqueue.h>
++
++#define APPLE_AOP_CPU_CONTROL		0x44
++#define APPLE_AOP_CPU_CONTROL_RUN	BIT(4)
++/* Coprocessor-side interrupt mask, set up like the mailbox's (as for SmartIO) */
++#define APPLE_AOP_IRQ_MASK_SET		0xc00
++#define APPLE_AOP_IRQ_MASK_CLEAR	0xc04
++#define APPLE_AOP_IRQ_MASK_ALL		0x1111
++#define APPLE_AOP_IRQ_INBOX		BIT(0)
++#define APPLE_AOP_IRQ_OUTBOX		BIT(12)
++
++#define APPLE_AOP_CONTROL_AUTO_BOOT	0x0
++
++/* Main image header: location of the boot argument key/value block */
++#define APPLE_AOP_IMAGE_BOOTARGS_OFFSET	0x48
++#define APPLE_AOP_IMAGE_BOOTARGS_SIZE	0x4c
++
++#define APPLE_AOP_FOURCC(a, b, c, d)                                     \
++	(((u32)(a) << 24) | ((u32)(b) << 16) | ((u32)(c) << 8) | (u32)(d))
++#define APPLE_AOP_BOOTARG_PRNG		APPLE_AOP_FOURCC('P', 'R', 'N', 'G')
++#define APPLE_AOP_BOOTARG_ECID		APPLE_AOP_FOURCC('E', 'C', 'I', 'D')
++#define APPLE_AOP_BOOTARG_NONC		APPLE_AOP_FOURCC('N', 'O', 'N', 'C')
++#define APPLE_AOP_BOOTARG_EC0P		APPLE_AOP_FOURCC('E', 'C', '0', 'p')
++
++#define APPLE_AOP_HALT_TIMEOUT_US	10000
++
++#define AFK_ENDPOINT_START		0x20
++#define AFK_ENDPOINT_COUNT		0xe0
++
++#define AFK_MSG_OPCODE			GENMASK_ULL(55, 48)
++#define AFK_MSG_BUF_SIZE		GENMASK_ULL(31, 16)
++#define AFK_MSG_RING_OFFSET		GENMASK_ULL(47, 32)
++#define AFK_MSG_RING_SIZE		GENMASK_ULL(31, 16)
++#define AFK_MSG_ADDR			GENMASK_ULL(47, 0)
++#define AFK_MSG_WPTR			GENMASK_ULL(31, 0)
++
++#define AFK_OPC_INIT			0x80
++#define AFK_OPC_RECV			0x85
++#define AFK_OPC_START_ACK		0x86
++#define AFK_OPC_GET_BUF			0x89
++#define AFK_OPC_INIT_TX			0x8a
++#define AFK_OPC_INIT_RX			0x8b
++#define AFK_OPC_INIT_UNK		0x8c
++#define AFK_OPC_INIT_ACK		0xa0
++#define AFK_OPC_GET_BUF_ACK		0xa1
++#define AFK_OPC_SEND			0xa2
++#define AFK_OPC_START			0xa3
++#define AFK_OPC_SHUTDOWN_ACK		0xc1
++
++#define AFK_BLOCK_STEP			0x40
++#define AFK_MAX_BUFFER			SZ_1M
++
++#define AFK_QE_MAGIC_IOP		0x20504f49 /* " POI" */
++#define AFK_QE_MAGIC_AOP		0x20504f41 /* " POA" */
++
++#define EPIC_TYPE_NOTIFY		0
++#define EPIC_CATEGORY_REPORT		0x00
++#define EPIC_CATEGORY_NOTIFY		0x10
++#define EPIC_CATEGORY_REPLY		0x20
++#define EPIC_SUBTYPE_RETCODE		0x84
++#define EPIC_SUBTYPE_STRING		0x8a
++#define EPIC_SUBTYPE_RETCODE_PAYLOAD	0xa0
++#define EPIC_SUBTYPE_STD_SERVICE	0xc0
++#define EPIC_SUBTYPE_FAKEHID_REPORT	0xc4
++
++#define APPLE_AOP_MAX_CALLS		8
++#define APPLE_AOP_CALL_TIMEOUT		msecs_to_jiffies(1000)
++
++struct afk_qe_header {
++	__le32 magic;
++	__le32 size;
++	__le32 channel;
++	__le32 type;
++} __packed;
++
++struct epic_header {
++	u8 version;
++	__le16 seq;
++	u8 pad0;
++	__le32 unk0;
++	__le64 timestamp;
++	/* sub-header */
++	__le32 length;
++	u8 sub_version;
++	u8 category;
++	__le16 subtype;
++	__le16 tag;
++	__le16 unk1;
++	__le64 pad1;
++	__le32 inline_len;
++} __packed;
++
++struct epic_service_announce {
++	char name[20];
++	__le32 unk0;
++	__le32 retcode;
++	__le32 unk1;
++	__le32 channel;
++	__le32 unk2;
++	__le32 unk3;
++} __packed;
++
++struct afk_ring {
++	size_t offset;
++	size_t block;
++	size_t size;
++	bool valid;
++};
++
++struct apple_aop_call {
++	struct completion done;
++	u32 retcode;
++	void *reply;
++	size_t reply_len;
++};
++
++struct apple_aop_ep {
++	struct apple_aop *aop;
++	u8 index;
++
++	void *buf;
++	dma_addr_t buf_dma;
++	size_t buf_size;
++	struct afk_ring tx, rx;
++	void *rx_msg;
++
++	struct mutex lock; /* tx ring, seq and calls */
++	u16 seq;
++	struct apple_aop_call *calls[APPLE_AOP_MAX_CALLS];
++};
++
++struct apple_aop_listener {
++	struct list_head list;
++	u8 endpoint;
++	u32 channel;
++	apple_aop_report_fn report;
++	void *cookie;
++};
++
++struct apple_aop_child {
++	struct list_head list;
++	struct platform_device *pdev;
++};
++
++struct apple_aop_register_work {
++	struct work_struct work;
++	struct apple_aop *aop;
++	struct apple_aop_service service;
++};
++
++struct apple_aop {
++	struct device *dev;
++	void __iomem *akf;
++	void __iomem *control;
++	void __iomem *sram;
++	resource_size_t sram_size;
++	struct apple_rtkit *rtk;
++
++	void *ext;
++	dma_addr_t ext_dma;
++	size_t ext_size;
++
++	struct apple_aop_ep *eps;
++
++	struct mutex listeners_lock; /* listeners */
++	struct list_head listeners;
++
++	struct mutex children_lock; /* children, removing */
++	struct list_head children;
++	bool removing;
++};
++
++static bool apple_aop_is_started(struct apple_aop *aop)
++{
++	return (readl(aop->akf + APPLE_AOP_CPU_CONTROL) & APPLE_AOP_CPU_CONTROL_RUN) ||
++	       readl(aop->control + APPLE_AOP_CONTROL_AUTO_BOOT);
++}
++
++static bool apple_aop_halt(struct apple_aop *aop)
++{
++	u32 val;
++
++	writel(0, aop->control + APPLE_AOP_CONTROL_AUTO_BOOT);
++	writel(readl(aop->akf + APPLE_AOP_CPU_CONTROL) & ~APPLE_AOP_CPU_CONTROL_RUN,
++	       aop->akf + APPLE_AOP_CPU_CONTROL);
++
++	return !readl_poll_timeout(aop->akf + APPLE_AOP_CPU_CONTROL, val,
++				   !(val & APPLE_AOP_CPU_CONTROL_RUN), 10,
++				   APPLE_AOP_HALT_TIMEOUT_US);
++}
++
++/* Firmware loading */
++
++struct apple_aop_bootarg {
++	u32 key;
++	const void *value;
++	u32 size;
++	bool found;
++};
++
++static int apple_aop_patch_bootargs(struct apple_aop *aop, u8 *image, size_t size,
++				    struct apple_aop_bootarg *args, int count)
++{
++	size_t offset, end, pos;
++	int i;
++
++	offset = get_unaligned_le32(image + APPLE_AOP_IMAGE_BOOTARGS_OFFSET);
++	end = get_unaligned_le32(image + APPLE_AOP_IMAGE_BOOTARGS_SIZE);
++	if (offset >= size || end > size - offset)
++		return -EINVAL;
++	end += offset;
++
++	for (pos = offset; pos + 8 <= end;) {
++		u32 key = get_unaligned_le32(image + pos);
++		u32 len = get_unaligned_le32(image + pos + 4);
++
++		pos += 8;
++		if (len > end - pos)
++			return -EINVAL;
++
++		for (i = 0; i < count; i++) {
++			if (args[i].key != key)
++				continue;
++			if (args[i].size != len || args[i].found)
++				return -EINVAL;
++			memcpy(image + pos, args[i].value, len);
++			args[i].found = true;
++		}
++		pos += len;
++	}
++
++	for (i = 0; i < count; i++)
++		if (!args[i].found)
++			return -ENOENT;
++	return 0;
++}
++
++static int apple_aop_load(struct apple_aop *aop, u64 ecid)
++{
++	const struct firmware *main_fw, *ext_fw;
++	const char *main_name, *ext_name;
++	struct device_node *np = aop->dev->of_node;
++	u8 prng[32], nonce[8];
++	__le64 ecid_le = cpu_to_le64(ecid), ext_le;
++	u8 *image;
++	int ret;
++
++	ret = of_property_read_string_index(np, "firmware-name", 0, &main_name);
++	if (!ret)
++		ret = of_property_read_string_index(np, "firmware-name", 1, &ext_name);
++	if (ret)
++		return dev_err_probe(aop->dev, ret, "no firmware-name\n");
++
++	ret = request_firmware(&main_fw, main_name, aop->dev);
++	if (ret)
++		return ret;
++	ret = request_firmware(&ext_fw, ext_name, aop->dev);
++	if (ret)
++		goto out_main;
++
++	if (main_fw->size > aop->sram_size || main_fw->size % 4 ||
++	    main_fw->size < APPLE_AOP_IMAGE_BOOTARGS_SIZE + 4 || !ext_fw->size) {
++		dev_err(aop->dev, "invalid firmware sizes %zu/%zu\n",
++			main_fw->size, ext_fw->size);
++		ret = -EINVAL;
++		goto out_ext;
++	}
++
++	aop->ext_size = ext_fw->size;
++	aop->ext = dma_alloc_coherent(aop->dev, aop->ext_size, &aop->ext_dma, GFP_KERNEL);
++	if (!aop->ext) {
++		ret = -ENOMEM;
++		goto out_ext;
++	}
++	memcpy(aop->ext, ext_fw->data, ext_fw->size);
++	ext_le = cpu_to_le64(aop->ext_dma);
++
++	image = kmemdup(main_fw->data, main_fw->size, GFP_KERNEL);
++	if (!image) {
++		ret = -ENOMEM;
++		goto out_ext;
++	}
++
++	get_random_bytes(prng, sizeof(prng));
++	get_random_bytes(nonce, sizeof(nonce));
++	{
++		struct apple_aop_bootarg args[] = {
++			{ APPLE_AOP_BOOTARG_PRNG, prng, sizeof(prng) },
++			{ APPLE_AOP_BOOTARG_ECID, &ecid_le, sizeof(ecid_le) },
++			{ APPLE_AOP_BOOTARG_NONC, nonce, sizeof(nonce) },
++			{ APPLE_AOP_BOOTARG_EC0P, &ext_le, sizeof(ext_le) },
++		};
++
++		ret = apple_aop_patch_bootargs(aop, image, main_fw->size, args,
++					       ARRAY_SIZE(args));
++	}
++	if (ret) {
++		dev_err(aop->dev, "unexpected boot arguments in %s: %d\n", main_name, ret);
++	} else {
++		memcpy_toio(aop->sram, image, main_fw->size);
++		memset_io(aop->sram + main_fw->size, 0, aop->sram_size - main_fw->size);
++	}
++
++	kfree_sensitive(image);
++	memzero_explicit(prng, sizeof(prng));
++	memzero_explicit(nonce, sizeof(nonce));
++	memzero_explicit(&ecid_le, sizeof(ecid_le));
++out_ext:
++	release_firmware(ext_fw);
++out_main:
++	release_firmware(main_fw);
++	return ret;
++}
++
++/* AFK rings and EPIC messages */
++
++static struct apple_aop_ep *apple_aop_ep(struct apple_aop *aop, u8 endpoint)
++{
++	if (endpoint < AFK_ENDPOINT_START)
++		return NULL;
++	return &aop->eps[endpoint - AFK_ENDPOINT_START];
++}
++
++static int apple_aop_send(struct apple_aop_ep *ep, u8 opcode, u64 payload)
++{
++	return apple_rtkit_send_message(ep->aop->rtk, ep->index,
++					FIELD_PREP(AFK_MSG_OPCODE, opcode) | payload,
++					NULL, false);
++}
++
++static int apple_aop_parse_ring(struct apple_aop_ep *ep, u64 msg, struct afk_ring *ring)
++{
++	size_t offset = FIELD_GET(AFK_MSG_RING_OFFSET, msg) * AFK_BLOCK_STEP;
++	size_t extent = FIELD_GET(AFK_MSG_RING_SIZE, msg) * AFK_BLOCK_STEP;
++	size_t size;
++
++	if (!ep->buf || ring->valid || offset > ep->buf_size || extent < 4 * AFK_BLOCK_STEP ||
++	    extent > ep->buf_size - offset)
++		return -EINVAL;
++
++	size = get_unaligned_le32(ep->buf + offset);
++	if (!size || size >= extent || (extent - size) % 3)
++		return -EINVAL;
++
++	ring->offset = offset;
++	ring->block = (extent - size) / 3;
++	ring->size = size;
++	if (ring->block < AFK_BLOCK_STEP || ring->block % AFK_BLOCK_STEP || size % ring->block)
++		return -EINVAL;
++	ring->valid = true;
++	return 0;
++}
++
++static u32 apple_aop_ring_read(struct apple_aop_ep *ep, struct afk_ring *ring, int index)
++{
++	return le32_to_cpu(READ_ONCE(*(__le32 *)(ep->buf + ring->offset + index * ring->block)));
++}
++
++static void apple_aop_ring_write(struct apple_aop_ep *ep, struct afk_ring *ring, int index,
++				 u32 val)
++{
++	WRITE_ONCE(*(__le32 *)(ep->buf + ring->offset + index * ring->block), cpu_to_le32(val));
++}
++
++static void apple_aop_register_service(struct work_struct *work)
++{
++	struct apple_aop_register_work *rw =
++		container_of(work, struct apple_aop_register_work, work);
++	struct apple_aop *aop = rw->aop;
++	struct platform_device_info info = {
++		.parent = aop->dev,
++		.id = PLATFORM_DEVID_AUTO,
++		.data = &rw->service,
++		.size_data = sizeof(rw->service),
++	};
++	struct apple_aop_child *child;
++	struct device_node *np;
++	char name[32];
++
++	np = of_get_child_by_name(aop->dev->of_node, rw->service.name);
++	if (!np || !of_device_is_available(np))
++		goto out;
++
++	child = kzalloc_obj(*child);
++	if (!child)
++		goto out;
++
++	snprintf(name, sizeof(name), "apple-aop-%s", rw->service.name);
++	info.name = name;
++	info.fwnode = of_fwnode_handle(np);
++
++	mutex_lock(&aop->children_lock);
++	if (aop->removing) {
++		mutex_unlock(&aop->children_lock);
++		kfree(child);
++		goto out;
++	}
++	child->pdev = platform_device_register_full(&info);
++	if (IS_ERR(child->pdev)) {
++		dev_err(aop->dev, "service %s: %pe\n", rw->service.name, child->pdev);
++		kfree(child);
++	} else {
++		list_add(&child->list, &aop->children);
++	}
++	mutex_unlock(&aop->children_lock);
++out:
++	of_node_put(np);
++	kfree(rw);
++}
++
++static void apple_aop_announce(struct apple_aop_ep *ep, u32 channel, const void *data,
++			       size_t len)
++{
++	const struct epic_service_announce *announce = data;
++	struct apple_aop_register_work *rw;
++
++	if (len < sizeof(*announce))
++		return;
++
++	rw = kzalloc_obj(*rw);
++	if (!rw)
++		return;
++	rw->aop = ep->aop;
++	rw->service.aop = ep->aop;
++	rw->service.endpoint = ep->index;
++	rw->service.channel = le32_to_cpu(announce->channel);
++	memcpy(rw->service.name, announce->name, sizeof(announce->name));
++
++	dev_dbg(ep->aop->dev, "endpoint 0x%02x channel %u: service %s\n", ep->index,
++		rw->service.channel, rw->service.name);
++
++	/* A child's probe may call into the AOP, so register outside this work. */
++	INIT_WORK(&rw->work, apple_aop_register_service);
++	schedule_work(&rw->work);
++}
++
++static void apple_aop_report(struct apple_aop_ep *ep, u32 channel, const void *data,
++			     size_t len)
++{
++	struct apple_aop *aop = ep->aop;
++	struct apple_aop_listener *listener;
++	bool handled = false;
++
++	mutex_lock(&aop->listeners_lock);
++	list_for_each_entry(listener, &aop->listeners, list) {
++		if (listener->endpoint == ep->index && listener->channel == channel) {
++			listener->report(listener->cookie, data, len);
++			handled = true;
++			break;
++		}
++	}
++	mutex_unlock(&aop->listeners_lock);
++
++	if (!handled) {
++		dev_dbg(aop->dev, "endpoint 0x%02x channel %u: report\n", ep->index, channel);
++		print_hex_dump_debug("apple-aop report: ", DUMP_PREFIX_OFFSET, 16, 1,
++				     data, len, false);
++	}
++}
++
++static void apple_aop_reply(struct apple_aop_ep *ep, u16 tag, const void *data, size_t len)
++{
++	struct apple_aop_call *call;
++
++	if (len < sizeof(u32))
++		return;
++
++	mutex_lock(&ep->lock);
++	if (!tag || tag > APPLE_AOP_MAX_CALLS || !ep->calls[tag - 1]) {
++		mutex_unlock(&ep->lock);
++		dev_err(ep->aop->dev, "endpoint 0x%02x: reply with unknown tag %u\n",
++			ep->index, tag);
++		return;
++	}
++	call = ep->calls[tag - 1];
++	ep->calls[tag - 1] = NULL;
++	call->retcode = get_unaligned_le32(data);
++	call->reply_len = min(call->reply_len, len - sizeof(u32));
++	if (call->reply)
++		memcpy(call->reply, data + sizeof(u32), call->reply_len);
++	complete(&call->done);
++	mutex_unlock(&ep->lock);
++}
++
++static void apple_aop_handle(struct apple_aop_ep *ep, u32 channel, const void *msg,
++			     size_t len)
++{
++	const struct epic_header *hdr = msg;
++	const void *data = msg + sizeof(*hdr);
++	u16 subtype;
++
++	if (len < sizeof(*hdr))
++		return;
++	len -= sizeof(*hdr);
++	subtype = le16_to_cpu(hdr->subtype);
++
++	switch (hdr->category) {
++	case EPIC_CATEGORY_REPORT:
++		if (subtype == EPIC_SUBTYPE_STD_SERVICE)
++			apple_aop_announce(ep, channel, data, len);
++		else if (subtype == EPIC_SUBTYPE_FAKEHID_REPORT)
++			apple_aop_report(ep, channel, data, len);
++		else
++			dev_dbg(ep->aop->dev, "endpoint 0x%02x: report subtype 0x%x\n",
++				ep->index, subtype);
++		break;
++	case EPIC_CATEGORY_REPLY:
++		if (subtype == EPIC_SUBTYPE_RETCODE || subtype == EPIC_SUBTYPE_STRING ||
++		    subtype == EPIC_SUBTYPE_RETCODE_PAYLOAD)
++			apple_aop_reply(ep, le16_to_cpu(hdr->tag), data, len);
++		break;
++	default:
++		dev_dbg(ep->aop->dev, "endpoint 0x%02x: category 0x%x subtype 0x%x\n",
++			ep->index, hdr->category, subtype);
++	}
++}
++
++static void apple_aop_recv(struct apple_aop_ep *ep)
++{
++	struct afk_ring *ring = &ep->rx;
++	size_t base, rptr, wptr;
++	unsigned int budget;
++
++	if (!ring->valid || !ep->rx_msg)
++		return;
++	base = ring->offset + 3 * ring->block;
++
++	for (budget = 0; budget < 256; budget++) {
++		struct afk_qe_header qe;
++		size_t len;
++
++		rptr = apple_aop_ring_read(ep, ring, 1);
++		wptr = apple_aop_ring_read(ep, ring, 2);
++		dma_rmb();
++		if (rptr == wptr)
++			return;
++		if (rptr >= ring->size || wptr >= ring->size || rptr % ring->block)
++			goto bad;
++
++		memcpy(&qe, ep->buf + base + rptr, sizeof(qe));
++		len = le32_to_cpu(qe.size);
++		if (len > ring->size - rptr - sizeof(qe)) {
++			/* The message did not fit at the end: it starts over at 0. */
++			rptr = 0;
++			memcpy(&qe, ep->buf + base, sizeof(qe));
++			len = le32_to_cpu(qe.size);
++		}
++		if ((le32_to_cpu(qe.magic) != AFK_QE_MAGIC_IOP &&
++		     le32_to_cpu(qe.magic) != AFK_QE_MAGIC_AOP) ||
++		    len > ring->size - rptr - sizeof(qe))
++			goto bad;
++
++		memcpy(ep->rx_msg, ep->buf + base + rptr + sizeof(qe), len);
++		rptr = ALIGN(rptr + sizeof(qe) + len, ring->block) % ring->size;
++		dma_mb();
++		apple_aop_ring_write(ep, ring, 1, rptr);
++
++		apple_aop_handle(ep, le32_to_cpu(qe.channel), ep->rx_msg, len);
++	}
++	return;
++bad:
++	dev_err(ep->aop->dev, "endpoint 0x%02x: invalid receive ring\n", ep->index);
++	ring->valid = false;
++}
++
++static void apple_aop_get_buf(struct apple_aop_ep *ep, u64 msg)
++{
++	size_t size = FIELD_GET(AFK_MSG_BUF_SIZE, msg) * AFK_BLOCK_STEP;
++
++	if (ep->buf || !size || size > AFK_MAX_BUFFER) {
++		dev_err(ep->aop->dev, "endpoint 0x%02x: invalid buffer request\n", ep->index);
++		return;
++	}
++
++	ep->buf = dma_alloc_coherent(ep->aop->dev, size, &ep->buf_dma, GFP_KERNEL);
++	if (!ep->buf)
++		return;
++	ep->buf_size = size;
++	ep->rx_msg = devm_kzalloc(ep->aop->dev, size, GFP_KERNEL);
++
++	if (ep->buf_dma & ~AFK_MSG_ADDR)
++		dev_err(ep->aop->dev, "endpoint 0x%02x: buffer out of reach\n", ep->index);
++	else
++		apple_aop_send(ep, AFK_OPC_GET_BUF_ACK, ep->buf_dma);
++}
++
++static void apple_aop_recv_message(void *cookie, u8 endpoint, u64 msg)
++{
++	struct apple_aop *aop = cookie;
++	struct apple_aop_ep *ep = apple_aop_ep(aop, endpoint);
++	struct afk_ring *ring;
++
++	if (!ep)
++		return;
++
++	switch (FIELD_GET(AFK_MSG_OPCODE, msg)) {
++	case AFK_OPC_INIT:
++		apple_aop_send(ep, AFK_OPC_INIT_ACK, 0);
++		break;
++	case AFK_OPC_GET_BUF:
++		apple_aop_get_buf(ep, msg);
++		break;
++	case AFK_OPC_INIT_TX:
++	case AFK_OPC_INIT_RX:
++		ring = FIELD_GET(AFK_MSG_OPCODE, msg) == AFK_OPC_INIT_TX ? &ep->tx : &ep->rx;
++		mutex_lock(&ep->lock);
++		if (apple_aop_parse_ring(ep, msg, ring))
++			dev_err(aop->dev, "endpoint 0x%02x: invalid ring\n", ep->index);
++		else if (ep->tx.valid && ep->rx.valid)
++			apple_aop_send(ep, AFK_OPC_START, 0);
++		mutex_unlock(&ep->lock);
++		break;
++	case AFK_OPC_RECV:
++		apple_aop_recv(ep);
++		break;
++	case AFK_OPC_INIT_UNK:
++	case AFK_OPC_START_ACK:
++	case AFK_OPC_SHUTDOWN_ACK:
++		break;
++	default:
++		dev_dbg(aop->dev, "endpoint 0x%02x: message 0x%llx\n", endpoint, msg);
++	}
++}
++
++static void apple_aop_crashed(void *cookie, const void *crashlog, size_t crashlog_size)
++{
++	struct apple_aop *aop = cookie;
++
++	dev_err(aop->dev, "firmware crashed\n");
++}
++
++static const struct apple_rtkit_ops apple_aop_rtkit_ops = {
++	.crashed = apple_aop_crashed,
++	.recv_message = apple_aop_recv_message,
++};
++
++/* Service API */
++
++int apple_aop_listen(const struct apple_aop_service *service, apple_aop_report_fn report,
++		     void *cookie)
++{
++	struct apple_aop *aop = service->aop;
++	struct apple_aop_listener *listener;
++
++	listener = kzalloc_obj(*listener);
++	if (!listener)
++		return -ENOMEM;
++	listener->endpoint = service->endpoint;
++	listener->channel = service->channel;
++	listener->report = report;
++	listener->cookie = cookie;
++
++	mutex_lock(&aop->listeners_lock);
++	list_add(&listener->list, &aop->listeners);
++	mutex_unlock(&aop->listeners_lock);
++	return 0;
++}
++EXPORT_SYMBOL_GPL(apple_aop_listen);
++
++void apple_aop_unlisten(const struct apple_aop_service *service)
++{
++	struct apple_aop *aop = service->aop;
++	struct apple_aop_listener *listener, *tmp;
++
++	mutex_lock(&aop->listeners_lock);
++	list_for_each_entry_safe(listener, tmp, &aop->listeners, list) {
++		if (listener->endpoint == service->endpoint &&
++		    listener->channel == service->channel) {
++			list_del(&listener->list);
++			kfree(listener);
++		}
++	}
++	mutex_unlock(&aop->listeners_lock);
++}
++EXPORT_SYMBOL_GPL(apple_aop_unlisten);
++
++static int apple_aop_send_epic(struct apple_aop_ep *ep, u32 channel, u16 subtype, u16 tag,
++			       const void *data, size_t len)
++{
++	struct afk_ring *ring = &ep->tx;
++	struct afk_qe_header qe;
++	struct epic_header hdr = {
++		.version = 2,
++		.seq = cpu_to_le16(ep->seq),
++		.length = cpu_to_le32(len),
++		.sub_version = 2,
++		.category = EPIC_CATEGORY_NOTIFY,
++		.subtype = cpu_to_le16(subtype),
++		.tag = cpu_to_le16(tag),
++	};
++	size_t base, rptr, wptr, total = sizeof(hdr) + len, used;
++
++	if (!ring->valid)
++		return -ENODEV;
++	base = ring->offset + 3 * ring->block;
++
++	rptr = apple_aop_ring_read(ep, ring, 1);
++	wptr = apple_aop_ring_read(ep, ring, 2);
++	dma_rmb();
++	if (rptr >= ring->size || wptr >= ring->size || total + sizeof(qe) > ring->size)
++		return -EINVAL;
++
++	if (total > ring->size - wptr - sizeof(qe))
++		wptr = 0;
++	used = ALIGN(sizeof(qe) + total, ring->block);
++	if (rptr > wptr ? wptr + used >= rptr : wptr + used >= ring->size + rptr)
++		return -EBUSY;
++
++	qe.magic = cpu_to_le32(AFK_QE_MAGIC_IOP);
++	qe.size = cpu_to_le32(total);
++	qe.channel = cpu_to_le32(channel);
++	qe.type = cpu_to_le32(EPIC_TYPE_NOTIFY);
++	memcpy(ep->buf + base + wptr, &qe, sizeof(qe));
++	memcpy(ep->buf + base + wptr + sizeof(qe), &hdr, sizeof(hdr));
++	memcpy(ep->buf + base + wptr + sizeof(qe) + sizeof(hdr), data, len);
++
++	wptr = (wptr + used) % ring->size;
++	dma_wmb();
++	apple_aop_ring_write(ep, ring, 2, wptr);
++	ep->seq++;
++
++	return apple_aop_send(ep, AFK_OPC_SEND, FIELD_PREP(AFK_MSG_WPTR, wptr));
++}
++
++int apple_aop_call(const struct apple_aop_service *service, u16 subtype, const void *data,
++		   size_t len, void *reply, size_t reply_len)
++{
++	struct apple_aop_ep *ep = apple_aop_ep(service->aop, service->endpoint);
++	struct apple_aop_call call = { .reply = reply, .reply_len = reply_len };
++	int tag, ret;
++
++	if (!ep)
++		return -EINVAL;
++	init_completion(&call.done);
++
++	mutex_lock(&ep->lock);
++	for (tag = 0; tag < APPLE_AOP_MAX_CALLS && ep->calls[tag]; tag++)
++		;
++	if (tag == APPLE_AOP_MAX_CALLS) {
++		mutex_unlock(&ep->lock);
++		return -EBUSY;
++	}
++	ret = apple_aop_send_epic(ep, service->channel, subtype, tag + 1, data, len);
++	if (!ret)
++		ep->calls[tag] = &call;
++	mutex_unlock(&ep->lock);
++	if (ret)
++		return ret;
++
++	if (!wait_for_completion_timeout(&call.done, APPLE_AOP_CALL_TIMEOUT)) {
++		mutex_lock(&ep->lock);
++		if (ep->calls[tag] == &call) {
++			ep->calls[tag] = NULL;
++			mutex_unlock(&ep->lock);
++			return -ETIMEDOUT;
++		}
++		mutex_unlock(&ep->lock);
++	}
++
++	return call.retcode > INT_MAX ? -EIO : call.retcode;
++}
++EXPORT_SYMBOL_GPL(apple_aop_call);
++
++/* Driver */
++
++static void apple_aop_free_buffers(struct apple_aop *aop)
++{
++	int i;
++
++	for (i = 0; i < AFK_ENDPOINT_COUNT; i++)
++		if (aop->eps[i].buf)
++			dma_free_coherent(aop->dev, aop->eps[i].buf_size, aop->eps[i].buf,
++					  aop->eps[i].buf_dma);
++	if (aop->ext)
++		dma_free_coherent(aop->dev, aop->ext_size, aop->ext, aop->ext_dma);
++}
++
++static int apple_aop_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct device_node *np = dev->of_node;
++	struct property *prop;
++	struct apple_aop *aop;
++	struct resource *res;
++	u64 ecid;
++	int ret, i;
++
++	aop = devm_kzalloc(dev, sizeof(*aop), GFP_KERNEL);
++	if (!aop)
++		return -ENOMEM;
++	aop->dev = dev;
++	mutex_init(&aop->listeners_lock);
++	INIT_LIST_HEAD(&aop->listeners);
++	mutex_init(&aop->children_lock);
++	INIT_LIST_HEAD(&aop->children);
++
++	aop->akf = devm_platform_ioremap_resource_byname(pdev, "akf");
++	if (IS_ERR(aop->akf))
++		return PTR_ERR(aop->akf);
++	aop->control = devm_platform_ioremap_resource_byname(pdev, "control");
++	if (IS_ERR(aop->control))
++		return PTR_ERR(aop->control);
++	aop->sram = devm_platform_get_and_ioremap_resource(pdev, 2, &res);
++	if (IS_ERR(aop->sram))
++		return PTR_ERR(aop->sram);
++	aop->sram_size = resource_size(res);
++
++	ret = dma_set_mask_and_coherent(dev, DMA_BIT_MASK(44));
++	if (ret)
++		return ret;
++
++	if (apple_aop_is_started(aop))
++		return dev_err_probe(dev, -EBUSY,
++				     "already started; the AOP starts once per boot\n");
++
++	/* The bootloader passes the ECID only for the firmware: take it out. */
++	ret = of_property_read_u64(np, "apple,ecid", &ecid);
++	if (ret)
++		return dev_err_probe(dev, ret, "no apple,ecid from the bootloader\n");
++	prop = of_find_property(np, "apple,ecid", NULL);
++	if (prop)
++		of_remove_property(np, prop);
++
++	aop->eps = devm_kcalloc(dev, AFK_ENDPOINT_COUNT, sizeof(*aop->eps), GFP_KERNEL);
++	if (!aop->eps)
++		return -ENOMEM;
++	for (i = 0; i < AFK_ENDPOINT_COUNT; i++) {
++		aop->eps[i].aop = aop;
++		aop->eps[i].index = AFK_ENDPOINT_START + i;
++		mutex_init(&aop->eps[i].lock);
++	}
++
++	ret = apple_aop_load(aop, ecid);
++	memzero_explicit(&ecid, sizeof(ecid));
++	if (ret)
++		goto err_free;
++
++	aop->rtk = apple_rtkit_init(dev, aop, "mbox", 0, &apple_aop_rtkit_ops);
++	if (IS_ERR(aop->rtk)) {
++		ret = dev_err_probe(dev, PTR_ERR(aop->rtk), "failed to init RTKit\n");
++		goto err_free;
++	}
++
++	writel(APPLE_AOP_IRQ_MASK_ALL, aop->akf + APPLE_AOP_IRQ_MASK_SET);
++	writel(APPLE_AOP_IRQ_INBOX | APPLE_AOP_IRQ_OUTBOX, aop->akf + APPLE_AOP_IRQ_MASK_CLEAR);
++
++	/* From here on, the firmware is consumed until the next boot. */
++	__module_get(THIS_MODULE);
++	writel(readl(aop->akf + APPLE_AOP_CPU_CONTROL) | APPLE_AOP_CPU_CONTROL_RUN,
++	       aop->akf + APPLE_AOP_CPU_CONTROL);
++	writel(1, aop->control + APPLE_AOP_CONTROL_AUTO_BOOT);
++
++	ret = apple_rtkit_wake(aop->rtk);
++	if (ret) {
++		dev_err(dev, "firmware did not boot: %d\n", ret);
++		goto err_halt;
++	}
++
++	for (i = AFK_ENDPOINT_START; i < AFK_ENDPOINT_START + AFK_ENDPOINT_COUNT; i++) {
++		ret = apple_rtkit_start_ep(aop->rtk, i);
++		if (ret && ret != -EINVAL)
++			dev_warn(dev, "failed to start endpoint 0x%02x: %d\n", i, ret);
++	}
++
++	platform_set_drvdata(pdev, aop);
++	return 0;
++
++err_halt:
++	/* Keep the buffers if the AOP may still be using them. */
++	if (apple_aop_halt(aop)) {
++		apple_rtkit_free(aop->rtk);
++		apple_aop_free_buffers(aop);
++	} else {
++		dev_err(dev, "failed to halt; keeping its memory\n");
++	}
++	return ret;
++
++err_free:
++	apple_aop_free_buffers(aop);
++	return ret;
++}
++
++static void apple_aop_shutdown(struct platform_device *pdev)
++{
++	struct apple_aop *aop = platform_get_drvdata(pdev);
++	struct apple_aop_child *child, *tmp;
++
++	if (!aop)
++		return;
++
++	mutex_lock(&aop->children_lock);
++	aop->removing = true;
++	list_for_each_entry_safe(child, tmp, &aop->children, list) {
++		platform_device_unregister(child->pdev);
++		list_del(&child->list);
++		kfree(child);
++	}
++	mutex_unlock(&aop->children_lock);
++
++	if (!apple_aop_halt(aop))
++		dev_err(aop->dev, "failed to halt\n");
++}
++
++static const struct of_device_id apple_aop_of_match[] = {
++	{ .compatible = "apple,t8010-aop" },
++	{}
++};
++MODULE_DEVICE_TABLE(of, apple_aop_of_match);
++
++static struct platform_driver apple_aop_driver = {
++	.driver = {
++		.name = "apple-aop",
++		.of_match_table = apple_aop_of_match,
++		.suppress_bind_attrs = true,
++	},
++	.probe = apple_aop_probe,
++	.shutdown = apple_aop_shutdown,
++};
++module_platform_driver(apple_aop_driver);
++
++MODULE_AUTHOR("Dalton Alexandre <alley.nightly_0b@icloud.com>");
++MODULE_DESCRIPTION("Apple T8010 Always-On Processor driver");
++MODULE_LICENSE("Dual MIT/GPL");
+diff --git a/include/linux/soc/apple/aop.h b/include/linux/soc/apple/aop.h
+new file mode 100644
+index 000000000..66e7a3529
+--- /dev/null
++++ b/include/linux/soc/apple/aop.h
+@@ -0,0 +1,39 @@
++/* SPDX-License-Identifier: GPL-2.0-only OR MIT */
++/*
++ * Apple Always-On Processor (AOP) services
++ */
++#ifndef _LINUX_SOC_APPLE_AOP_H_
++#define _LINUX_SOC_APPLE_AOP_H_
++
++#include <linux/types.h>
++
++struct apple_aop;
++
++/*
++ * An EPIC service announced by the AOP firmware. The AOP driver registers a
++ * child platform device for each service that has a device tree child node
++ * of the same name and passes this as its platform data.
++ */
++struct apple_aop_service {
++	struct apple_aop *aop;
++	u8 endpoint;
++	u32 channel;
++	char name[21];
++};
++
++/* Called from the AOP's message work, in process context. */
++typedef void (*apple_aop_report_fn)(void *cookie, const void *data, size_t len);
++
++int apple_aop_listen(const struct apple_aop_service *service,
++		     apple_aop_report_fn report, void *cookie);
++void apple_aop_unlisten(const struct apple_aop_service *service);
++
++/*
++ * Send a notification to a service and wait for its reply. Returns the
++ * service's return code (>= 0) and copies up to @reply_len bytes of the
++ * reply's payload, or a negative error.
++ */
++int apple_aop_call(const struct apple_aop_service *service, u16 subtype,
++		   const void *data, size_t len, void *reply, size_t reply_len);
++
++#endif /* _LINUX_SOC_APPLE_AOP_H_ */
+-- 
+2.54.0 (Apple Git-157)
+
