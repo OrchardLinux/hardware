@@ -216,7 +216,24 @@ class UserOrchard(Store):
         messages = []
         self.assertTrue(installer.adopt(self.core('0.2.0'), '/py', output=messages.append))
         self.assertEqual(os.readlink(launcher), '/somewhere/orchard-main/bin/orchard')
-        self.assertIn('development orchard', messages[0])
+        self.assertEqual(messages, [])  # nothing to say about a checkout it cannot read
+
+    def test_an_older_development_orchard_is_reported(self):
+        checkout = self.home / 'orchard-main'
+        (checkout / 'bin').mkdir(parents=True)
+        (checkout / 'bin/orchard').write_text('#!/bin/sh\n')
+        (checkout / 'pyproject.toml').write_text('[project]\nname = "orchard"\nversion = "0.1.9"\n')
+        launcher = self.home / '.local/bin/orchard'
+        launcher.parent.mkdir(parents=True)
+        launcher.symlink_to(checkout / 'bin/orchard')
+        messages = []
+        installer.adopt(self.core('0.2.0'), '/py', output=messages.append)
+        self.assertIn('development orchard (0.1.9) is older', messages[0])
+        messages.clear()
+        (checkout / 'pyproject.toml').write_text('[project]\nname = "orchard"\nversion = "0.2.0"\n')
+        installer.adopt(self.core('0.2.0', '0.2.0-b'), '/py', output=messages.append)
+        self.assertEqual(messages, [])
+
 
     def test_the_launcher_runs_the_core(self):
         archive = self.home / 'orchard-core.pyz'
@@ -253,6 +270,41 @@ class StateVersion(unittest.TestCase):
             (root / 'state.json').write_text(json.dumps({'version': STATE_VERSION + 1}))
             with self.assertRaisesRegex(ValueError, 'newer orchard'):
                 check_state(root)
+
+
+class ShellPath(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.home = Path(self.temp.name)
+        patcher = mock.patch.object(Path, 'home', return_value=self.home)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_one_marked_line_per_startup_file_once(self):
+        from orchard import shell_path
+        environ = {'SHELL': '/bin/zsh', 'PATH': '/usr/bin'}
+        (self.home / '.zshenv').write_text('export EDITOR=vi')
+        changed = shell_path.ensure(environ)
+        self.assertEqual(sorted(p.name for p in changed), ['.profile', '.zshenv'])
+        text = (self.home / '.zshenv').read_text()
+        self.assertTrue(text.startswith('export EDITOR=vi\n# orchard:'))
+        self.assertEqual(shell_path.ensure(environ), [])
+        self.assertEqual((self.home / '.zshenv').read_text().count(shell_path.MARK), 1)
+
+    def test_it_can_be_left_alone(self):
+        from orchard import shell_path
+        self.assertEqual(shell_path.ensure({'SHELL': '/bin/bash', 'ORCHARD_NO_MODIFY_PATH': '1'}), [])
+        self.assertFalse((self.home / '.bashrc').exists())
+
+    def test_the_line_adds_the_directory_only_once(self):
+        from orchard import shell_path
+        shell_path.ensure({'SHELL': '/bin/sh'})
+        script = self.home / '.profile'
+        import subprocess
+        result = subprocess.run(['/bin/sh', '-c', f'PATH=/usr/bin:/bin; HOME={self.home}; . {script}; . {script}; echo "$PATH"'],
+                                capture_output=True, text=True)
+        self.assertEqual(result.stdout.strip(), f'{self.home}/.local/bin:/usr/bin:/bin')
 
 
 if __name__ == '__main__':

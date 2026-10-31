@@ -335,7 +335,10 @@ def adopt(core, python, *, output=print):
     os.replace(partial, record)
     launcher = Path.home() / '.local/bin/orchard'
     if launcher.is_symlink() or (launcher.exists() and MARKER not in launcher.read_text(errors='replace')):
-        output(f'Kept {launcher}: it is a development orchard, which launches too.')
+        older = development_version(launcher)
+        if older and version_tuple(older) < version_tuple(info['version']):
+            output(f'Your development orchard ({older}) is older than this installer ({info["version"]}); '
+                   'it launches what it knows. Update it, e.g. with git pull in its checkout.')
         return True
     launcher.parent.mkdir(parents=True, exist_ok=True)
     source = str(core / 'src')
@@ -348,6 +351,21 @@ def adopt(core, python, *, output=print):
     partial.chmod(0o755)
     os.replace(partial, launcher)
     return True
+
+
+def development_version(launcher):
+    """The version of the checkout a development launcher runs, read without running it.
+
+    ./setup links ~/.local/bin/orchard to a checkout's bin/orchard; its
+    pyproject.toml names the version. None if that is not what is there.
+    """
+    try:
+        text = (launcher.resolve().parent.parent / 'pyproject.toml').read_text()
+    except OSError:
+        return None
+    import re
+    match = re.search(r'^version = "([0-9.]+)"$', text, re.M)
+    return match.group(1) if match else None
 
 
 def _quote(value):

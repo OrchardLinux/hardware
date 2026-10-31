@@ -67,8 +67,11 @@ def main(argv=None, *, core=None, origin=None):
             print(json.dumps(usb.devices(), indent=2))
             return 0
         from .host_setup import setup
+        changed = []
         if core is not None:
             installer.adopt(here, sys.executable)  # even if this install stops, `orchard launch` stays
+            from . import shell_path
+            changed = [] if shell_path.on_path() else shell_path.ensure()
         setup(progress)
         if args.action == 'install':
             from .service import install as run
@@ -81,6 +84,8 @@ def main(argv=None, *, core=None, origin=None):
             run(entry=args.entry, progress=progress)
         with progress.lock:
             progress.end_line()
+        if changed:
+            print('New terminals find orchard; in this one, run: export PATH="$HOME/.local/bin:$PATH"')
         return 0
     except (ValueError, RuntimeError, OSError, KeyError, subprocess.SubprocessError) as error:
         with progress.lock:

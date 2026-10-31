@@ -233,10 +233,12 @@ def _launcher_step():
 
 
 def _path_step():
-    binary = str(Path.home() / '.local/bin')
-    if binary in os.environ.get('PATH', '').split(os.pathsep):
-        return Step('PATH', BUILD, True, binary + ' is on PATH')
-    return Step('PATH', BUILD, False, f'add {binary} to PATH in your shell profile: export PATH="$HOME/.local/bin:$PATH"')
+    from . import shell_path
+    if shell_path.on_path() or not any(shell_path.MARK not in (p.read_text() if p.exists() else '')
+                                       for p in shell_path.startup_files()):
+        return Step('PATH', BUILD, True, f'{shell_path.binary()} is on PATH')
+    return Step('PATH', BUILD, False, f'put {shell_path.binary()} on PATH for new terminals (shell startup files)',
+                lambda: shell_path.ensure())
 
 
 def steps(needed_for=(BOOT, BUILD)):
