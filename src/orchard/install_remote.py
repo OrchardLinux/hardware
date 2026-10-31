@@ -46,7 +46,7 @@ def run(connection, args, *, source=None, size=0, progress=None, timeout=3600):
                 continue
             events.append(event)
             if progress is not None and event.get('event') == 'step' and event.get('state') == 'done':
-                progress.phase(STEPS.get(event['step'], event['step']))
+                progress.step(STEPS.get(event['step'], event['step'].replace('-', ' ').capitalize()))
 
     readers = [threading.Thread(target=collect),
                threading.Thread(target=lambda: stderr.append(process.stderr.read()))]
@@ -92,6 +92,7 @@ STEPS = {
     'format-boot': 'Boot partition formatted',
     'format-root': 'System partition formatted',
     'extract-root': 'System files written',
+    'platform-layer': 'Kernel and drivers installed',
     'firmware': 'Firmware installed',
     'remove-old-entries': 'Old boot entries removed',
     'account': 'User set up',

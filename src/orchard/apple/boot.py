@@ -92,8 +92,6 @@ def start_pongo(device, image, log, say, *, chip, board, product, seconds=30, qu
     usb.selected(device['location'], device['ecid'], chip=chip, board=board, mode='dfu')
     # Resolved while the device is present: its sysfs node goes away after checkm8.
     control = replug.port_control(device['location'])
-    if not quiet:
-        say('Booting Pongo')
     if control:
         say('If the Apple logo stays for about 15 seconds, reconnect the cable at the device once.')
     else:
@@ -133,11 +131,10 @@ def boot(device, assets, manifest, progress, *, profile, chip, board, product):
         progress.phase('Using running recovery; no reboot or upload (timing starts at resume)')
         return
     pongo_from_dfu(device, assets['pongo'], progress, profile=profile, chip=chip, board=board, product=product)
-    progress.phase('Loading recovery')
     usb.selected(device['location'], device['ecid'], chip=chip, board=board)
     progress.reset_transfer()
     pongo.upload(assets['recovery'], device['location'], manifest['assets']['recovery']['sha256'], progress.transfer)
-    progress.phase('Waiting for the device on USB')
+    progress.step('Waiting for the device on USB')
     wait_mode(device, 'linux', chip=chip, board=board, product=product, seconds=120)
 
 

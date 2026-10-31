@@ -1,5 +1,6 @@
 """User-local boot tools and Linux USB access. No device operations."""
 import grp
+import io
 import json
 import os
 from dataclasses import dataclass
@@ -156,7 +157,8 @@ def _palera1n_step(system, arch):
         binary = Path.home() / '.local/bin'
         binary.mkdir(parents=True, exist_ok=True)
         filename = 'palera1n-macos-universal' if system == 'Darwin' else 'palera1n-linux-' + arch
-        install_tool(asset('palera1n/palera1n', PALERA_RELEASE, filename, Progress()), binary / 'palera1n')
+        # A host tool, not part of what the user installs: no progress row for it.
+        install_tool(asset('palera1n/palera1n', PALERA_RELEASE, filename, Progress(io.StringIO())), binary / 'palera1n')
     return Step('palera1n', BOOT, False, f'download palera1n {PALERA_RELEASE} into ~/.local/bin', apply)
 
 

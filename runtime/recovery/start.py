@@ -82,10 +82,15 @@ def main():
         entry = entry_for(BOOT, request['root'], os.uname().release)
     finally:
         run('umount', str(BOOT))
-    # The storage fence left every partition read-only; the system mounts
-    # these two read-write (its fstab), the rest stays fenced.
-    for node in (root, boot):
+    # The storage fence left the disk and every partition read-only; the
+    # system mounts these two read-write (its fstab), the rest stays fenced.
+    # A partition of a read-only disk mounts read-only, so the disk goes too:
+    # its other partitions keep their own read-only flag.
+    disk = '/dev/' + (SYSFS / Path(root).name).resolve().parent.name
+    for node in (disk, root, boot):
         run('blockdev', '--setrw', node)
+    if (SYSFS / Path(root).name / 'ro').read_text().strip() != '0':
+        raise ValueError(f'{root} is still read-only')
     NEWROOT.mkdir(exist_ok=True)
     run('mount', '-t', 'ext4', '-o', 'rw', root, str(NEWROOT))
     if not os.path.lexists(NEWROOT / 'sbin/init'):

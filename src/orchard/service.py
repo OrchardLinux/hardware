@@ -14,7 +14,7 @@ from .progress import Clock, Progress
 from .protocol import Client
 from . import install_layout, install_remote as remote
 from .install_account import ask_secrets
-from .releases import default_manifest, resolve
+from .releases import default_manifest, resolve, select_manifest
 from .devices import choose
 
 
@@ -54,14 +54,14 @@ def caveats(adapter):
     return lines
 
 
-def choose_target(layout, clock, *, input_fn=input, output=print):
+def choose_target(layout, clock, *, name='Linux', input_fn=input, output=print):
     """Pick one install target from the device's layout; replacing a partition is typed out."""
     options = install_layout.options(layout)
     if not options:
         needed = (install_layout.MIN_ROOT_BYTES + install_layout.BOOT_BYTES) / 1024**3
         raise ValueError(f'No free space or Linux partition of at least {needed:.0f} GiB. '
                          'The installer never resizes iPadOS; free space has to exist already.')
-    output('Where should Linux be installed?')
+    output(f'\nWhere should {name} be installed?')
     for number, option in enumerate(options, 1):
         output(f'  {number}. {option.description}')
     single = len(options) == 1
@@ -90,7 +90,7 @@ def entry_for(record, devicetree):
 
 def wait_ready(connection, ready, progress, seconds=180):
     """Wait until the started system has created READY, over the session's pinned SSH."""
-    progress.phase('Waiting for the system to be ready')
+    progress.step('Waiting until it is ready')
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         try:
@@ -123,31 +123,33 @@ def install(manifest=None, *, input_fn=input, secrets_fn=ask_secrets, progress=N
                          'RAM boot is available for testing')
     if not adapter.DEVICETREE:
         raise ValueError(f'The {adapter.NAME} has no devicetree yet, so an installed system cannot boot on it')
-    progress.phase(f'{adapter.NAME} ({adapter.STATUS})')
+    source = manifest or default_manifest(adapter.PROFILE)
+    name = select_manifest(source, adapter.PROFILE, None, clock)[0].get('name', 'Linux')
+    progress.say(f'Installing {name} on {adapter.NAME}')
     for line in caveats(adapter):
-        progress.phase(line)
-    answer = ask(clock, f'Install Linux on {adapter.NAME}? [Y/n] ', input_fn)
+        progress.say('  ' + line)
+    answer = ask(clock, 'Continue? [Y/n] ', input_fn)
     if answer.lower() not in ('', 'y', 'yes'):
-        progress.phase('Cancelled; no download or device mutation performed')
+        progress.say('Cancelled; nothing was downloaded or changed')
         return {'cancelled': True}
     record = assets = None
     firmware = None
     if not device['resumed']:
-        progress.phase('Downloading installation files')
+        progress.section('Downloading')
         with ThreadPoolExecutor(max_workers=2) as pool:
             firmware_future = pool.submit(adapter.firmware_inputs, clock, progress.task('Firmware'))
-            record, assets = resolve(manifest or default_manifest(adapter.PROFILE), adapter.PROFILE, progress, clock=clock)
+            record, assets = resolve(source, adapter.PROFILE, progress, clock=clock)
             firmware = firmware_future.result()
-        progress.phase('Downloads verified; firmware extracted')
+        progress.section('Starting the device')
         adapter.boot(device, assets, record, progress)
-    progress.phase('Connecting over SSH')
+    progress.step('Connecting over SSH')
     with adapter.connect(device) as connection:
         private = private_directory(connection.scope.root)
         identity = {'profile': connection.scope.device.profile, 'ecid': connection.scope.device.ecid,
                     'boot_id': connection.scope.boot_id}
         status = Client(connection, progress).call('status')
         if record is None:
-            record, assets = resolve(manifest or default_manifest(adapter.PROFILE), adapter.PROFILE, progress, clock=clock)
+            record, assets = resolve(source, adapter.PROFILE, progress, clock=clock)
         assert assets is not None  # Resolution always supplies record and verified paths together.
         if status['release'] != record['release']:
             raise ValueError('Running recovery is not the selected release.\n' + adapter.REBOOT_MESSAGE)
@@ -158,14 +160,16 @@ def install(manifest=None, *, input_fn=input, secrets_fn=ask_secrets, progress=N
             firmware = adapter.firmware_inputs(clock, progress)
         remote.put(connection, remote.SCRIPT.read_bytes(), remote.SCRIPT.name)
         (layout,) = [e for e in remote.run(connection, ['inspect']) if e['event'] == 'layout']
-        option = choose_target(layout, clock, input_fn=input_fn, output=progress.phase)
+        progress.done()
+        option = choose_target(layout, clock, name=name, input_fn=input_fn, output=progress.say)
         # The account is what the release declares; it may ask for nothing.
         account = record.get('account')
         secrets = None
         if account and (account['password'] or account['pin']):
             with clock.exclude('input'):
-                secrets = secrets_fn(account)
-        progress.phase('Copying the kernel and firmware to the device')
+                secrets = secrets_fn(account) if secrets_fn is not ask_secrets else ask_secrets(account, say=progress.say)
+        progress.section('Installing ' + name)
+        progress.step('Preparing the installation')
         with tempfile.TemporaryDirectory(prefix='installation-', dir=private) as directory:
             mixin, mixin_record = adapter.prepare_mixin(firmware, Path(directory) / 'mixin')
             remote.put(connection, mixin.read_bytes(), 'firmware.tar.gz')
@@ -182,7 +186,6 @@ def install(manifest=None, *, input_fn=input, secrets_fn=ask_secrets, progress=N
         if secrets is not None:
             remote.put(connection, json.dumps(secrets).encode(), 'secrets.json')
         secrets = None
-        progress.phase('Installing ' + record.get('name', 'Linux') + '…')
         with assets['root'].open('rb') as source:
             events = remote.run(connection, ['run', remote.DIRECTORY + '/plan.json'],
                                 source=source, size=root['bytes'], progress=progress)
@@ -200,13 +203,15 @@ def install(manifest=None, *, input_fn=input, secrets_fn=ask_secrets, progress=N
         # A release that declares `ready` keeps this session's SSH key until
         # the started system is ready; then the user decides whether it stays.
         ready = record.get('ready')
-        progress.phase('Starting ' + record.get('name', 'Linux'))
+        progress.done('Installed')
+        progress.section('Starting ' + name)
         Client(connection, progress).call('start', {'root': report['root'], 'boot': report['boot'],
                                                     'keep_ssh': bool(ready)})
         report['started'] = True
         save_report(path, report)
         if ready:
             wait_ready(connection, ready, progress)
+            progress.done()
             report['ready'] = True
             try:
                 answer = ask(clock, 'Keep SSH access for this boot session? [y/N] ', input_fn)
@@ -219,7 +224,7 @@ def install(manifest=None, *, input_fn=input, secrets_fn=ask_secrets, progress=N
                 report['ssh_access'] = 'revoked'
         report['phases'] = progress.timings
         save_report(path, report)
-    name = record.get('name', 'Linux')
-    progress.phase(f'{name} is {"ready" if report.get("ready") else "starting"}. '
-                   'To start it again later, put the device in DFU mode and run: orchard launch')
+    progress.done()
+    progress.say(f'\n{name} is {"ready" if report.get("ready") else "starting"}. '
+                 'To start it again later, put the device in DFU mode and run: orchard launch')
     return report

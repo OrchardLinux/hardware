@@ -347,8 +347,6 @@ def adopt(core, python, *, output=print):
     partial.write_text(text)
     partial.chmod(0o755)
     os.replace(partial, launcher)
-    if str(launcher.parent) not in os.environ.get('PATH', '').split(os.pathsep):
-        output(f'Add {launcher.parent} to your PATH to run orchard from anywhere.')
     return True
 
 

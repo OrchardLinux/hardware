@@ -33,6 +33,7 @@ class HostWorkflow(unittest.TestCase):
         from unittest.mock import Mock
         adapter = Mock(NAME='Supported tablet', PROFILE='device', INSTALL=True, STATUS='supported', CAVEATS=[], FEATURES={})
         with patch('orchard.service.choose', return_value=(adapter, {'mode': 'dfu'})), \
+             patch('orchard.service.select_manifest', return_value=({'name': 'Omarchy'}, None)), \
              patch('orchard.service.resolve') as assets:
             result = install(input_fn=lambda _: 'n', progress=Progress(io.StringIO()))
             self.assertTrue(result['cancelled'])
@@ -47,11 +48,13 @@ class HostWorkflow(unittest.TestCase):
                        CAVEATS=['Bluetooth needs its module vendor chosen per unit.'])
         prompts = []
         with patch('orchard.service.choose', return_value=(adapter, {'mode': 'dfu'})), \
+             patch('orchard.service.select_manifest', return_value=({'name': 'Omarchy'}, None)), \
              patch('orchard.service.resolve') as assets:
             output = io.StringIO()
             result = install(input_fn=lambda text: prompts.append(text) or 'n', progress=Progress(output))
         self.assertTrue(result['cancelled'])
-        self.assertEqual(prompts, ['Install Linux on Untested tablet? [Y/n] '])
+        self.assertEqual(prompts, ['Continue? [Y/n] '])
+        self.assertIn('Installing Omarchy on Untested tablet', output.getvalue())
         text = output.getvalue()
         self.assertIn('- Not working yet: Touchscreen', text)
         self.assertIn('- Untested: Wi-Fi', text)

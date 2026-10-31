@@ -52,21 +52,58 @@ class Progress:
         self.log_path = None
         self.opened = self.started
         self.timings = []
+        self.indent = ''
 
     def task(self, name):
         return TaskProgress(self, name)
 
     def end_line(self):
         if self.active_line:
-            print(file=self.output, flush=True)
+            # A step or transfer line in place is cleared, not left behind.
+            print('\r\033[2K', end='', file=self.output, flush=True)
             self.active_line = False
         self.rows.clear()
         self.rendered = 0
 
-    def phase(self, message):
+    def say(self, message):
+        """A line of its own, outside any section's indent (headings, questions' context)."""
         with self.lock:
             self.end_line()
             print(message, file=self.output, flush=True)
+
+    def section(self, title):
+        """A blank line and a title; what follows is indented under it."""
+        with self.lock:
+            self.end_line()
+            bold = ('\033[1m', '\033[0m') if self.interactive else ('', '')
+            print(f'\n{bold[0]}{title}{bold[1]}', file=self.output, flush=True)
+            self.indent = '  '
+            self.timings.append([round(time.monotonic() - self.opened, 1), title])
+
+    def step(self, message):
+        """The current step of a section: one line, replaced by the next step."""
+        with self.lock:
+            self.timings.append([round(time.monotonic() - self.opened, 1), message])
+            if self.interactive:
+                self.end_line()
+                print('\r\033[2K' + self.indent + message, end='', file=self.output, flush=True)
+                self.active_line = True
+            else:
+                print(self.indent + message, file=self.output, flush=True)
+
+    def done(self, message=None):
+        """End the current step line, leaving MESSAGE (if any) in its place."""
+        with self.lock:
+            if self.active_line:
+                print('\r\033[2K', end='', file=self.output, flush=True)
+                self.active_line = False
+            if message:
+                print(self.indent + message, file=self.output, flush=True)
+
+    def phase(self, message):
+        with self.lock:
+            self.end_line()
+            print(self.indent + message, file=self.output, flush=True)
             # Where the time goes: kept for the operation's report, not shown.
             self.timings.append([round(time.monotonic() - self.opened, 1), message])
 
@@ -99,7 +136,7 @@ class Progress:
                     print('\r\033[2K', end='', file=self.output, flush=True)
                     self.active_line = False
             elif self.interactive:
-                print('\r\033[2K' + message, end='', file=self.output, flush=True)
+                print('\r\033[2K' + self.indent + message, end='', file=self.output, flush=True)
                 self.active_line = True
             else:
                 print(message, file=self.output, flush=True)
@@ -120,11 +157,11 @@ class Progress:
                 if self.rendered:
                     self.output.write(f'\033[{self.rendered}A')
                 for label, text in self.rows.items():
-                    self.output.write(f'\r\033[2K  {label:<20.20} {text}\n')
+                    self.output.write(f'\r\033[2K  {label:<16.16} {text}\n')
                 self.output.flush()
                 self.rendered = len(self.rows)
             elif complete:
-                print(f'  {name:<20.20} {message}', file=self.output, flush=True)
+                print(f'  {name:<16.16} {message}', file=self.output, flush=True)
 
 
 def size_text(count):

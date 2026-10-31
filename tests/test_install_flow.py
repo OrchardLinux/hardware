@@ -77,6 +77,7 @@ class InstallFlow(unittest.TestCase):
         status.call.return_value = {'release': '1.0'}
         replies, prompts = iter(answers), []
         with patch('orchard.service.choose', return_value=(adapter, {'mode': 'linux', 'ecid': 1, 'resumed': True})), \
+             patch('orchard.service.select_manifest', return_value=({'name': 'Omarchy'}, None)), \
              patch('orchard.service.resolve', return_value=(record, {'root': image, 'layer': layer})), \
              patch('orchard.service.Client', return_value=status), \
              patch('orchard.state.cache_root', return_value=root / 'cache'):
@@ -91,7 +92,7 @@ class InstallFlow(unittest.TestCase):
                         'partuuid': '00000000-0000-4000-8000-000000000001'}],
                       [{'start': 3 * GIB // 4096 + 6, 'blocks': 20 * GIB // 4096}])
         result, store, prompts, output = self.run_install(disk, ['', ''])
-        self.assertEqual(prompts, ['Install Linux on Supported tablet? [Y/n] ', 'Choose [1]: '])
+        self.assertEqual(prompts, ['Continue? [Y/n] ', 'Choose [1]: '])
         self.assertIn('free space, 20.0 GiB', output)
         self.assertEqual((store / 'install_device.py').read_bytes(), install_remote.SCRIPT.read_bytes())
         self.assertEqual((store / 'root-stream').read_bytes(), b'root-stream')
