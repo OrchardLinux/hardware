@@ -66,6 +66,30 @@ done
 mkdir -p /newroot
 mount ${fstype:+-t "$fstype"} -o "$mode${flags:+,$flags}" "$device" /newroot || stop "could not mount $device"
 [ -x "/newroot$init" ] || [ -L "/newroot$init" ] || stop "the root has no $init"
+# USB for the host: network (usb0) and a serial console (ttyGS0), named after
+# the system, so `orchard devices` sees it. What runs on them is the system's.
+usb_gadget() {
+    g=/sys/kernel/config/usb_gadget/orchard-system
+    mkdir -p /sys/kernel/config && mount -t configfs -o nodev,noexec,nosuid configfs /sys/kernel/config 2>/dev/null
+    [ ! -e "$g" ] || return 0
+    name=$(sed -n 's/^NAME=//p' /newroot/etc/os-release /newroot/usr/lib/os-release 2>/dev/null | head -1 | tr -d "\"'")
+    board=$(tr '\000' '\n' < /proc/device-tree/compatible | head -1)
+    mkdir "$g" &&
+    echo 0x05ac > "$g/idVendor" &&
+    echo 0x4145 > "$g/idProduct" &&
+    mkdir -p "$g/strings/0x409" "$g/configs/c.1/strings/0x409" &&
+    echo 'Orchard Linux' > "$g/strings/0x409/manufacturer" &&
+    echo "${name:-Linux}" > "$g/strings/0x409/product" &&
+    echo "BOOT:$(cat /proc/sys/kernel/random/boot_id) BOARD:${board#apple,}" > "$g/strings/0x409/serialnumber" &&
+    echo 'USB network and serial' > "$g/configs/c.1/strings/0x409/configuration" &&
+    echo 500 > "$g/configs/c.1/MaxPower" &&
+    mkdir "$g/functions/ncm.usb0" "$g/functions/acm.usb0" &&
+    ln -s "$g/functions/ncm.usb0" "$g/configs/c.1/ncm.usb0" &&
+    ln -s "$g/functions/acm.usb0" "$g/configs/c.1/acm.usb0" &&
+    basename "$(ls -d /sys/class/udc/* | head -1)" > "$g/UDC"
+}
+usb_gadget || echo 'orchard initrd: no USB gadget; continuing without USB'
+
 for name in dev proc sys; do
     mount --move "/$name" "/newroot/$name"
 done

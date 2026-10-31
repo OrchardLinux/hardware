@@ -75,14 +75,12 @@
         "linux": {
           "type": "object",
           "properties": {
-            "product": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 256
+            "recovery": {
+              "const": true
             }
           },
           "required": [
-            "product"
+            "recovery"
           ],
           "additionalProperties": false
         }

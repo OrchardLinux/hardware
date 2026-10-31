@@ -127,7 +127,7 @@ class HostWorkflow(unittest.TestCase):
         from orchard.apple import device as adapter_module
         adapter = devices.load('j71b')
         endpoint = {'mode': 'linux', 'location': 'new-enumeration',
-                    'product': 'J71b Recovery', 'serial_port': '/dev/recovery', 'ecid': 1, 'boot_id': BOOT}
+                    'product': 'Orchard Recovery', 'profile': 'j71b', 'serial_port': '/dev/recovery', 'ecid': 1, 'boot_id': BOOT}
         original = {'location': 'dfu-enumeration', 'ecid': 1}
         with patch.object(adapter_module.usb, 'devices', return_value=[endpoint]):
             self.assertEqual(adapter_module.apple_boot.wait_mode(original, 'linux', chip=adapter.CHIP,
@@ -142,7 +142,7 @@ class HostWorkflow(unittest.TestCase):
         from orchard.apple import device as adapter_module
         adapter = devices.load('j71b')
         endpoint = {'mode': 'linux', 'location': 'usb',
-                    'product': 'J71b Recovery', 'serial_port': '/dev/recovery', 'ecid': 1, 'boot_id': BOOT}
+                    'product': 'Orchard Recovery', 'profile': 'j71b', 'serial_port': '/dev/recovery', 'ecid': 1, 'boot_id': BOOT}
         with patch.object(adapter_module.usb, 'devices', return_value=[endpoint, {**endpoint, 'location': 'other'}]):
             with self.assertRaisesRegex(ValueError, 'exactly one target'):
                 adapter_module.apple_boot.wait_mode({'location': 'usb'}, 'linux', chip=adapter.CHIP,
@@ -158,7 +158,7 @@ class HostWorkflow(unittest.TestCase):
         adapter = devices.load('j71b')
         from unittest.mock import Mock
         endpoint = {'mode': 'linux', 'location': 'usb',
-                    'product': 'J71b Recovery', 'serial_port': '/dev/recovery', 'ecid': 1, 'boot_id': BOOT}
+                    'product': 'Orchard Recovery', 'profile': 'j71b', 'serial_port': '/dev/recovery', 'ecid': 1, 'boot_id': BOOT}
         with patch.object(adapter_module.usb, 'devices', return_value=[endpoint]), \
              patch.object(adapter_module.adt_capture, 'capture', return_value=b'fresh'), patch.object(adapter_module, 'parse', return_value=Mock(properties={'model': b'iPad7,5\0'})), \
              patch.object(adapter_module, 'validate_adt', return_value=1), \

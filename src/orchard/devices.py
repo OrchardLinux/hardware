@@ -33,7 +33,8 @@ def choose() -> Tuple[Adapter, SelectedDevice]:
     device = usb.sole_target()
     adapters = [load(profile) for profile in profiles()]
     if device['mode'] == 'linux':
-        matches = [a for a in adapters if a.PRODUCT and device.get('product') == a.PRODUCT]
+        matches = [a for a in adapters if a.PRODUCT and device.get('product') == a.PRODUCT
+                   and device.get('profile') == a.PROFILE]
     else:
         matches = [a for a in adapters if a.matches_dfu(device)]
     if len(matches) != 1:
