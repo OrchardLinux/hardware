@@ -40,11 +40,11 @@ The AP NCO uses the existing fractional-divider implementation. Its
 T8010-compatible control data selects bit 12 for enable, bit 31 for the
 control mode, input zero and the corresponding accumulator initial state.
 Existing NCO compatibles keep their original control behaviour. The
-reference rate is copied by m1n1 from the NCO's first clock ID in the boot
-ADT's 32-bit clock-frequency table; it is not assumed to be the 24 MHz crystal.
-The J71b `nco-ref` alias requests this handoff. Missing clock information
-leaves audio disabled and still permits Linux to boot; the NCO driver
-rejects a zero reference without touching the speaker clock registers.
+reference is a fixed clock (`nco_clkref`) whose rate each board's device tree
+sets, as t8103 does: 800 MHz on J71b, the NCO's first clock ID in the J71b
+ADT's 32-bit clock-frequency table, not the 24 MHz crystal. A board without
+that rate leaves audio disabled and still boots; the NCO driver rejects a
+zero reference without touching the speaker clock registers.
 
 Both shared configs select `SND_SOC_MAX98357A=m` and
 `COMMON_CLK_APPLE_NCO=m`. The existing MCA, SmartIO and simple-card
@@ -80,7 +80,7 @@ physical touch events during playback and after its shutdown.
 
 Kernel/module/DTB compilation, binding and compiled-DT validation,
 checkpatch, config resolution and repository tests are host checks. A
-subsequent RAM diagnostic verified the boot-clock handoff and playback-card
+subsequent RAM diagnostic verified the NCO reference rate and playback-card
 enumeration. The user confirmed correct left/right/both output from quiet
 48 kHz stereo S16_LE fixtures, a clean 30-second tone while touching the
 screen, and five clean starts/stops. Input events continued during playback

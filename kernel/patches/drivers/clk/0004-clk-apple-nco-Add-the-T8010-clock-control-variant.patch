@@ -1,22 +1,26 @@
-From c4b22e5ab34887490d6f91aa40f8ac34f9b515ff Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Dalton Alexandre <alley.nightly_0b@icloud.com>
 Date: Fri, 30 Oct 2026 09:21:23 -0700
 Subject: [PATCH] clk: apple-nco: Add the T8010 clock control variant
 
 The T8010 NCO uses bit 12 as its enable and bit 31 as its control mode,
 unlike T8103. Select these semantics only for apple,t8010-nco. Select
-input zero, whose rate the loader supplies from the boot clock table.
-Keep all existing compatibles and their clock programming unchanged.
+input zero, the reference clock the board's device tree describes, and
+refuse one without a rate. Keep all existing compatibles and their clock
+programming unchanged.
 
 Signed-off-by: Dalton Alexandre <alley.nightly_0b@icloud.com>
+[henrik: the reference rate comes from the device tree, as on t8103, not
+ from a boot-time handoff]
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
 ---
- drivers/clk/clk-apple-nco.c | 50 +++++++++++++++++++++++++++++++++++++++++----
+ drivers/clk/clk-apple-nco.c | 50 ++++++++++++++++++++++++++++++++++---
  1 file changed, 46 insertions(+), 4 deletions(-)
 
-diff --git c/drivers/clk/clk-apple-nco.c w/drivers/clk/clk-apple-nco.c
-index 434c067..78a5518 100644
---- c/drivers/clk/clk-apple-nco.c
-+++ w/drivers/clk/clk-apple-nco.c
+diff --git a/drivers/clk/clk-apple-nco.c b/drivers/clk/clk-apple-nco.c
+index 434c067..12eeb65 100644
+--- a/drivers/clk/clk-apple-nco.c
++++ b/drivers/clk/clk-apple-nco.c
 @@ -8,7 +8,9 @@
  
  #include <linux/bits.h>
@@ -117,7 +121,7 @@ index 434c067..78a5518 100644
 +					     "failed to get NCO reference\n");
 +		if (!clk_get_rate(reference))
 +			return dev_err_probe(&pdev->dev, -EINVAL,
-+					     "NCO reference missing: update m1n1 clock handoff\n");
++					     "NCO reference has no rate\n");
 +	}
 +
  	base = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
@@ -147,3 +151,6 @@ index 434c067..78a5518 100644
  	{ .compatible = "apple,t8103-nco" },
  	{ .compatible = "apple,nco" },
  	{ }
+-- 
+2.54.0 (Apple Git-157)
+

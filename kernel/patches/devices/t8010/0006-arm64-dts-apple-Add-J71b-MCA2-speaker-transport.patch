@@ -1,4 +1,4 @@
-From e7f27bd39c5a70b5fcdef60b4cafc87818e14bb6 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Dalton Alexandre <alley.nightly_0b@icloud.com>
 Date: Fri, 30 Oct 2026 09:21:23 -0700
 Subject: [PATCH] arm64: dts: apple: Add J71b MCA2 speaker transport
@@ -11,23 +11,23 @@ Leave all touch nodes, SPI3 wiring, clocks and DMA specifiers unchanged.
 The four physical speaker channels still require device qualification.
 
 Signed-off-by: Dalton Alexandre <alley.nightly_0b@icloud.com>
+[henrik: describe the NCO reference as a fixed clock set per board, as
+ t8103 does, with the J71b rate of 800 MHz from its ADT clock-frequency
+ table, instead of a zero rate that m1n1 fills in at boot]
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
 ---
  arch/arm64/boot/dts/apple/t8010-j71b.dts | 43 ++++++++++++++++++++++++
- arch/arm64/boot/dts/apple/t8010.dtsi     | 39 +++++++++++++++++++++
- 2 files changed, 82 insertions(+)
+ arch/arm64/boot/dts/apple/t8010.dtsi     | 41 ++++++++++++++++++++++
+ 2 files changed, 84 insertions(+)
 
 diff --git a/arch/arm64/boot/dts/apple/t8010-j71b.dts b/arch/arm64/boot/dts/apple/t8010-j71b.dts
-index 2aada48..a875fd7 100644
+index 2aada48..2e07f77 100644
 --- a/arch/arm64/boot/dts/apple/t8010-j71b.dts
 +++ b/arch/arm64/boot/dts/apple/t8010-j71b.dts
-@@ -11,6 +11,36 @@
+@@ -11,6 +11,32 @@
  / {
  	compatible = "apple,j71b", "apple,t8010", "apple,arm-platform";
  	model = "Apple iPad 6 (Wi-Fi)";
-+
-+	aliases {
-+		nco-ref = &nco_ref;
-+	};
 +
 +	/* One logical codec models the amplifier bank's shared SD_MODE line. */
 +	speaker_amps: amplifier {
@@ -57,7 +57,7 @@ index 2aada48..a875fd7 100644
  };
  
  &wifi {
-@@ -20,3 +50,16 @@
+@@ -20,3 +46,20 @@
  &touchscreen {
  	firmware-name = "apple/j71b-fwstart.z2fw";
  };
@@ -71,29 +71,35 @@ index 2aada48..a875fd7 100644
 +	status = "okay";
 +};
 +
++&nco_clkref {
++	clock-frequency = <800000000>;
++};
++
 +&nco {
 +	status = "okay";
 +};
 diff --git a/arch/arm64/boot/dts/apple/t8010.dtsi b/arch/arm64/boot/dts/apple/t8010.dtsi
-index 5ff9aa1..e89f233 100644
+index 5ff9aa1..330dc67 100644
 --- a/arch/arm64/boot/dts/apple/t8010.dtsi
 +++ b/arch/arm64/boot/dts/apple/t8010.dtsi
-@@ -25,6 +25,14 @@
+@@ -25,6 +25,16 @@
  		clock-output-names = "clkref";
  	};
  
-+	/* Filled from this boot's ADT NCO input-zero frequency by m1n1. */
-+	nco_ref: clock-nco-ref {
++	/*
++	 * The NCO's reference, as on t8103: its rate is set per board from the
++	 * board's ADT clock-frequency table, since the true clock tree is unknown.
++	 */
++	nco_clkref: clock-ref-nco {
 +		compatible = "fixed-clock";
 +		#clock-cells = <0>;
-+		clock-frequency = <0>;
-+		clock-output-names = "nco-ref";
++		clock-output-names = "nco_ref";
 +	};
 +
  	cpus {
  		#address-cells = <2>;
  		#size-cells = <0>;
-@@ -146,6 +154,37 @@
+@@ -146,6 +156,37 @@
  		nonposted-mmio;
  		ranges;
  
@@ -123,7 +129,7 @@ index 5ff9aa1..e89f233 100644
 +		nco: clock-controller@20e044000 {
 +			compatible = "apple,t8010-nco";
 +			reg = <0x2 0x0e044000 0x0 0x14000>;
-+			clocks = <&nco_ref>;
++			clocks = <&nco_clkref>;
 +			#clock-cells = <1>;
 +			status = "disabled";
 +		};
@@ -132,5 +138,5 @@ index 5ff9aa1..e89f233 100644
  			compatible = "apple,t8010-cluster-cpufreq", "apple,t8103-cluster-cpufreq", "apple,cluster-cpufreq";
  			reg = <0x2 0x02f20000 0 0x1000>;
 -- 
-2.56.0
+2.54.0 (Apple Git-157)
 
