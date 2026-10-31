@@ -39,9 +39,9 @@ Assisted-by: LLM
  MAINTAINERS                   |   7 +
  drivers/soc/apple/Kconfig     |  12 +
  drivers/soc/apple/Makefile    |   3 +
- drivers/soc/apple/aop.c       | 956 ++++++++++++++++++++++++++++++++++
+ drivers/soc/apple/aop.c       | 958 ++++++++++++++++++++++++++++++++++
  include/linux/soc/apple/aop.h |  39 ++
- 5 files changed, 1017 insertions(+)
+ 5 files changed, 1019 insertions(+)
  create mode 100644 drivers/soc/apple/aop.c
  create mode 100644 include/linux/soc/apple/aop.h
 
@@ -102,10 +102,10 @@ index 73c8bd23b..f99975cc6 100644
  apple-sio-y := apple-sio-core.o
 diff --git a/drivers/soc/apple/aop.c b/drivers/soc/apple/aop.c
 new file mode 100644
-index 000000000..824b8688f
+index 000000000..c6afe38b3
 --- /dev/null
 +++ b/drivers/soc/apple/aop.c
-@@ -0,0 +1,956 @@
+@@ -0,0 +1,958 @@
 +// SPDX-License-Identifier: GPL-2.0-only OR MIT
 +/*
 + * Apple T8010 Always-On Processor (AOP)
@@ -954,13 +954,9 @@ index 000000000..824b8688f
 +		return dev_err_probe(dev, -EBUSY,
 +				     "already started; the AOP starts once per boot\n");
 +
-+	/* The bootloader passes the ECID only for the firmware: take it out. */
 +	ret = of_property_read_u64(np, "apple,ecid", &ecid);
 +	if (ret)
 +		return dev_err_probe(dev, ret, "no apple,ecid from the bootloader\n");
-+	prop = of_find_property(np, "apple,ecid", NULL);
-+	if (prop)
-+		of_remove_property(np, prop);
 +
 +	aop->eps = devm_kcalloc(dev, AFK_ENDPOINT_COUNT, sizeof(*aop->eps), GFP_KERNEL);
 +	if (!aop->eps)
@@ -985,8 +981,14 @@ index 000000000..824b8688f
 +	writel(APPLE_AOP_IRQ_MASK_ALL, aop->akf + APPLE_AOP_IRQ_MASK_SET);
 +	writel(APPLE_AOP_IRQ_INBOX | APPLE_AOP_IRQ_OUTBOX, aop->akf + APPLE_AOP_IRQ_MASK_CLEAR);
 +
-+	/* From here on, the firmware is consumed until the next boot. */
++	/*
++	 * From here on, the firmware is consumed until the next boot. The
++	 * bootloader passes the ECID only for it: take it out of the tree.
++	 */
 +	__module_get(THIS_MODULE);
++	prop = of_find_property(np, "apple,ecid", NULL);
++	if (prop)
++		of_remove_property(np, prop);
 +	writel(readl(aop->akf + APPLE_AOP_CPU_CONTROL) | APPLE_AOP_CPU_CONTROL_RUN,
 +	       aop->akf + APPLE_AOP_CPU_CONTROL);
 +	writel(1, aop->control + APPLE_AOP_CONTROL_AUTO_BOOT);
