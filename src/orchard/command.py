@@ -91,6 +91,10 @@ def main():
     args = parser.parse_args()
     progress = Progress(verbose=args.verbose)
     try:
+        from orchard.cache import check_state
+        from orchard.sources import cache_root as build_cache
+        check_state()
+        check_state(build_cache())
         if args.action in ('build', 'run'):
             from orchard import distro
             root = distro.find(args.directory)

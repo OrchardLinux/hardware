@@ -68,7 +68,7 @@ def recipe_for(profile, hardware=None):
     if hardware is None:
         from .hardware import firmware_path
         return recipes.check(json.loads(firmware_path(profile).read_text()))
-    from .build import tomllib
+    import tomllib
     if not re.fullmatch(r'[a-z0-9][a-z0-9_-]*', profile):
         raise ValueError('Invalid device profile')
     descriptor = Path(hardware) / 'devices' / profile / 'device.toml'

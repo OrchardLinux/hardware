@@ -20,7 +20,7 @@ class CIEfficiency(unittest.TestCase):
         # No wheel: the tests run the checkout, and recipes need only python3.
         self.assertNotIn('python -m build', workflow)
         self.assertNotIn('.whl', workflow)
-        self.assertIn('pip install -e .', job(workflow, 'test'))
+        self.assertIn("pip install -e '.[validate]'", job(workflow, 'test'))
         for name in ('native-smoke', 'kernel', 'tools'):
             self.assertNotIn('pip install', job(workflow, name))
             self.assertNotIn('venv', job(workflow, name))

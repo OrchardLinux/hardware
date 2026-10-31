@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Offline checks for Orchard indexes and resolved manifests; not an installer."""
+"""Offline checks for Orchard indexes and resolved manifests; not an installer.
+
+The JSON schemas are checked where jsonschema is installed (development and
+release CI, which validate every manifest and descriptor they publish).
+orchard's core, which installs and launches, runs on the standard library
+alone: it checks what it relies on (kind, normalized paths, URLs, hashes as it
+verifies files) and nothing more.
+"""
 import argparse
 import json
 from pathlib import Path
@@ -7,8 +14,6 @@ import sys
 import tomllib
 from .http import validate_url
 from .integrity import digest
-
-from jsonschema import Draft202012Validator
 
 from .hardware import ROOT
 
@@ -56,20 +61,34 @@ def check_source(source, where):
             raise ManifestError(f'{where}: {error}') from error
 
 
-def validate(document):
+def schema_validator():
+    """jsonschema's Draft 2020-12 validator, or None where jsonschema is not installed (orchard's core)."""
+    try:
+        from jsonschema import Draft202012Validator
+    except ImportError:
+        return None
+    return Draft202012Validator
+
+
+def validate(document, *, schema=None):
+    """DOCUMENT, checked; against its JSON schema if SCHEMA is true, or by default where jsonschema is installed."""
     if not isinstance(document, dict):
         raise ManifestError('Expected a TOML table')
     kind = document.get('kind')
     if not isinstance(kind, str) or kind not in SCHEMAS:
         raise ManifestError('Unknown manifest kind: ' + repr(kind))
-    schema = json.loads(SCHEMAS[kind].read_text())
-    Draft202012Validator.check_schema(schema)
-    errors = sorted(Draft202012Validator(schema).iter_errors(document),
-                    key=lambda error: str(list(error.absolute_path)))
-    if errors:
-        error = errors[0]
-        location = '.'.join(map(str, error.absolute_path)) or '<manifest>'
-        raise ManifestError(f'{location}: {error.message}')
+    validator = schema_validator() if schema is not False else None
+    if schema and validator is None:
+        raise ManifestError('Schema validation needs jsonschema (pip install jsonschema)')
+    if validator is not None:
+        definition = json.loads(SCHEMAS[kind].read_text())
+        validator.check_schema(definition)
+        errors = sorted(validator(definition).iter_errors(document),
+                        key=lambda error: str(list(error.absolute_path)))
+        if errors:
+            error = errors[0]
+            location = '.'.join(map(str, error.absolute_path)) or '<manifest>'
+            raise ManifestError(f'{location}: {error.message}')
     for where, source in sources(document):
         check_source(source, where)
     if kind == 'hardware.device':
@@ -156,7 +175,8 @@ def main():
     failed = False
     for path in args.manifests:
         try:
-            document = load(path)
+            with Path(path).open('rb') as stream:
+                document = validate(tomllib.load(stream), schema=True)
             if args.verify_local:
                 verify_local_receipts(document, path.parent)
             level = 'schema + local receipts' if args.verify_local else 'schema'
