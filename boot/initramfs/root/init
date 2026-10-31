@@ -70,18 +70,22 @@ mount ${fstype:+-t "$fstype"} -o "$mode${flags:+,$flags}" "$device" /newroot || 
 # left black, before the system starts; it stays until the system takes over.
 splash() {
     s=/newroot/usr/share/orchard/splash fb=/sys/class/graphics/fb0
-    [ -f "$s" ] && [ -c /dev/fb0 ] && [ -r "$fb/stride" ] || return 0
-    [ "$(cat "$fb/bits_per_pixel")" = 32 ] && [ "$(head -c 4 "$s")" = OSPL ] || return 0
+    say() { echo "orchard initrd: splash: $*" > /dev/kmsg; }
+    [ -f "$s" ] || { say "none in the system"; return 0; }
+    [ -c /dev/fb0 ] && [ -r "$fb/stride" ] || { say "no framebuffer"; return 0; }
+    [ "$(cat "$fb/bits_per_pixel")" = 32 ] && [ "$(head -c 4 "$s")" = OSPL ] || { say "unsupported format"; return 0; }
     set -- $(od -An -tu4 -j4 -N8 "$s")
     w=$1 h=$2 size=$(cat "$fb/virtual_size") stride=$(cat "$fb/stride")
     W=${size%,*} H=${size#*,}
-    [ "$w" -le "$W" ] && [ "$h" -le "$H" ] || return 0
+    [ "$w" -le "$W" ] && [ "$h" -le "$H" ] || { say "${w}x$h does not fit ${W}x$H"; return 0; }
     left=$(((W - w) / 2)) top=$(((H - h) / 2)) row=$((w * 4)) y=0
     while [ "$y" -lt "$h" ]; do
         dd if="$s" of=/dev/fb0 bs="$row" count=1 iflag=skip_bytes oflag=seek_bytes conv=notrunc \
-            skip=$((12 + y * row)) seek=$(((top + y) * stride + left * 4)) 2>/dev/null || return 0
+            skip=$((12 + y * row)) seek=$(((top + y) * stride + left * 4)) 2>/dev/null ||
+            { say "write failed at row $y"; return 0; }
         y=$((y + 1))
     done
+    say "${w}x$h at $left,$top on ${W}x$H"
 }
 splash
 
