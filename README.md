@@ -64,6 +64,7 @@ distribution's own scripts or `orchard python -m unittest discover -s tests`. Se
 
 - [Kernel producers](kernel/README.md)
 - [Device bring-up](docs/device-bring-up.md)
+- [J72 RAM bring-up report and validation limits](docs/bring-up/j72.md)
 - [RAM builds and development](docs/ram-development.md)
 - [Firmware recipes](docs/firmware-recipes.md)
 - [Device operation protocol](docs/device-protocol.md)
