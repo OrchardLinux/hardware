@@ -2,7 +2,7 @@
 # Run inside the Podman Linux VM with sudo. Writes ONLY a new file-backed VM disk.
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-OUT="$ROOT/out/ipad-simulator/vm"
+OUT="$ROOT/out/simulator/vm"
 ARCHIVE="$ROOT/out/rootfs/0.1.0-next.1/rootfs.tar.zst"
 DISK="$OUT/root.raw"
 MOUNT="$OUT/mount"

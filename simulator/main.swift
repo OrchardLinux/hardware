@@ -427,7 +427,7 @@ final class SimulatorView: NSView {
         c(1, 0.012).setFill(); reflection.fill()
         NSGraphicsContext.restoreGraphicsState()
 
-        // Front FaceTime camera and Touch ID ring.
+        // Front camera and home button ring.
         rounded(NSRect(x: 83.1, y: 9.0, width: 3.3, height: 3.3), 1.65, fill: c(0.71))
         rounded(NSRect(x: 83.55, y: 9.45, width: 2.4, height: 2.4), 1.2,
                 fill: NSColor(calibratedRed: 0.10, green: 0.14, blue: 0.18, alpha: 1))
@@ -476,11 +476,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mouse.tag = 0
         appMenu.addItem(mouse)
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Quit iPad Simulator", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: "Quit Orchard Simulator", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
         app.mainMenu = menu
         window = SimulatorWindow(contentRect: NSRect(origin: .zero, size: Device.canvas), styleMask: [.borderless], backing: .buffered, defer: false)
-        window.title = "iPad Simulator"
+        window.title = "Orchard Simulator"
         window.isOpaque = false
         window.backgroundColor = .clear
         window.hasShadow = false
@@ -490,7 +490,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.center()
         window.makeKeyAndOrderFront(nil)
         app.activate(ignoringOtherApps: true)
-        if let path = ProcessInfo.processInfo.environment["IPAD_SIMULATOR_TOUCH_CHECK"] {
+        if let path = ProcessInfo.processInfo.environment["ORCHARD_SIMULATOR_TOUCH_CHECK"] {
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
                 guard let view = self?.window.contentView as? SimulatorView else { app.terminate(nil); return }
                 view.testTouchHold(x: 480, y: 480) {
@@ -499,7 +499,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
-        if let path = ProcessInfo.processInfo.environment["IPAD_SIMULATOR_SWIPE_CHECK"] {
+        if let path = ProcessInfo.processInfo.environment["ORCHARD_SIMULATOR_SWIPE_CHECK"] {
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
                 guard let view = self?.window.contentView as? SimulatorView else { app.terminate(nil); return }
                 view.testTouchSwipe {
@@ -508,7 +508,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
-        if let path = ProcessInfo.processInfo.environment["IPAD_SIMULATOR_SELF_TEST"] {
+        if let path = ProcessInfo.processInfo.environment["ORCHARD_SIMULATOR_SELF_TEST"] {
             DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
                 guard let view = self?.window.contentView as? SimulatorView else { app.terminate(nil); return }
                 view.testPowerButton { result in
@@ -517,7 +517,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
-        if let path = ProcessInfo.processInfo.environment["IPAD_SIMULATOR_RENDER_CHECK"] {
+        if let path = ProcessInfo.processInfo.environment["ORCHARD_SIMULATOR_RENDER_CHECK"] {
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
                 if let view = self?.window.contentView, let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
                     view.cacheDisplay(in: view.bounds, to: bitmap)

@@ -1,13 +1,13 @@
 #!/bin/sh
 set -eu
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-APP="$HERE/../out/ipad-simulator/iPad Simulator.app"
+APP="$HERE/../out/simulator/Orchard Simulator.app"
 mkdir -p "$APP/Contents/MacOS"
-if [ -f "$HERE/../out/ipad-simulator/vm/root.raw" ]; then "$HERE/vm" start; fi
-swiftc -O "$HERE/main.swift" "$HERE/VNCClient.swift" "$HERE/VMHardware.swift" -o "$APP/Contents/MacOS/iPadSimulator"
-printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' '<plist version="1.0"><dict><key>CFBundleExecutable</key><string>iPadSimulator</string><key>CFBundleIdentifier</key><string>org.orchardlinux.ipad-simulator</string><key>CFBundleName</key><string>iPad Simulator</string><key>CFBundlePackageType</key><string>APPL</string><key>NSHighResolutionCapable</key><true/></dict></plist>' > "$APP/Contents/Info.plist"
-if [ -f "$HERE/../out/ipad-simulator/vm/root.raw" ]; then
-  VM_DIR=$(CDPATH= cd -- "$HERE/../out/ipad-simulator/vm" && pwd)
+if [ -f "$HERE/../out/simulator/vm/root.raw" ]; then "$HERE/vm" start; fi
+swiftc -O "$HERE/main.swift" "$HERE/VNCClient.swift" "$HERE/VMHardware.swift" -o "$APP/Contents/MacOS/OrchardSimulator"
+printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' '<plist version="1.0"><dict><key>CFBundleExecutable</key><string>OrchardSimulator</string><key>CFBundleIdentifier</key><string>org.orchardlinux.simulator</string><key>CFBundleName</key><string>Orchard Simulator</string><key>CFBundlePackageType</key><string>APPL</string><key>NSHighResolutionCapable</key><true/></dict></plist>' > "$APP/Contents/Info.plist"
+if [ -f "$HERE/../out/simulator/vm/root.raw" ]; then
+  VM_DIR=$(CDPATH= cd -- "$HERE/../out/simulator/vm" && pwd)
   open -n --env ORCHARD_VM_VNC=1 --env "ORCHARD_VM_DIR=$VM_DIR" --env "ORCHARD_VM_SCRIPT=$HERE/vm" "$APP"
 else
   open -n "$APP"

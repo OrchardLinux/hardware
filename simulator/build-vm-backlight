@@ -3,8 +3,8 @@
 set -euo pipefail
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT=$(CDPATH= cd -- "$HERE/.." && pwd)
-WORK="$ROOT/out/ipad-simulator/kernel-build"
-OUT="$ROOT/out/ipad-simulator/vm"
+WORK="$ROOT/out/simulator/kernel-build"
+OUT="$ROOT/out/simulator/vm"
 KVER=$(<"$OUT/kernel-version")
 MACHINE_KVER=$(podman machine ssh uname -r)
 [[ $KVER == "$MACHINE_KVER" ]] || { echo "Podman kernel changed ($MACHINE_KVER); need headers for VM kernel $KVER" >&2; exit 1; }
@@ -24,7 +24,7 @@ KDIR="$WORK/usr/src/kernels/$KVER"
 mv "$KDIR/scripts/mod/modpost" "$KDIR/scripts/mod/modpost.bin"
 cat > "$KDIR/scripts/mod/modpost" <<EOF
 #!/bin/sh
-exec /work/out/ipad-simulator/kernel-build/fedora-lib/ld.so --library-path /work/out/ipad-simulator/kernel-build/fedora-lib /work/out/ipad-simulator/kernel-build/usr/src/kernels/$KVER/scripts/mod/modpost.bin "\$@"
+exec /work/out/simulator/kernel-build/fedora-lib/ld.so --library-path /work/out/simulator/kernel-build/fedora-lib /work/out/simulator/kernel-build/usr/src/kernels/$KVER/scripts/mod/modpost.bin "\$@"
 EOF
 cat > "$WORK/gcc-compat" <<'EOF'
 #!/bin/bash
@@ -35,8 +35,8 @@ EOF
 chmod +x "$KDIR/scripts/mod/modpost" "$WORK/gcc-compat"
 podman run --rm -v "$ROOT:/work" localhost/orchard-hardware-kernel-toolchain:bookworm bash -c '
   set -e
-  cp -r /work/ipad-simulator/vm-support /tmp/module
-  make -C "/work/out/ipad-simulator/kernel-build/usr/src/kernels/'"$KVER"'" M=/tmp/module CC=/work/out/ipad-simulator/kernel-build/gcc-compat modules
-  cp /tmp/module/orchard-vm-backlight.ko /work/out/ipad-simulator/vm/orchard-vm-backlight.ko
+  cp -r /work/simulator/vm-support /tmp/module
+  make -C "/work/out/simulator/kernel-build/usr/src/kernels/'"$KVER"'" M=/tmp/module CC=/work/out/simulator/kernel-build/gcc-compat modules
+  cp /tmp/module/orchard-vm-backlight.ko /work/out/simulator/vm/orchard-vm-backlight.ko
 '
 echo "VM backlight module built for $KVER"

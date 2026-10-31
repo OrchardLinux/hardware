@@ -1,14 +1,16 @@
-# iPad simulator — VM prototype
+# Orchard Simulator — VM prototype
 
 Run on an Apple Silicon Mac:
 
 ```sh
-./omarchy-next/ipad-simulator/run
+./simulator/run
 ```
 
-This builds and opens the native AppKit viewer. If a VM disk is prepared, it starts the VM (or reconnects to it). Drag the frame or its corners to move or resize it; click the display to focus guest input. By default, a mouse press, drag and release on the display become single-finger events on a virtual touchscreen; keyboard input still works. Choose **iPad Simulator → Mouse Input** for ordinary mouse movement, right-click and wheel scrolling, or **Touch Input** to return to touch. Touch mode has no hover, wheel or multi-finger gestures. Cmd-Q closes the viewer but **does not stop the VM**. The touchscreen device requires a VM restart after upgrading an already-running VM.
+This builds and opens the native AppKit viewer. If a VM disk is prepared, it starts the VM (or reconnects to it). Drag the frame or its corners to move or resize it; click the display to focus guest input. By default, a mouse press, drag and release on the display become single-finger events on a virtual touchscreen; keyboard input still works. Choose **Orchard Simulator → Mouse Input** for ordinary mouse movement, right-click and wheel scrolling, or **Touch Input** to return to touch. Touch mode has no hover, wheel or multi-finger gestures. Cmd-Q closes the viewer but **does not stop the VM**. The touchscreen device requires a VM restart after upgrading an already-running VM.
 
 The silver/white Wi-Fi frame uses the [iPad 6 dimensions](https://www.dimensions.com/element/apple-ipad-6th-gen-2018): 169.5 × 240 mm, with a 9.7-inch 4:3 display. Smaller details are visual approximations, not measured CAD geometry; it is not physical-size calibrated.
+
+Orchard Simulator is not made or endorsed by Apple. iPad is a trademark of Apple Inc.; the frame only shows which device the display size and buttons model.
 
 ## Controls and shutdown
 
@@ -27,9 +29,9 @@ The VM has no J71b panel. A **VM-only kernel module** registers a virtual backli
 For the *development VM*, not the product device:
 
 ```sh
-./omarchy-next/ipad-simulator/vm status
-./omarchy-next/ipad-simulator/vm stop
-./omarchy-next/ipad-simulator/vm start
+./simulator/vm status
+./simulator/vm stop
+./simulator/vm start
 ```
 
 The app menu also offers **Shut Down Development VM**. `stop` sends a narrowly scoped shutdown request over a separate VM-only virtio channel, invoking the guest's `systemctl poweroff`; it waits and does not force shutdown if that fails. This management path does not imply the tethered iPad system has a working shutdown feature. The guest bridge accepts only the shutdown command, and host control sockets are owner-only.
@@ -41,17 +43,17 @@ This is an experimental, disposable development installation, **not the iPad's i
 Install QEMU using `glu install qemu`, and start the local Podman machine. From the repository root, run (substitute the absolute project path if different):
 
 ```sh
-podman machine ssh 'sudo /Users/henrikklee/projects/OrchardLinux/omarchy-next/ipad-simulator/prepare-vm-linux.sh'
-./omarchy-next/ipad-simulator/build-vm-backlight
+podman machine ssh 'sudo $PWD/simulator/prepare-vm-linux.sh'
+./simulator/build-vm-backlight
 # Only install while the VM is stopped; never mount a running VM disk.
-podman machine ssh 'sudo /Users/henrikklee/projects/OrchardLinux/omarchy-next/ipad-simulator/vm-support/install-linux.sh'
-./omarchy-next/ipad-simulator/install-vm-greeter
-./omarchy-next/ipad-simulator/run
+podman machine ssh 'sudo $PWD/simulator/vm-support/install-linux.sh'
+./simulator/install-vm-greeter
+./simulator/run
 ```
 
 Preparation refuses to overwrite an existing disk and uses a file-backed ext4 filesystem only. The sparse disk has a 6 GiB logical size and initially consumes around 3.2 GiB. Check free space first; it can grow. A failed preparation may leave a partial disk; inspect it before removing and retrying. The matching kernel-devel RPM is fetched and verified against the Podman VM's Fedora RPM keyring; the module build uses the existing Debian toolchain image with a GCC compatibility wrapper, so compiler-version warnings are expected. The VM is tied to the copied kernel snapshot; rebuilding the module currently requires the Podman machine still to be running that same kernel. Intermediate kernel build files are removed after the build.
 
-Logs, the kernel and disk are under `out/ipad-simulator/vm/`. No physical iPad is accessed.
+Logs, the kernel and disk are under `out/simulator/vm/`. No physical iPad is accessed.
 
 ## Greeter prototype
 
@@ -64,8 +66,8 @@ Greeter source lives in `omarchy-a/desktop/greeter/` and is staged by `omarchy-a
 - The guest has a VM-only virtual Ethernet adapter using QEMU user-mode NAT and the Mac's existing network connection. Outbound network access works without a separate guest Wi-Fi connection; inbound connections and LAN discovery are not provided by default. This does not test iPad networking hardware.
 - There is no live source sync or QEMU guest agent. Greeter changes currently require reinstalling them into the stopped VM.
 - Index 4.0.2 is installed in the current disposable VM for evaluation only; it is not part of the desktop or rootfs build.
-- **Files (Flea touch preview)** runs the full upstream Flea 0.3.12 application with the version-pinned patch in `omarchy-a/desktop/files/flea-0.3.12-touch.patch`. Install or refresh it with the VM stopped using `./ipad-simulator/install-vm-flea-preview`; the VM greeter must already be installed. It is not the system default or file chooser. The patch enlarges common controls, adds long-press menus in list and grid views, and lets touch drags scroll instead of starting a file drag. Mouse drag-and-drop remains available in Mouse Input mode; touch file moves currently use the cut/paste menu instead. List and grid touch scrolling have been exercised in the simulator; the remaining views, multi-selection, all features, physical touch, and optional runtime dependencies have not yet been fully adapted or verified.
+- **Files (Flea touch preview)** runs the full upstream Flea 0.3.12 application with the version-pinned patch in `omarchy-a/desktop/files/flea-0.3.12-touch.patch`. Install or refresh it with the VM stopped using `./simulator/install-vm-flea-preview`; the VM greeter must already be installed. It is not the system default or file chooser. The patch enlarges common controls, adds long-press menus in list and grid views, and lets touch drags scroll instead of starting a file drag. Mouse drag-and-drop remains available in Mouse Input mode; touch file moves currently use the cut/paste menu instead. List and grid touch scrolling have been exercised in the simulator; the remaining views, multi-selection, all features, physical touch, and optional runtime dependencies have not yet been fully adapted or verified.
 - QEMU's software display is sent over an unauthenticated **loopback-only** VNC socket at `127.0.0.1:5908`; the app uses a raw-RFB client, not a screenshot polling viewer. This is local development infrastructure, not a security boundary. `vm start` refuses to start if the port is already occupied.
 - Resolution is 768×1024. Virtual backlight intensity is approximated by dimming the viewer; display color/brightness and iPad physical hardware are not validated. Performance and input mappings need more testing.
 
-For a rendering check, set `IPAD_SIMULATOR_RENDER_CHECK` to a writable PNG path when launching the compiled executable; it renders its view after three seconds and exits. Set `ORCHARD_VM_VNC=1` and `ORCHARD_VM_DIR` to include a running VM display and backlight bridge. `IPAD_SIMULATOR_SELF_TEST` can instead name a result file for a power-button click/restore test; only one viewer can use the backlight bridge at a time.
+For a rendering check, set `ORCHARD_SIMULATOR_RENDER_CHECK` to a writable PNG path when launching the compiled executable; it renders its view after three seconds and exits. Set `ORCHARD_VM_VNC=1` and `ORCHARD_VM_DIR` to include a running VM display and backlight bridge. `ORCHARD_SIMULATOR_SELF_TEST` can instead name a result file for a power-button click/restore test; only one viewer can use the backlight bridge at a time.

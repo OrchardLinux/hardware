@@ -2,7 +2,7 @@
 # Fetch the signed Arch Linux ARM package and install the VM-only greeter.
 set -eu
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-D=$(CDPATH= cd -- "$HERE/../out/ipad-simulator/vm" && pwd)
+D=$(CDPATH= cd -- "$HERE/../out/simulator/vm" && pwd)
 if "$HERE/vm" status >/dev/null; then
     echo 'Stop the simulator VM before installing or updating its greeter.' >&2
     exit 1

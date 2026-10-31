@@ -2,7 +2,7 @@
 # Called as root inside the Podman VM while the QEMU disk is stopped.
 set -eu
 BASE=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
-D="$BASE/omarchy-next/out/ipad-simulator/vm"
+D="$BASE/omarchy-next/out/simulator/vm"
 SRC="$BASE/omarchy-a/desktop/files"
 M="$D/mount"
 [ "$(id -u)" = 0 ] || exit 1

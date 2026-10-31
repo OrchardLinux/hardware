@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-D=$(CDPATH= cd -- "$HERE/../out/ipad-simulator/vm" 2>/dev/null && pwd) || { echo 'VM is not prepared.' >&2; exit 1; }
+D=$(CDPATH= cd -- "$HERE/../out/simulator/vm" 2>/dev/null && pwd) || { echo 'VM is not prepared.' >&2; exit 1; }
 QEMU=/opt/glustore/bin/qemu-system-aarch64
 running() {
     [ -f "$D/qemu.pid" ] || return 1

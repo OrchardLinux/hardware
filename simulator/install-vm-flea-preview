@@ -2,7 +2,7 @@
 # Disposable VM preview only; Flea is not installed as a system package or default.
 set -eu
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-D=$(CDPATH= cd -- "$HERE/../out/ipad-simulator/vm" && pwd)
+D=$(CDPATH= cd -- "$HERE/../out/simulator/vm" && pwd)
 ARCHIVE="$D/flea-preview-v0.3.12-aarch64.tar.gz"
 EXPECTED=4d8327c16ff4dca485c7cb21dc85fd35fb4247db7f29ce5ab6897334cd603ceb
 if "$HERE/vm" status >/dev/null; then

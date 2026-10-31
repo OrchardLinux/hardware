@@ -2,8 +2,8 @@
 # Install only VM support into an existing, stopped simulator disk.
 set -eu
 BASE=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-D="$BASE/out/ipad-simulator/vm"
-SUPPORT="$BASE/ipad-simulator/vm-support"
+D="$BASE/out/simulator/vm"
+SUPPORT="$BASE/simulator/vm-support"
 MOUNT="$D/mount"
 KVER=$(cat "$D/kernel-version")
 [ "$(id -u)" = 0 ] || { echo 'Run as root in the Podman Linux VM' >&2; exit 1; }

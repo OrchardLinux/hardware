@@ -2,9 +2,9 @@
 # Install an explicitly VM-only greeter and test PIN into a STOPPED simulator disk.
 set -eu
 BASE=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
-D="$BASE/omarchy-next/out/ipad-simulator/vm"
+D="$BASE/omarchy-next/out/simulator/vm"
 SRC="$BASE/omarchy-a/desktop/greeter"
-SUPPORT="$BASE/omarchy-next/ipad-simulator/vm-support"
+SUPPORT="$BASE/simulator/vm-support"
 M="$D/mount"
 PKG="$D/greetd.pkg.tar.xz"
 [ "$(id -u)" = 0 ] || { echo 'Run as root in the Podman Linux VM' >&2; exit 1; }
