@@ -192,12 +192,30 @@
       ]
     },
     {
-      "destination": "lib/firmware/apple/j71b-aop.osbin",
-      "sha256": "8746c6b80c0b1553d2a59b545a6135e00f6c8a0e750ef93f0ebf381eaccb4be6",
+      "destination": "lib/firmware/apple/aop-ipad7b.bin",
+      "sha256": "b9db3a9601b357d469ed79c2fa6b26c8e5fb4a3953ce289687f4ab434da338f1",
       "steps": [
         {
           "step": "im4p-payload@1",
           "input": "aop.im4p"
+        },
+        {
+          "step": "aop-image@1",
+          "coprocessor": "AOP"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/apple/aop-ipad7b-ext.bin",
+      "sha256": "25367930b9015e5c20d20a56d959a5e3e5fa713bc3b97aeef604c0ede9e74fc1",
+      "steps": [
+        {
+          "step": "im4p-payload@1",
+          "input": "aop.im4p"
+        },
+        {
+          "step": "aop-image@1",
+          "coprocessor": "AOP_ext"
         }
       ]
     }

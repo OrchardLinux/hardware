@@ -1,5 +1,6 @@
 """Firmware recipe steps: vocabulary check, hash verification and containers."""
 import hashlib
+import struct
 import unittest
 
 from orchard import recipe
@@ -115,6 +116,31 @@ class RecipeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Not an IM4P'):
             recipe.im4p_payload(der(0x30, der(0x16, b'IMG4') + der(0x16, b'a') + der(0x16, b'b') + der(0x04, b'c')))
 
+
+    def test_aop_image_picks_one_coprocessor_image(self):
+        def obj(kind, size, payload=b''):
+            return struct.pack('<I', kind << 24 | size) + payload + bytes(-len(payload) % 4)
+
+        def string(text):
+            data = text.encode() + b'\0'
+            return obj(9, len(data), data)
+
+        def entry(role, data):
+            return (obj(1, 2) + string('header') + obj(1, 1) + string('coprocessor') + string(role)
+                    + string('data') + obj(10, len(data), data))
+
+        container = (b'\xd3\0\0\0' + obj(1, 1) + string('firmware') + obj(2, 2)
+                     + entry('AOP', b'main') + entry('AOP_ext', b'extension'))
+        self.assertEqual(recipe.aop_image(container, 'AOP'), b'main')
+        self.assertEqual(recipe.aop_image(container, 'AOP_ext'), b'extension')
+        with self.assertRaisesRegex(ValueError, 'exactly one'):
+            recipe.aop_image(container, 'SEP')
+        with self.assertRaisesRegex(ValueError, 'Truncated'):
+            recipe.aop_image(container[:-3], 'AOP')
+        with self.assertRaisesRegex(ValueError, 'Trailing'):
+            recipe.aop_image(container + bytes(4), 'AOP')
+        with self.assertRaisesRegex(ValueError, 'Not an OSSerializeBinary'):
+            recipe.aop_image(b'<dict/>', 'AOP')
 
 if __name__ == '__main__':
     unittest.main()
