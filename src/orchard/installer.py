@@ -163,7 +163,7 @@ def build(output, *, loaders, boards=None, release=None, hardware=None):
         release = Path(release)
         index = load(release / 'index.toml')
         data['release/index.toml'] = (release / 'index.toml').read_bytes()
-        if 'file' in index['release']:
+        if 'file' in index['release']:  # a local release; a published one fetches it by URL
             path, _ = resolve_local(index, release)
             data['release/' + index['release']['file']] = path.read_bytes()
     info = {'schema': 1, 'version': version('orchard'), 'orchard': _revision(), 'boards': boards}
@@ -259,16 +259,39 @@ fi
 '''
 
 
+def release_manifest(directory, index):
+    """The installation manifest DIRECTORY's INDEX pins: a local file, or the published one staged beside it."""
+    from .manifests import ManifestError, load, resolve_local, verify_file
+    if 'file' in index['release']:
+        return resolve_local(index, directory)[1]
+    name = index['release']['url'].rsplit('/', 1)[-1]
+    path = verify_file({**{k: v for k, v in index['release'].items() if k != 'url'}, 'file': name}, directory)
+    manifest = load(path)
+    if manifest['kind'] != 'orchard.install' or manifest['distro'] != index['distro']:
+        raise ManifestError('The staged manifest does not match its index')
+    return manifest
+
+
+def loaders_from(archive, directory):
+    """Pongo and m1n1 out of an earlier zipapp ARCHIVE, written into DIRECTORY."""
+    result = {}
+    with zipfile.ZipFile(archive) as bundle:
+        for name in ('pongo', 'm1n1'):
+            result[name] = Path(directory) / f'{name}.bin'
+            result[name].write_bytes(bundle.read(f'loaders/{name}.bin'))
+    return result
+
+
 def release(directory, *, loaders, installer_url=None, hardware=None):
-    """Add orchard-install.pyz and install.sh to the release DIRECTORY; returns the zipapp's receipt."""
-    from .manifests import load, resolve_local
+    """Add orchard-install.pyz and install.sh to the release DIRECTORY; returns the zipapp's receipt.
+
+    A published DIRECTORY (its index pins release.toml by URL) carries that
+    release.toml beside it, as orchard.image.publish stages it.
+    """
+    from .manifests import load
     directory = Path(directory)
     index = load(directory / 'index.toml')
-    if 'file' in index['release']:
-        _, manifest = resolve_local(index, directory)
-    else:
-        from .releases import read_document
-        manifest, _ = read_document(index['release']['url'])
+    manifest = release_manifest(directory, index)
     boards = sorted({board for row in manifest['platforms'].values() for board in row['boards']})
     receipt = build(directory / 'orchard-install.pyz', loaders=loaders, boards=boards, release=directory,
                     hardware=hardware)

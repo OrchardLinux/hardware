@@ -83,6 +83,11 @@ def publish(directory, tag, output, *, distro):
             stream.write(toml(manifest))
         hosted['release'] = {'url': base + '/' + source.name, 'bytes': target.stat().st_size, 'sha256': sha(target)}
         (stage / 'index.toml').write_text(toml(hosted))
+        if (directory / 'orchard-install.pyz').is_file():
+            # The installer carries the published index; its loaders are the local build's.
+            from ..installer import loaders_from, release as add_installer
+            loaders = loaders_from(directory / 'orchard-install.pyz', temporary)
+            add_installer(stage, loaders=loaders, installer_url=base + '/orchard-install.pyz')
         stage.rename(output)
     return output / 'index.toml'
 

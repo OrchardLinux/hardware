@@ -135,6 +135,32 @@ class Zipapp(Store):
         self.assertEqual(bundled_release(core, release / 'orchard-install.pyz'), release / 'index.toml')
         self.assertEqual(bundled_release(core, self.home / 'elsewhere.pyz'), core / 'release/index.toml')
 
+    def test_publishing_rewrites_the_installer_for_the_release_urls(self):
+        from orchard.image.publish import publish
+        release = self.home / 'release'
+        release.mkdir()
+        for path in (FIXTURE / 'fixtures').iterdir():
+            shutil.copy(path, release / path.name)
+        # The fixture release, flat as publish needs it, as a distro publish knows.
+        manifest = (FIXTURE / 'release.toml').read_text().replace('file = "fixtures/', 'file = "')
+        (release / 'release.toml').write_text(manifest.replace('"fixture-linux"', '"minimal-linux"'))
+        data = (release / 'release.toml').read_bytes()
+        (release / 'index.toml').write_text(
+            'schema = 2\nkind = "orchard.index"\ndistro = "minimal-linux"\n\n[release]\nfile = "release.toml"\n'
+            f'bytes = {len(data)}\nsha256 = "{hashlib.sha256(data).hexdigest()}"\n')
+        installer.release(release, loaders=self.loaders)
+        published = publish(release, 'v1', self.home / 'published', distro='minimal-linux').parent
+        base = 'https://github.com/OrchardLinux/minimal-linux/releases/download/v1/'
+        script = (published / 'install.sh').read_text()
+        self.assertIn(f'INSTALLER_URL={base}orchard-install.pyz', script)
+        self.assertIn(f'INSTALLER_SHA256={hashlib.sha256((published / "orchard-install.pyz").read_bytes()).hexdigest()}',
+                      script)
+        with zipfile.ZipFile(published / 'orchard-install.pyz') as archive:
+            self.assertEqual(archive.read('release/index.toml'), (published / 'index.toml').read_bytes())
+            self.assertNotIn('release/release.toml', archive.namelist())  # fetched by URL, checked by hash
+            self.assertEqual(archive.read('loaders/m1n1.bin'), b'm1n1')
+        self.assertIn(f'"url" = "{base}release.toml"', (published / 'index.toml').read_text())
+
     def test_a_published_install_sh_downloads_the_installer(self):
         text = installer.script(distro='omarchy-a', name='Omarchy A', installer_sha256='0' * 64,
                                 installer_url='https://github.com/OrchardLinux/omarchy-a/releases/download/v1/orchard-install.pyz')
