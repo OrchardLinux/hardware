@@ -118,14 +118,33 @@ board:
 
 ## The installer and the user's orchard
 
-Users install today with the released Orchard 0.1.10 through omarchy-a's `install.sh`; that stays until this step.
+Done; `src/orchard/installer.py` and `src/orchard/user.py`.
 
-- **Core:** the part of `src/orchard` that install and launch need (USB, transports, manifests, downloads, install layout, boot disk, firmware steps), standard library only, enforced by an import test.
-- **Installer per distribution release:** `install.sh` plus `orchard-install.pyz` (core, the release manifest, the device data and loaders for the release's devices), run by a hash-pinned standalone Python 3.14 the script downloads. No system Python, no uv for users.
-- **The persistent user `orchard`:** an install leaves `orchard launch`, `devices` and `update`. An installer replaces it only with a newer core, never an older one. Later a self-contained Rust/C binary.
-- **State** in `~/.cache/orchard` gets a version; an older tool refuses newer state. Every tool version shares that cache today.
-- **Validation** of manifests and descriptors moves to release CI; jsonschema becomes a development dependency.
-- Update omarchy-a's `install.sh` and README at the same time.
+- **Core:** the part of `src/orchard` that install and launch need (everything
+  but the development modules `installer.DEVELOPMENT`: building kernels, payloads
+  and distributions). Standard library only; `tests/test_core.py` checks every
+  import and imports every module without site-packages.
+- **Installer per distribution release:** `orchard.installer release DIR` adds
+  `orchard-install.pyz` (core, the release's `index.toml` and the `release.toml`
+  it pins, the device data of the release's boards, Pongo and the storage-capable
+  m1n1) and `install.sh` to a release directory. `install.sh` downloads a
+  hash-pinned standalone Python 3.14 into the store (`installer.PYTHON`) and the
+  zipapp (`--installer-url`, or the one next to it), checks both by SHA-256 and runs
+  `install`, prompting on the terminal even when piped from curl. No system
+  Python, no uv. The zipapp unpacks once into `STORE/core/VERSION-HASH`.
+- **The user's `orchard`:** `STORE/core/current.json` and `~/.local/bin/orchard`,
+  a launcher of the core with `install`, `launch`, `devices` and `update`. An
+  installer writes it before installing (so `orchard launch` remains even if the
+  install stops) and replaces it only with a newer core; a development orchard on
+  PATH (the mainline link of `./setup`) stays. `orchard update` installs the latest
+  orchard release's `orchard-core.pyz` if it is newer. Later a self-contained Rust/C
+  binary.
+- **State:** the store and the build cache record their layout version
+  (`cache.STATE_VERSION`, `state.json`); an orchard that finds a newer one refuses
+  to touch it.
+- **Validation:** jsonschema is the `validate` extra and a development
+  dependency. `python -m orchard.manifests` and the tests validate against the
+  schemas; release CI installs `.[validate]`. The core checks what it relies on.
 
 ## Backlog
 

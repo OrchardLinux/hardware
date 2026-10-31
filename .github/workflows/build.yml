@@ -35,7 +35,8 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: python -c 'import os, tomllib; assert os.environ["TAG"] == "v" + tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]'
       # orchard runs from its checkout: the hardware data and recipes are files beside src/.
-      - run: python -m pip install -e . && python -m pip check
+      # jsonschema validates manifests in tests and release CI; the core needs none (tests/test_core.py).
+      - run: python -m pip install -e '.[validate]' && python -m pip check
       - run: python -m unittest discover -s tests -v
   native-smoke:
     needs: test
@@ -261,9 +262,13 @@ jobs:
           # orchard launch starts any device with only Pongo and the storage-capable
           # m1n1 (orchard.hardware.loader); they are release assets of their own.
           cp out/components/quiet/m1n1.bin out/components/quiet/pongo.bin out/publication/
+          # orchard update fetches the core with every device and both loaders.
+          python -m pip install -e .
+          python -m orchard.installer core out/publication/orchard-core.pyz \
+            --pongo out/components/quiet/pongo.bin --m1n1 out/components/quiet/m1n1.bin
           rm out/publication/kernel-components-*.tar.gz out/publication/tool-components.tar.gz out/publication/quiet-pongo.tar.gz
           git archive --format=tar.gz -o out/publication/orchard-source.tar.gz HEAD
-          (cd out/publication && sha256sum ./*.tar.gz ./*.bin > SHA256SUMS)
+          (cd out/publication && sha256sum ./*.tar.gz ./*.bin ./*.pyz > SHA256SUMS)
       - name: Attest public build
         if: toJSON(github.event.repository.private) == 'false'
         id: attest
