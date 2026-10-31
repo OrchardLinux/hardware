@@ -91,5 +91,8 @@ mkdir -p "$cargo"
     EXTRA_CFLAGS="$extra_cflags"
 mkdir -p "$(dirname "$output")"
 cp "$source/build/m1n1.bin" "$output"
+# The same build as Mach-O, for a chain that starts m1n1 from iBoot as the
+# kernelcache, plus the stub monitor A7-A9 iBoot expects next to it.
+cp "$source/build/m1n1-idevice.macho" "$source/build/monitor-stub.macho" "$(dirname "$output")/"
 sha256sum "$output" 2>/dev/null || shasum -a 256 "$output"
 echo "Loader: $output"

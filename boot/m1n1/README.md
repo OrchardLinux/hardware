@@ -2,7 +2,8 @@
 
 `build` fetches the pinned Asahi m1n1 revision (`upstream.lock`), applies the
 ordered patch layers in `series` and compiles `m1n1.bin` with chainloading
-enabled. Git and Podman are required.
+enabled. Next to it go the same build as `m1n1-idevice.macho` (started by iBoot
+as the kernelcache) and `monitor-stub.macho` (the monitor A7-A9 iBoot expects). Git and Podman are required.
 
 `orchard build` and `orchard run` run it with their cache directories; don't
 call it directly (see [AGENTS.md](../../AGENTS.md)).
