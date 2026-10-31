@@ -1,4 +1,7 @@
-"""Shell, commands and file transfer for a running RAM payload.
+"""Shell, commands and file transfer for a running RAM payload or installed system.
+
+An installed system is reached as its user with this computer's key, which
+the installer imported (orchard.computer_key); root is sudo, as on any OS.
 
 `orchard build` adds the usb-session helper and this host's RAM key to every
 payload unless payload.toml says transport = false. The device's host key is
@@ -49,15 +52,19 @@ def payload_files():
 
 
 def target():
-    """The one running RAM payload on USB."""
+    """The one running RAM payload on USB, else the one running installed system."""
     from .apple import usb
-    found = [item for item in usb.devices() if item['mode'] == 'ram']
-    if len(found) != 1:
-        raise ValueError('Connect exactly one running RAM payload (none or several found)')
-    device = found[0]
-    if not device.get('serial_port'):
-        raise ValueError('The RAM payload has no USB serial port')
-    return device
+    found = usb.devices()
+    payloads = [item for item in found if item['mode'] == 'ram']
+    systems = [item for item in found if item['mode'] == 'system']
+    if len(payloads) == 1:
+        device = payloads[0]
+        if not device.get('serial_port'):
+            raise ValueError('The RAM payload has no USB serial port')
+        return device
+    if not payloads and len(systems) == 1:
+        return systems[0]
+    raise ValueError('Connect exactly one running RAM payload or installed system (none or several found)')
 
 
 def _check(device):
@@ -69,9 +76,19 @@ def _check(device):
     return check
 
 
-def connect(device=None):
-    """SSH argv for the running payload, pinning its host key over serial once per boot."""
+def connect(device=None, user=None):
+    """SSH argv for the running payload (its host key pinned over serial once
+    per boot) or installed system (as its user, with this computer's key)."""
     device = device or target()
+    if device['mode'] == 'system':
+        from . import computer_key
+        user = user or computer_key.user()
+        if not user:
+            raise ValueError('No user for this system: install it with SSH logins allowed from this '
+                             'computer, or name one with --user')
+        argv = computer_key.ssh_argv(user)
+        wait_authenticated(argv, _check(device), seconds=20)
+        return argv
     boot = device.get('boot_id')
     if not boot:
         raise ValueError('The RAM payload has no boot identity; rebuild it with a current orchard')
@@ -92,13 +109,13 @@ def connect(device=None):
     return argv
 
 
-def shell():
-    argv = connect()
+def shell(user=None):
+    argv = connect(user=user)
     return subprocess.run([*argv[:-1], '-t', argv[-1]]).returncode
 
 
-def run(command):
-    argv = connect()
+def run(command, user=None):
+    argv = connect(user=user)
     return subprocess.run([*argv, PATH + ' '.join(map(shlex.quote, command))]).returncode
 
 
@@ -117,7 +134,7 @@ def _remote_sha256(text):
     return match.group(1)
 
 
-def _transfer(argv, command, *, stdin=None, stdout=None):
+def _transfer(argv, command, *, stdin=None, stdout=None, user=None):
     """Run one transfer over SSH; on a dropped connection (exit 255), connect again and retry once.
 
     The device can stall long enough under load (a busy GPU) for SSH's
@@ -135,18 +152,20 @@ def _transfer(argv, command, *, stdin=None, stdout=None):
         if result.returncode != 255 or attempt == 2:
             break
         print('orchard: the connection to the device dropped; connecting again', file=sys.stderr)
-        argv = connect()
+        argv = connect(user=user)
     raise ValueError('The transfer failed: the connection to the device dropped twice'
                      if result.returncode == 255 else f'The transfer failed on the device (exit {result.returncode})')
 
 
-def push(local, remote, *, serial=False):
+def push(local, remote, *, serial=False, user=None):
     """Copy a host file to the payload, written atomically and checked by SHA-256."""
     local, expected = Path(local), _sha256(local)
     part = remote + '.part'
     quoted, quoted_part = shlex.quote(remote), shlex.quote(part)
     if serial:
         device = target()
+        if device['mode'] == 'system':
+            raise ValueError('--serial is for RAM payloads; an installed system\'s serial console is a login')
         size = local.stat().st_size
         if size > SERIAL_LIMIT:
             raise ValueError('Serial transfers are limited to 16 MiB; use SSH')
@@ -157,9 +176,9 @@ def push(local, remote, *, serial=False):
             if actual == expected:
                 code, text = port.run(f'mv {quoted_part} {quoted}')
     else:
-        argv = connect()
+        argv = connect(user=user)
         with local.open('rb') as stream:
-            argv = _transfer(argv, f'cat > {quoted_part}', stdin=stream)
+            argv = _transfer(argv, f'cat > {quoted_part}', stdin=stream, user=user)
         reply = subprocess.run([*argv, f'sha256sum {quoted_part}'], capture_output=True, text=True, check=True)
         actual = _remote_sha256(reply.stdout)
         if actual == expected:
@@ -169,12 +188,14 @@ def push(local, remote, *, serial=False):
     print(f'{local} -> {remote} ({local.stat().st_size} bytes, sha256 {expected[:16]})')
 
 
-def pull(remote, local, *, serial=False):
+def pull(remote, local, *, serial=False, user=None):
     """Copy a payload file to the host, checked by SHA-256."""
     local, quoted = Path(local), shlex.quote(remote)
     partial = local.with_name(local.name + '.part')
     if serial:
         device = target()
+        if device['mode'] == 'system':
+            raise ValueError('--serial is for RAM payloads; an installed system\'s serial console is a login')
         with SerialPort(device['serial_port'], _check(device)) as port:
             code, text = port.run(f'wc -c < {quoted}; sha256sum {quoted}')
             lines = text.split()
@@ -183,11 +204,11 @@ def pull(remote, local, *, serial=False):
             size, expected = int(lines[0]), _remote_sha256(' '.join(lines[1:]))
             partial.write_bytes(port.capture_exact(f'cat {quoted}', size, timeout=60 + size // 8000))
     else:
-        argv = connect()
+        argv = connect(user=user)
         reply = subprocess.run([*argv, f'sha256sum {quoted}'], capture_output=True, text=True, check=True)
         expected = _remote_sha256(reply.stdout)
         with partial.open('w+b') as stream:
-            _transfer(argv, f'cat {quoted}', stdout=stream)
+            _transfer(argv, f'cat {quoted}', stdout=stream, user=user)
     if _sha256(partial) != expected:
         raise ValueError(f'{remote}: checksum mismatch after transfer; left as {partial}')
     partial.replace(local)

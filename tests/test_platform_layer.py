@@ -1,6 +1,7 @@
 """orchard's platform layer: kernel, DTBs, modules and /usr/lib defaults for every root image."""
 import gzip
 import json
+import re
 from pathlib import Path
 import tarfile
 import tempfile
@@ -95,10 +96,18 @@ class PlatformLayer(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'lacks t8010-j71b.dtb'):
             platform.build('apple-16k', self.work, bundle=self.bundle, busybox=self.busybox)
 
-    def test_system_defaults_stay_under_usr_lib(self):
+    def test_system_defaults_stay_under_usr_lib_or_ucm(self):
         defaults = ROOT / 'system/defaults'
-        self.assertTrue(all(path.relative_to(defaults).as_posix().startswith('usr/lib/')
+        self.assertTrue(all(path.relative_to(defaults).as_posix().startswith(platform.DEFAULTS_UNDER)
                             for path in defaults.rglob('*') if path.is_file()))
+
+    def test_every_ucm_card_names_an_existing_verb_file(self):
+        ucm = ROOT / 'system/defaults/usr/share/alsa/ucm2'
+        cards = list(ucm.glob('conf.d/*/*.conf'))
+        self.assertTrue(cards)
+        for card in cards:
+            for verb in re.findall(r'File "(/[^"]+)"', card.read_text()):
+                self.assertTrue((ucm / verb.lstrip('/')).is_file(), f'{card.name}: {verb}')
 
     def test_unknown_platform_lists_the_known_ones(self):
         with self.assertRaisesRegex(ValueError, 'Unknown platform apple-64k; known: apple-16k, apple-4k'):

@@ -1,0 +1,33 @@
+From e55e43d2f7c4e74f5607f9f802127cf01f5bc7d7 Mon Sep 17 00:00:00 2001
+From: Dalton Alexandre <alley.nightly_0b@icloud.com>
+Date: Fri, 30 Oct 2026 09:21:23 -0700
+Subject: [PATCH] soc: apple: sio: Expose the T8010 MCA2 transmit endpoint
+
+Add only the J71b speaker transmit endpoint 0x2c. Keep SPI3 touch
+endpoint 0x1a, all S8000 ranges and the shared DMA implementation
+unchanged. Requests, notifications and shim state remain per channel.
+
+Signed-off-by: Dalton Alexandre <alley.nightly_0b@icloud.com>
+---
+ drivers/soc/apple/apple-sio-core.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/soc/apple/apple-sio-core.c b/drivers/soc/apple/apple-sio-core.c
+index 49b85b4..20d135e 100644
+--- a/drivers/soc/apple/apple-sio-core.c
++++ b/drivers/soc/apple/apple-sio-core.c
+@@ -1097,9 +1097,10 @@ static const struct apple_sio_hw apple_sio_s8000_hw = {
+ 	.num_dma_ranges = ARRAY_SIZE(apple_sio_s8000_dma_ranges),
+ };
+ 
+-/* SPI3 transmit only: the one endpoint in use on T8010 (touch) so far. */
++/* SPI3 touch TX and MCA2 speaker TX, independently described by the J71b ADT. */
+ static const struct apple_sio_dma_range apple_sio_t8010_dma_ranges[] = {
+ 	{ 0x1a, 0x1a },
++	{ 0x2c, 0x2c },
+ };
+ 
+ static const struct apple_sio_hw apple_sio_t8010_hw = {
+-- 
+2.56.0
+

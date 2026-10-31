@@ -6,12 +6,13 @@ Run commands from a checkout of this repository. Kernel and recovery-tool builds
 
 ## Kernel and loader
 
-```sh
-./kernel/build j71b --output "$PWD/out/kernel"
-./boot/m1n1/build j71b --output "$PWD/out/m1n1.bin"
-```
+Build with `orchard build` (`--platform PLATFORM` or `--device BOARD`), which
+runs the producers below with its cache directories, its lock on the shared
+kernel tree and the switch of that tree between patch series. Don't call the
+producers directly; the shared tree and cache serve every checkout and
+worktree at once (see [AGENTS.md](AGENTS.md)).
 
-Choose new output paths. Producers use pinned upstream revisions, the patch layers in this repository and public toolchains. The kernel keeps its source tree and compiler cache in the Orchard cache (see [kernel/README.md](kernel/README.md)). The other producers keep a `.work` directory beside the recipe unless given a work directory; `orchard build` passes directories in its cache. Kernel/module builds enforce matching kernel releases. See [kernel/README.md](kernel/README.md) and [recovery tools](boot/initramfs/recovery/README.md) for individual producers.
+The producers are `kernel/build` and `boot/m1n1/build`. Producers use pinned upstream revisions, the patch layers in this repository and public toolchains. The kernel keeps its source tree and compiler cache in the Orchard cache (see [kernel/README.md](kernel/README.md)). The other producers keep a `.work` directory beside the recipe unless given a work directory; `orchard build` passes directories in its cache. Kernel/module builds enforce matching kernel releases. See [kernel/README.md](kernel/README.md) and [recovery tools](boot/initramfs/recovery/README.md) for individual producers.
 
 The m1n1 backend is unbranded by default. A distro can pass `--extra-patch FILE`, `--include-header FILE`, and `--extra-cflags FLAGS` for its own presentation.
 

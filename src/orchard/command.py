@@ -49,16 +49,21 @@ def main():
     run.add_argument('--no-build', action='store_true', help='boot the last build without rebuilding')
     run.add_argument('-y', '--yes', action='store_true',
                      help='boot without prompting, including without an interactive terminal')
-    commands.add_parser('shell', help='open a root shell on the running RAM payload over USB SSH')
-    execute = commands.add_parser('exec', help='run a command on the running RAM payload: orchard exec -- CMD...')
+    session = commands.add_parser('shell', help='open a shell on the running RAM payload or installed system '
+                                  '(over USB SSH; an installed system as its user)')
+    execute = commands.add_parser('exec', help='run a command on the running RAM payload or installed system: '
+                                  'orchard exec -- CMD...')
     execute.add_argument('remote_command', nargs='+', metavar='CMD')
+    for subcommand in (session, execute):
+        subcommand.add_argument("--user", help="an installed system's user (default: the one its install allowed SSH for)")
     for action, first, second in (('push', 'local', 'remote'), ('pull', 'remote', 'local')):
         transfer = commands.add_parser(action, help=f'copy {first.upper()} to {second.upper()} '
-                                       f'on the running RAM payload, checked by SHA-256')
+                                       f'on the running RAM payload or installed system, checked by SHA-256')
         transfer.add_argument(first)
         transfer.add_argument(second)
         transfer.add_argument('--serial', action='store_true',
                               help='use the USB serial shell (payloads without SSH; up to 16 MiB)')
+        transfer.add_argument('--user', help="an installed system's user (default: the one its install allowed SSH for)")
     guided = commands.add_parser('install', help='guided installation from distro name, index or manifest')
     guided.add_argument('source', nargs='?', help='registered distro, local TOML or exact HTTPS URL '
                         "(default in a distribution checkout: its last build)")
@@ -124,14 +129,14 @@ def main():
         if args.action in ('shell', 'exec', 'push', 'pull'):
             from orchard import ram_session
             if args.action == 'shell':
-                raise SystemExit(ram_session.shell())
+                raise SystemExit(ram_session.shell(args.user))
             if args.action == 'exec':
                 command = args.remote_command[1:] if args.remote_command[0] == '--' else args.remote_command
-                raise SystemExit(ram_session.run(command))
+                raise SystemExit(ram_session.run(command, args.user))
             if args.action == 'push':
-                ram_session.push(args.local, args.remote, serial=args.serial)
+                ram_session.push(args.local, args.remote, serial=args.serial, user=args.user)
             else:
-                ram_session.pull(args.remote, args.local, serial=args.serial)
+                ram_session.pull(args.remote, args.local, serial=args.serial, user=args.user)
             return
         if args.action in ('setup', 'doctor'):
             from orchard import host_setup
