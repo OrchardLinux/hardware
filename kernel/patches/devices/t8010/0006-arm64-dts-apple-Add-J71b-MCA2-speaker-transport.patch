@@ -14,7 +14,7 @@ Signed-off-by: Dalton Alexandre <alley.nightly_0b@icloud.com>
 [henrik: describe the NCO reference as a fixed clock set per board, as
  t8103 does, with the J71b rate of 800 MHz from its ADT clock-frequency
  table, instead of a zero rate that m1n1 fills in at boot]
-Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Assisted-by: LLM
 ---
  arch/arm64/boot/dts/apple/t8010-j71b.dts | 43 ++++++++++++++++++++++++
  arch/arm64/boot/dts/apple/t8010.dtsi     | 41 ++++++++++++++++++++++

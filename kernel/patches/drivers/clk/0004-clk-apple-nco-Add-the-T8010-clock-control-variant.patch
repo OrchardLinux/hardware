@@ -12,7 +12,7 @@ programming unchanged.
 Signed-off-by: Dalton Alexandre <alley.nightly_0b@icloud.com>
 [henrik: the reference rate comes from the device tree, as on t8103, not
  from a boot-time handoff]
-Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Assisted-by: LLM
 ---
  drivers/clk/clk-apple-nco.c | 50 ++++++++++++++++++++++++++++++++++---
  1 file changed, 46 insertions(+), 4 deletions(-)
