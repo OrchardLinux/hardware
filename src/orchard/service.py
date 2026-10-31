@@ -85,7 +85,9 @@ def choose_target(layout, clock, *, name='Linux', input_fn=input, output=print):
 def entry_for(record, devicetree):
     name = record.get('name', 'Linux')
     return {'id': re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-') or 'linux', 'title': name,
-            'options': record.get('cmdline', 'rootwait'), 'devicetree': devicetree}
+            # Quiet as the recovery: no console text over the splash; the system maps its console.
+            'options': record.get('cmdline', 'rootwait') + ' fbcon=map:9 vt.global_cursor_default=0',
+            'devicetree': devicetree}
 
 
 def check_started(connection, user, ready, progress, seconds=180):
@@ -103,22 +105,26 @@ def check_started(connection, user, ready, progress, seconds=180):
     while time.monotonic() < deadline:
         try:
             if recovery:
+                # The recovery answers until the switch; meanwhile the system is not up yet.
                 result = subprocess.run(connection.argv + [
                     '[ -e /run/orchard/start.failed ] && { cat /run/orchard/start.log; exit 3; }; exit 0'],
                     stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
                 if result.returncode == 3:
                     return 'The recovery could not start the system: ' + \
                         result.stdout.decode(errors='replace').strip()[-400:]
-                recovery = result.returncode == 0
+                if result.returncode == 0:
+                    time.sleep(1)
+                    continue
+                recovery = False
+                system = computer_key.ssh_argv(user)  # the system's own host key, learned afresh
             result = subprocess.run(system + [command], stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
             if result.returncode == 0:
                 return None
-            if 'permission denied' in result.stderr.decode(errors='replace').lower():
-                return "The system's SSH does not accept this computer's key"
         except subprocess.TimeoutExpired:
             pass
         time.sleep(1)
-    return 'The system did not answer over SSH within 3 minutes'
+    return ('The system did not report that it is ready within 3 minutes'
+            if ready else 'The system did not answer over SSH within 3 minutes')
 
 
 @exclusive_operation
@@ -221,7 +227,7 @@ def install(manifest=None, *, input_fn=input, secrets_fn=ask_secrets, progress=N
         save_report(path, report)
         if account and account['ssh_keys']:
             problem = check_started(connection, account['user'], record.get('ready'), progress)
-            progress.done(problem)
+            progress.done('Could not confirm that it started: ' + problem if problem else None)
             report['ready'] = problem is None
         report['phases'] = progress.timings
         save_report(path, report)

@@ -53,15 +53,6 @@ class FakeM1n1:
     def storage_init(self):
         self.calls.append('init')
 
-    def screen_size(self):
-        return 1536, 2048
-
-    def fill(self, x, y, w, h, rgb=0):
-        self.calls.append(('fill', x, y, w, h, rgb))
-
-    def blit(self, x, y, w, h, addr):
-        self.calls.append(('blit', x, y, w, h, self.memory[addr - 12][12:12 + 4]))
-
     def storage_shutdown(self):
         self.calls.append('shutdown')
 
@@ -137,21 +128,6 @@ class LaunchFlow(unittest.TestCase):
         disk = image({'a.conf': entry('Omarchy', '6.18.2')})
         report, _ = self.run_launch(disk, answers=())
         self.assertEqual(report['entry']['title'], 'Omarchy')
-
-    def test_the_entry_splash_is_painted_centred_before_the_kernel_loads(self):
-        import struct
-        pixels = bytes([0x9e, 0xce, 0x6a, 0]) * (4 * 2)
-        disk = image({'a.conf': entry('Omarchy', '6.18.2')}, splash=struct.pack('<4sII', b'OSPL', 4, 2) + pixels)
-        _, proxy = self.run_launch(disk)
-        painted = [call for call in proxy.calls if isinstance(call, tuple)]
-        self.assertEqual(painted, [('fill', 0, 0, 1536, 2048, 0), ('blit', 766, 1023, 4, 2, bytes([0x9e, 0xce, 0x6a, 0]))])
-        self.assertEqual(proxy.calls[-1], 'boot')
-
-    def test_a_broken_splash_never_stops_the_boot(self):
-        disk = image({'a.conf': entry('Omarchy', '6.18.2')}, splash=b'OSPL' + b'\xff' * 20)
-        _, proxy = self.run_launch(disk)
-        self.assertFalse([call for call in proxy.calls if isinstance(call, tuple)])
-        self.assertEqual(proxy.calls[-1], 'boot')
 
     def test_entry_option_skips_the_question(self):
         disk = image({'omarchy.conf': entry('Omarchy', '6.18.2'), 'minimal.conf': entry('Minimal', '6.18.2')})

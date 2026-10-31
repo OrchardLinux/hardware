@@ -83,12 +83,14 @@ options    root=PARTUUID=4d6c…-… rw quiet
 
 A system's boot splash ships in its root as `/usr/share/orchard/splash`; the
 installer copies it next to the entry's kernel (`/TOKEN/VERSION/splash`).
-After choosing an entry, `orchard launch` paints it centred on black before
-the kernel loads, and the kernel keeps that frame until the system clears it.
-A missing or malformed splash only costs the picture, never the boot.
+When an entry starts, orchard's initrd paints it centred on the framebuffer
+as soon as it has mounted the root, before the system starts; it stays until
+the system clears it. Entries start quiet (`fbcon=map:9`), as the recovery
+does, so no console text covers it. A missing or malformed splash only costs
+the picture, never the boot.
 
 The format is `OSPL`, then width and height as little-endian u32, then
-width × height pixels as the bytes r, g, b, 0, top row first. Distributions
+width × height pixels as the bytes b, g, r, 0 (the framebuffer's XRGB8888), top row first. Distributions
 write it from the same artwork their own m1n1 draws, so install and launch
 show the same picture.
 

@@ -66,6 +66,25 @@ done
 mkdir -p /newroot
 mount ${fstype:+-t "$fstype"} -o "$mode${flags:+,$flags}" "$device" /newroot || stop "could not mount $device"
 [ -x "/newroot$init" ] || [ -L "/newroot$init" ] || stop "the root has no $init"
+# The system's boot splash (docs/boot-contract.md), on the framebuffer m1n1
+# left black, before the system starts; it stays until the system takes over.
+splash() {
+    s=/newroot/usr/share/orchard/splash fb=/sys/class/graphics/fb0
+    [ -f "$s" ] && [ -c /dev/fb0 ] && [ -r "$fb/stride" ] || return 0
+    [ "$(cat "$fb/bits_per_pixel")" = 32 ] && [ "$(head -c 4 "$s")" = OSPL ] || return 0
+    set -- $(od -An -tu4 -j4 -N8 "$s")
+    w=$1 h=$2 size=$(cat "$fb/virtual_size") stride=$(cat "$fb/stride")
+    W=${size%,*} H=${size#*,}
+    [ "$w" -le "$W" ] && [ "$h" -le "$H" ] || return 0
+    left=$(((W - w) / 2)) top=$(((H - h) / 2)) row=$((w * 4)) y=0
+    while [ "$y" -lt "$h" ]; do
+        dd if="$s" of=/dev/fb0 bs="$row" count=1 iflag=skip_bytes oflag=seek_bytes conv=notrunc \
+            skip=$((12 + y * row)) seek=$(((top + y) * stride + left * 4)) 2>/dev/null || return 0
+        y=$((y + 1))
+    done
+}
+splash
+
 # USB for the host: network (usb0) and a serial console (ttyGS0), named after
 # the system, so `orchard devices` sees it. What runs on them is the system's.
 usb_gadget() {

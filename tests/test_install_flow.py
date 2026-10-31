@@ -104,7 +104,7 @@ class InstallFlow(unittest.TestCase):
         plan = json.loads((store / 'plan.json').read_text())
         self.assertEqual(plan['account']['user'], 'tablet')
         self.assertNotIn('424242', json.dumps(plan))
-        self.assertEqual(plan['entry'], {'id': 'omarchy', 'title': 'Omarchy', 'options': 'rootwait',
+        self.assertEqual(plan['entry'], {'id': 'omarchy', 'title': 'Omarchy', 'options': 'rootwait fbcon=map:9 vt.global_cursor_default=0',
                                          'devicetree': 't8010-j171.dtb'})
         self.assertEqual(plan['firmware'], {'path': '/run/orchard/firmware.tar.gz', 'bytes': 15, 'sha256': 'b' * 64})
         self.assertEqual((store / 'platform.tar.gz').read_bytes(), b'platform-layer')
