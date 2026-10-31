@@ -39,14 +39,14 @@ Assisted-by: LLM
  MAINTAINERS                   |   7 +
  drivers/soc/apple/Kconfig     |  12 +
  drivers/soc/apple/Makefile    |   3 +
- drivers/soc/apple/aop.c       | 958 ++++++++++++++++++++++++++++++++++
- include/linux/soc/apple/aop.h |  39 ++
- 5 files changed, 1019 insertions(+)
+ drivers/soc/apple/aop.c       | 961 ++++++++++++++++++++++++++++++++++
+ include/linux/soc/apple/aop.h |  43 ++
+ 5 files changed, 1026 insertions(+)
  create mode 100644 drivers/soc/apple/aop.c
  create mode 100644 include/linux/soc/apple/aop.h
 
 diff --git a/MAINTAINERS b/MAINTAINERS
-index b02280b36..a4a69643c 100644
+index b02280b..a4a6964 100644
 --- a/MAINTAINERS
 +++ b/MAINTAINERS
 @@ -2064,6 +2064,13 @@ L:	linux-hwmon@vger.kernel.org
@@ -64,7 +64,7 @@ index b02280b36..a4a69643c 100644
  L:	netdev@vger.kernel.org
  S:	Obsolete
 diff --git a/drivers/soc/apple/Kconfig b/drivers/soc/apple/Kconfig
-index 26ccd74ce..05de875ad 100644
+index 26ccd74..05de875 100644
 --- a/drivers/soc/apple/Kconfig
 +++ b/drivers/soc/apple/Kconfig
 @@ -38,6 +38,18 @@ config APPLE_RTKIT
@@ -87,7 +87,7 @@ index 26ccd74ce..05de875ad 100644
  	tristate "Apple T8015 PMP"
  	depends on ARCH_APPLE || COMPILE_TEST
 diff --git a/drivers/soc/apple/Makefile b/drivers/soc/apple/Makefile
-index 73c8bd23b..f99975cc6 100644
+index 73c8bd2..f99975c 100644
 --- a/drivers/soc/apple/Makefile
 +++ b/drivers/soc/apple/Makefile
 @@ -14,6 +14,9 @@ apple-sart-y = sart.o
@@ -102,10 +102,10 @@ index 73c8bd23b..f99975cc6 100644
  apple-sio-y := apple-sio-core.o
 diff --git a/drivers/soc/apple/aop.c b/drivers/soc/apple/aop.c
 new file mode 100644
-index 000000000..c6afe38b3
+index 0000000..e8ae900
 --- /dev/null
 +++ b/drivers/soc/apple/aop.c
-@@ -0,0 +1,958 @@
+@@ -0,0 +1,961 @@
 +// SPDX-License-Identifier: GPL-2.0-only OR MIT
 +/*
 + * Apple T8010 Always-On Processor (AOP)
@@ -202,7 +202,8 @@ index 000000000..c6afe38b3
 +#define EPIC_SUBTYPE_STRING		0x8a
 +#define EPIC_SUBTYPE_RETCODE_PAYLOAD	0xa0
 +#define EPIC_SUBTYPE_STD_SERVICE	0xc0
-+#define EPIC_SUBTYPE_FAKEHID_REPORT	0xc4
++#define EPIC_SUBTYPE_REPORT_FIRST	0xc1	/* service reports: samples, fake HID */
++#define EPIC_SUBTYPE_REPORT_LAST	0xcf
 +
 +#define APPLE_AOP_MAX_CALLS		8
 +#define APPLE_AOP_CALL_TIMEOUT		msecs_to_jiffies(1000)
@@ -575,8 +576,8 @@ index 000000000..c6afe38b3
 +	schedule_work(&rw->work);
 +}
 +
-+static void apple_aop_report(struct apple_aop_ep *ep, u32 channel, const void *data,
-+			     size_t len)
++static void apple_aop_report(struct apple_aop_ep *ep, u32 channel, u16 subtype,
++			     const void *data, size_t len)
 +{
 +	struct apple_aop *aop = ep->aop;
 +	struct apple_aop_listener *listener;
@@ -585,7 +586,7 @@ index 000000000..c6afe38b3
 +	mutex_lock(&aop->listeners_lock);
 +	list_for_each_entry(listener, &aop->listeners, list) {
 +		if (listener->endpoint == ep->index && listener->channel == channel) {
-+			listener->report(listener->cookie, data, len);
++			listener->report(listener->cookie, subtype, data, len);
 +			handled = true;
 +			break;
 +		}
@@ -593,7 +594,8 @@ index 000000000..c6afe38b3
 +	mutex_unlock(&aop->listeners_lock);
 +
 +	if (!handled) {
-+		dev_dbg(aop->dev, "endpoint 0x%02x channel %u: report\n", ep->index, channel);
++		dev_dbg(aop->dev, "endpoint 0x%02x channel %u: report 0x%x\n", ep->index, channel,
++			subtype);
 +		print_hex_dump_debug("apple-aop report: ", DUMP_PREFIX_OFFSET, 16, 1,
 +				     data, len, false);
 +	}
@@ -639,8 +641,9 @@ index 000000000..c6afe38b3
 +	case EPIC_CATEGORY_REPORT:
 +		if (subtype == EPIC_SUBTYPE_STD_SERVICE)
 +			apple_aop_announce(ep, channel, data, len);
-+		else if (subtype == EPIC_SUBTYPE_FAKEHID_REPORT)
-+			apple_aop_report(ep, channel, data, len);
++		else if (subtype >= EPIC_SUBTYPE_REPORT_FIRST &&
++			 subtype <= EPIC_SUBTYPE_REPORT_LAST)
++			apple_aop_report(ep, channel, subtype, data, len);
 +		else
 +			dev_dbg(ep->aop->dev, "endpoint 0x%02x: report subtype 0x%x\n",
 +				ep->index, subtype);
@@ -1066,10 +1069,10 @@ index 000000000..c6afe38b3
 +MODULE_LICENSE("Dual MIT/GPL");
 diff --git a/include/linux/soc/apple/aop.h b/include/linux/soc/apple/aop.h
 new file mode 100644
-index 000000000..66e7a3529
+index 0000000..8c8bc71
 --- /dev/null
 +++ b/include/linux/soc/apple/aop.h
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,43 @@
 +/* SPDX-License-Identifier: GPL-2.0-only OR MIT */
 +/*
 + * Apple Always-On Processor (AOP) services
@@ -1093,8 +1096,12 @@ index 000000000..66e7a3529
 +	char name[21];
 +};
 +
-+/* Called from the AOP's message work, in process context. */
-+typedef void (*apple_aop_report_fn)(void *cookie, const void *data, size_t len);
++/*
++ * Called from the AOP's message work, in process context, for each report of
++ * the service; @subtype is its EPIC report subtype (e.g. 0xc2 for motion
++ * samples, 0xc4 for fake-HID reports).
++ */
++typedef void (*apple_aop_report_fn)(void *cookie, u16 subtype, const void *data, size_t len);
 +
 +int apple_aop_listen(const struct apple_aop_service *service,
 +		     apple_aop_report_fn report, void *cookie);
