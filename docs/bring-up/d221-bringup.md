@@ -22,14 +22,13 @@ boot, and the gaps, all observed on one dedicated test unit.
 From one unit's DFU serial string:
 
 ```
-CPID:8015 CPRV:11 CPFM:03 SCEP:01 BDID:0E ECID:00022CA93C2B002E IBFL:3C SRTG:[iBoot-3332.0.0.1.23]
+CPID:8015 CPRV:11 CPFM:03 SCEP:01 BDID:0E ECID:<redacted> IBFL:3C SRTG:[iBoot-3332.0.0.1.23]
 ```
 
 | Field | Value |
 | --- | --- |
 | `CPID` (chip) | `0x8015` — A11 T8015 |
 | `BDID` (board) | `0x0e` |
-| `ECID` | `0x22ca93c2b002e` |
 | `SRTG` (iBoot) | `iBoot-3332.0.0.1.23` |
 
 `[match.dfu]` for this board is `chip = 0x8015`, `board = 0x0e`. The board ID
