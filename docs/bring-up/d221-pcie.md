@@ -16,13 +16,13 @@ Everything below is from the ADT of one `iPhone10,6` (`d221`), iBoot
 | `compatible` | `apcie,t8015` |
 | config | `0x610000000` (0x1000000) |
 | `rc` | `0x600000000` (0x50000) |
-| `phy` | `0x60008000` (0x4000) |
+| `phy` | `0x600080000` (0x4000) |
 | `phy-ip` | `0x6000c0000` (0x40000) |
 | port regs | `0x60N000000` + nvmmu at `0x60N004000`, N = 1..4, each 0x4000 |
 | interrupts (SPI) | 340, 343, 346, 349 (ports 0–3) |
 | `clock-gates` | 56, 57, 58 |
 | `power-gates` | 56 |
-| MSI | address `0xc0000000`, vector offset 352 |
+| MSI | address `0xbffff000`, vector offset 352 |
 | `perst-to-refclk-delay-us` | 60 |
 
 The port register/files span in the ADT is `0x60N000000`/`0x60N004000` per
@@ -50,9 +50,10 @@ driver has no T8015 match-data yet.
 ## DARTs
 
 Both live under the controller, `compatible = dart,t8015`, page-size 4096,
-`vm-offset 0x8000000000`, `vm-size 0x40001000`, `dart-options 7`,
+with a `0x80000000` window of `0x3ffff000` bytes (the ADT `vm-offset` and
+`vm-size`; the board `iommu-map` carries the same pair), `dart-options 7`,
 `error-reflector 0x233ffc000`, `stt-idx-width 10`, `fetch-config 0xe0303`,
-`diag-config 0x80000400`.
+`diag-config 0x80000100`.
 
 | DART | reg | interrupt (SPI) | mapper |
 | --- | --- | --- | --- |
