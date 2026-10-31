@@ -51,3 +51,14 @@ class USBReadiness(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class RunningSystem(unittest.TestCase):
+    def test_a_running_installed_system_is_not_a_target(self):
+        from unittest.mock import patch
+        from orchard.apple import usb
+        from orchard.state import EndpointUnavailable
+        system = {'location': 1, 'mode': 'system', 'product': 'Omarchy A', 'serial_port': '/dev/cu.x'}
+        with patch.object(usb, 'devices', return_value=[system]):
+            with self.assertRaisesRegex(EndpointUnavailable, 'DFU mode'):
+                usb.sole_target()

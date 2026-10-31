@@ -92,8 +92,11 @@ def m1n1_ports():
     return found
 
 def sole_target():
-    targets = [item for item in devices() if item['mode'] in ('dfu', 'pongo', 'linux')]
+    found = devices()
+    targets = [item for item in found if item['mode'] in ('dfu', 'pongo', 'linux')]
     if not targets:
+        if any(item['mode'] == 'system' for item in found):
+            raise EndpointUnavailable('The device is running its installed system; put it in DFU mode first')
         raise EndpointUnavailable('Selected USB target is not connected')
     if len(targets) != 1:
         raise ValueError('Connect exactly one target in DFU, Pongo or Linux; device selection is not supported')

@@ -36,6 +36,12 @@ echo "${board#apple,} recovery: USB serial ready; provision an SSH key before SS
 while :; do
     if [ -e /run/orchard/start.json ]; then
         if /usr/bin/python3 /usr/libexec/orchard/start.py > /run/orchard/start.log 2>&1; then
+            # From here on the host sees the system, not a recovery (mode "system").
+            g=/sys/kernel/config/usb_gadget/linux-recovery
+            name=$(sed -n 's/^NAME=//p' /newroot/etc/os-release /newroot/usr/lib/os-release 2>/dev/null | head -1 | tr -d "\"'")
+            udc=$(cat "$g/UDC")
+            { echo '' > "$g/UDC" && echo 0x4145 > "$g/idProduct" &&
+              echo "${name:-Linux}" > "$g/strings/0x409/product" && echo "$udc" > "$g/UDC"; } 2>/dev/null || true
             kill -TERM -- -1 2>/dev/null || true
             sleep 1
             kill -KILL -- -1 2>/dev/null || true
