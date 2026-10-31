@@ -98,7 +98,7 @@ class LaunchFlow(unittest.TestCase):
             report = launch.launch(entry=entry_id, input_fn=lambda _: next(replies),
                                    progress=Progress(io.StringIO()))
         loader.assert_called_once_with('j71b', ANY)
-        adapter.start_loader.assert_called_once_with({'mode': mode, 'ecid': 1}, LOADER, ANY)
+        adapter.start_loader.assert_called_once_with({'mode': mode, 'ecid': 1}, LOADER, ANY, quiet=True)
         return report, proxy
 
     def test_boots_the_chosen_entry_from_device_storage(self):
@@ -121,6 +121,11 @@ class LaunchFlow(unittest.TestCase):
         disk = image({'a.conf': entry('Omarchy', '6.18.2')}, kernel=gzip.compress(KERNEL))
         _, proxy = self.run_launch(disk)
         self.assertEqual(proxy.booted['kernel'], KERNEL)
+
+    def test_the_only_system_starts_without_a_question(self):
+        disk = image({'a.conf': entry('Omarchy', '6.18.2')})
+        report, _ = self.run_launch(disk, answers=())
+        self.assertEqual(report['entry']['title'], 'Omarchy')
 
     def test_entry_option_skips_the_question(self):
         disk = image({'omarchy.conf': entry('Omarchy', '6.18.2'), 'minimal.conf': entry('Minimal', '6.18.2')})

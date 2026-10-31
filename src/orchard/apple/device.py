@@ -85,6 +85,7 @@ class Device:
         return apple_boot.boot(device, assets, manifest, progress,
                                profile=self.PROFILE, chip=self.CHIP, board=self.BOARD, product=self.PRODUCT)
 
-    def start_loader(self, device: SelectedDevice, loader: Dict[str, Path], progress: Progress) -> str:
+    def start_loader(self, device: SelectedDevice, loader: Dict[str, Path], progress: Progress,
+                     quiet: bool = False) -> str:
         return apple_boot.start_loader(device, loader, progress, profile=self.PROFILE,
-                                       chip=self.CHIP, board=self.BOARD, product=self.PRODUCT)
+                                       chip=self.CHIP, board=self.BOARD, product=self.PRODUCT, quiet=quiet)

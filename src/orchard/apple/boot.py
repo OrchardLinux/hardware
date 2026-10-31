@@ -79,7 +79,7 @@ def run_process_group(argv, *, timeout, **kwargs):
         raise subprocess.CalledProcessError(returncode, argv)
 
 
-def start_pongo(device, image, log, say, *, chip, board, product, seconds=30):
+def start_pongo(device, image, log, say, *, chip, board, product, seconds=30, quiet=False):
     """Start Pongo once on the selected device in DFU; never retried.
 
     Every boot path goes through here so they share the cable hint, the
@@ -92,14 +92,12 @@ def start_pongo(device, image, log, say, *, chip, board, product, seconds=30):
     usb.selected(device['location'], device['ecid'], chip=chip, board=board, mode='dfu')
     # Resolved while the device is present: its sysfs node goes away after checkm8.
     control = replug.port_control(device['location'])
-    say('Booting Pongo')
+    if not quiet:
+        say('Booting Pongo')
     if control:
-        say('Wait for the Apple logo to appear. Orchard resets the USB port if the device does not '
-            'come back; if the logo stays for about 15 seconds, disconnect and reconnect the cable '
-            'at the device once.')
+        say('If the Apple logo stays for about 15 seconds, reconnect the cable at the device once.')
     else:
-        say('Wait for the Apple logo to appear. If it does not disappear after a few seconds, '
-            'disconnect and reconnect the cable at the device once.')
+        say('If the Apple logo stays for a few seconds, reconnect the cable at the device once.')
     watcher = replug.PortReset(log.name, control) if control else None
     if watcher:
         watcher.start()
@@ -118,7 +116,7 @@ def start_pongo(device, image, log, say, *, chip, board, product, seconds=30):
     return wait_mode(device, 'pongo', chip=chip, board=board, product=product, seconds=seconds)
 
 
-def pongo_from_dfu(device, image, progress, *, profile, chip, board, product):
+def pongo_from_dfu(device, image, progress, *, profile, chip, board, product, quiet=False):
     """Start Pongo when the device is in DFU, logging palera1n under the device's state.
 
     A device already in Pongo is used as it is.
@@ -127,7 +125,7 @@ def pongo_from_dfu(device, image, progress, *, profile, chip, board, product):
         return
     logs = private_directory(DeviceState(profile, device['ecid']).root / 'logs')
     with tempfile.NamedTemporaryFile(prefix='palera1n-', suffix='.log', dir=logs, delete=False) as log:
-        start_pongo(device, image, log, progress.phase, chip=chip, board=board, product=product)
+        start_pongo(device, image, log, progress.phase, chip=chip, board=board, product=product, quiet=quiet)
 
 
 def boot(device, assets, manifest, progress, *, profile, chip, board, product):
@@ -143,16 +141,19 @@ def boot(device, assets, manifest, progress, *, profile, chip, board, product):
     wait_mode(device, 'linux', chip=chip, board=board, product=product, seconds=120)
 
 
-def start_loader(device, loader, progress, *, profile, chip, board, product, seconds=30):
+def start_loader(device, loader, progress, *, profile, chip, board, product, seconds=30, quiet=False):
     """Boot the bare m1n1 loader ({'pongo', 'm1n1'} files) through Pongo; return its proxy serial port."""
     if device['mode'] not in ('dfu', 'pongo'):
         raise ValueError('Put the device in DFU mode first; a running system is not rebooted')
-    pongo_from_dfu(device, loader['pongo'], progress, profile=profile, chip=chip, board=board, product=product)
+    pongo_from_dfu(device, loader['pongo'], progress, profile=profile, chip=chip, board=board, product=product,
+                   quiet=quiet)
     before = set(usb.m1n1_ports())
-    progress.phase('Loading the bootloader')
+    if not quiet:
+        progress.phase('Loading the bootloader')
     usb.selected(device['location'], device['ecid'], chip=chip, board=board)
     progress.reset_transfer()
-    pongo.upload(loader['m1n1'], device['location'], digest(loader['m1n1']), progress.transfer)
+    pongo.upload(loader['m1n1'], device['location'], digest(loader['m1n1']),
+                 (lambda sent, total: None) if quiet else progress.transfer)
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         ports = [port for port in usb.m1n1_ports() if port not in before]

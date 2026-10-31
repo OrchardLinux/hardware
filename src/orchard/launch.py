@@ -22,11 +22,12 @@ KERNEL_ALIGN = 2 << 20
 KERNEL_SPACE = 512 << 20
 
 
-def describe(number, entry):
-    detail = ' · '.join(x for x in (entry.get('version'), entry.root and 'root ' + entry.root[:8]) if x)
-    line = f'  {number}. {entry.title}' + (f' · {detail}' if detail else '') + f'  [{entry.id}]'
+def describe(number, entry, entries):
+    # The title alone, unless another entry has the same one.
+    same = [e for e in entries if e.title == entry.title]
+    line = f'  {number}. {entry.title}' + (f' ({entry.get("version")})' if len(same) > 1 else '')
     if entry.problems:
-        line += '\n       not bootable: ' + '; '.join(entry.problems)
+        line += ' - not bootable: ' + '; '.join(entry.problems)
     return line
 
 
@@ -36,11 +37,13 @@ def select(entries, wanted, clock, input_fn):
         if not matches:
             raise ValueError(f'No boot entry {wanted!r} on this device')
         return matches[0]
-    for number, entry in enumerate(entries, 1):
-        print(describe(number, entry))
     bootable = [e for e in entries if not e.problems]
     if not bootable:
         raise ValueError('No bootable entry on this device; nothing was started')
+    if len(entries) == 1:
+        return entries[0]
+    for number, entry in enumerate(entries, 1):
+        print(describe(number, entry, entries))
     default = entries.index(bootable[0]) + 1
     answer = ask(clock, f'Boot which system? [{default}] ', input_fn) or str(default)
     if not answer.isdecimal() or not 1 <= int(answer) <= len(entries):
@@ -56,7 +59,7 @@ def load(proxy, fat, path, align=BLOCK):
 
 
 def start(proxy, fat, entry, progress):
-    progress.phase('Loading ' + entry.title + ' from the device')
+    progress.phase('Starting ' + entry.title)
     runs, _ = fat.file(entry.get('linux'))
     kernel = proxy.memalign(KERNEL_ALIGN, KERNEL_SPACE)
     if fat.disk.read(runs[0][0], 2) == b'\x1f\x8b':
@@ -73,7 +76,6 @@ def start(proxy, fat, entry, progress):
         # Concatenated initrds are one cpio stream to Linux, as BLS specifies.
         offset += proxy.load_runs(fat.file(path)[0], initrd + offset)
     proxy.storage_shutdown()
-    progress.phase('Starting ' + entry.title)
     proxy.boot_linux(kernel, dtb, initrd, initrd_size, entry.get('options'))
 
 
@@ -94,7 +96,8 @@ def launch(*, entry=None, input_fn=input, progress=None):
     adapter, device = choose()
     if device['mode'] not in ('dfu', 'pongo'):
         raise ValueError(f'Put the {adapter.NAME} in DFU mode to launch an installed system')
-    port = adapter.start_loader(device, loader_files(adapter.PROFILE, progress), progress)
+    # One step for the user: no transfer progress, only what to do if the device stalls.
+    port = adapter.start_loader(device, loader_files(adapter.PROFILE, progress), progress, quiet=True)
     report = {'profile': adapter.PROFILE, 'ecid': device['ecid'], 'operation': 'launch',
               'entry': None, 'started': False}
     path = private_directory(DeviceState(adapter.PROFILE, device['ecid']).root) / 'last-launch.json'
@@ -115,5 +118,5 @@ def launch(*, entry=None, input_fn=input, progress=None):
         start(proxy, fat, chosen, progress)
     report.update(started=True, timing=clock.result())
     save_report(path, report)
-    print(f'{chosen.title} is starting; the bootloader has handed over to its kernel.')
+    progress.phase(f'{chosen.title} is starting.')
     return report

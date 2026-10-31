@@ -120,15 +120,26 @@ class Progress:
                 print(f'  {name:<20.20} {message}', file=self.output, flush=True)
 
 
+def size_text(count):
+    for unit, divisor in (('GiB', 1 << 30), ('MiB', 1 << 20), ('KiB', 1 << 10)):
+        if count >= divisor:
+            return f'{count / divisor:.1f} {unit}' if count < 10 * divisor else f'{count / divisor:.0f} {unit}'
+    return f'{count} B'
+
+
 def transfer_text(sent, total, started, initial, now):
-    rate = max(0, sent - initial) / max(now - started, 0.001)
+    elapsed = now - started
+    rate = max(0, sent - initial) / max(elapsed, 0.001)
+    # A rate means something after a moment; before that it is noise.
+    speed = f'  {size_text(rate)}/s' if elapsed >= 1 and rate else ''
+    if total is not None and sent >= total:
+        return size_text(total)
     if total is None:  # size known only once done, as for byte-range reads
-        return f'{sent / 1048576:5.0f} MiB  {rate / 1048576:5.1f} MiB/s'
-    unit, divisor = ('KiB', 1024) if total < 1048576 else ('MiB', 1048576)
-    eta = f'{(total - sent) / rate:.0f}s' if rate and sent < total else '—'
-    return (f'{sent * 100 / max(total, 1):3.0f}%  '
-            f'{sent / divisor:5.0f} / {total / divisor:5.0f} {unit}  '
-            f'{rate / 1048576:5.1f} MiB/s  {eta:>5}')
+        return size_text(sent) + speed
+    eta = (total - sent) / rate if elapsed >= 1 and rate else None
+    left = '' if eta is None else (f'  {eta:.0f} s left' if eta < 90 else f'  {eta / 60:.0f} min left')
+    return f'{sent * 100 / max(total, 1):3.0f}%  {size_text(sent)} of {size_text(total)}{speed}{left}'
+
 
 
 class TaskProgress(Progress):

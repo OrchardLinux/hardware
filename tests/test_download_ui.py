@@ -44,11 +44,13 @@ class DownloadUI(unittest.TestCase):
         for name in ('Omarchy A', 'Recovery', 'iPadOS firmware'):
             task = progress.task(name)
             task.transfer(0, 100000000)
-            task.transfer(100000000, 100000000)
         text = terminal.getvalue()
         self.assertIn('\033[', text)
         rows = [line.split('\033[2K')[-1] for line in text.splitlines() if '\033[2K' in line]
         self.assertEqual(len({row.index('%') for row in rows}), 1)
+        task.transfer(100000000, 100000000)
+        self.assertTrue(terminal.getvalue().rstrip().endswith('95 MiB'))
+        self.assertNotIn('—', terminal.getvalue())
         self.assertNotIn('Assembled', text)
         self.assertNotIn('0.0/0.0', text)
 
