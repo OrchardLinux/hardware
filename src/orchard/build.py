@@ -540,6 +540,19 @@ def prepare_components(hardware=None, cache=None, *, device, kernel=None,
             dict(kernel=kernel, busybox=busybox, loader=loader, pongo=pongo).items()}
 
 
+def prepare_shared(hardware=None, cache=None):
+    """Pongo and the static recovery tools, which every platform shares, built or reused.
+
+    {'pongo': Path, 'tools': directory}; the tools directory holds busybox,
+    dropbear, dropbearkey, wpa_supplicant, wpa_cli and iw.
+    """
+    hardware, cache = _build_context(hardware, cache, 'apple')
+    components = cache / 'components-v2'
+    with component_lock(cache):
+        return {'pongo': _prepare_pongo(hardware, components).resolve(),
+                'tools': _prepare_tools(hardware, components).resolve()}
+
+
 def prepare_loader(hardware=None, cache=None, *, device):
     """Pongo and the storage-capable m1n1 that orchard launch needs, built or reused from the cache."""
     hardware, cache = _build_context(hardware, cache, device)

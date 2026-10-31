@@ -104,11 +104,16 @@ board:
   layer, which the installer writes into the root, and the installer writes the boot
   entry; a distribution builds one root image for every platform, names no board and
   needs no kernel-install. Release format: `schemas/v2`.
-- **A distribution as a project:** `distro.toml` names its build entry. In a
-  distribution checkout, `orchard build` builds the whole image (root filesystem,
-  recovery, release directory with `index.toml`), and `orchard run` builds what is
-  missing and starts the recovery from RAM without installing; `orchard install`
-  stays separate.
+- **A distribution as a project** (done): `distro.toml` (`name`, `build`) names
+  its build entry. In a distribution checkout `orchard build` runs it as
+  `ENTRY --version VERSION --output out/releases/VERSION` (default version
+  `dev-DATE-TIME`), checks the index, its distro and version and every file it
+  pins, and records the build in `out/releases/latest.json`. `orchard run`
+  builds, then boots that release's recovery for the attached board from RAM,
+  installing nothing; `orchard install` without a source installs the last build.
+  Entries keep their parts with `orchard.distro.component` (keyed by their files
+  under `out/components/`) and take Pongo and the recovery tools from
+  `orchard.build.prepare_shared`; the kernels come from the platform layer as before.
 - **The installer and the user's orchard,** below.
 
 ## The installer and the user's orchard

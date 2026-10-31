@@ -23,11 +23,14 @@ def main():
     parser.add_argument('--verbose', action='store_true', help='show internal device events')
     commands = parser.add_subparsers(dest='action', required=True)
     build = commands.add_parser('build', help='build DIRECTORY/init and optional DIRECTORY/rootfs into a RAM payload '
-                                'for every board of one platform')
-    run = commands.add_parser('run', help='build what is missing for the attached board, then boot it')
-    for command, what in ((build, 'a directory containing init and optional rootfs/'),
-                          (run, 'the payload directory')):
+                                'for every board of one platform; in a distribution checkout (distro.toml), its release')
+    run = commands.add_parser('run', help='build what is missing for the attached board, then boot it; in a '
+                              "distribution checkout, its release's recovery, without installing")
+    for command, what in ((build, 'a payload directory (init, optional rootfs/) or a distribution checkout'),
+                          (run, 'the payload directory or distribution checkout')):
         command.add_argument('directory', type=Path, nargs='?', default=Path('.'), help=what + ' (default: this one)')
+        command.add_argument('--version', help='distribution checkouts: the version to build '
+                             '(default: dev-DATE-TIME)')
         command.add_argument('--device', help='a board; its platform is built (default: orchard.local.toml, '
                              'else the attached device)')
         command.add_argument('--platform', help='the platform to build, e.g. apple-16k')
@@ -57,7 +60,8 @@ def main():
         transfer.add_argument('--serial', action='store_true',
                               help='use the USB serial shell (payloads without SSH; up to 16 MiB)')
     guided = commands.add_parser('install', help='guided installation from distro name, index or manifest')
-    guided.add_argument('source', nargs='?', help='registered distro, local TOML or exact HTTPS URL')
+    guided.add_argument('source', nargs='?', help='registered distro, local TOML or exact HTTPS URL '
+                        "(default in a distribution checkout: its last build)")
     guided.add_argument('--manifest', '--release', dest='manifest', help='explicit index or installation manifest')
     launcher = commands.add_parser('launch', help="start an installed system from the device's boot entries")
     launcher.add_argument('--entry', help='boot entry id to start without asking')
@@ -87,6 +91,26 @@ def main():
     args = parser.parse_args()
     progress = Progress(verbose=args.verbose)
     try:
+        if args.action in ('build', 'run'):
+            from orchard import distro
+            root = distro.find(args.directory)
+            payload_only = [name for name in ('device', 'platform', 'hardware', 'cache', 'kernel_dir',
+                                              'pongo', 'busybox', 'loader') if getattr(args, name) is not None]
+            if root is not None:
+                if payload_only:
+                    raise ValueError(f'--{payload_only[0].replace("_", "-")} is for RAM payloads; '
+                                     f'{root} is a distribution checkout (distro.toml)')
+                if args.action == 'build':
+                    distro.build(root, version=args.version)
+                else:
+                    if args.no_build and args.version:
+                        raise ValueError('--no-build boots the last build; leave out --version')
+                    result = distro.run(root, build_first=not args.no_build, version=args.version,
+                                        yes=args.yes, progress=progress)
+                    print(json.dumps(result, indent=2))
+                return
+            if args.version is not None:
+                raise ValueError('--version is for distribution checkouts (distro.toml)')
         if args.action == 'build':
             from orchard.ram import build_directory
             build_directory(args.directory, hardware=args.hardware, cache=args.cache,
@@ -133,7 +157,11 @@ def main():
             if args.action == 'install':
                 source = args.manifest or args.source
                 if not source:
-                    raise ValueError('Specify a distro, index or manifest: orchard install SOURCE')
+                    from orchard import distro
+                    root = distro.find(Path('.'))
+                    if root is None:
+                        raise ValueError('Specify a distro, index or manifest: orchard install SOURCE')
+                    source = str(distro.latest(root))  # in a distribution checkout: its last build
                 result = install(source, progress=progress)
             elif args.action == 'launch':
                 from orchard.launch import launch

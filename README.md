@@ -71,6 +71,11 @@ offers). `orchard python ARGS` runs Python in the checkout's environment, e.g. a
 distribution's own scripts or `orchard python -m unittest discover -s tests`. See
 [BUILD.md](BUILD.md) for building components directly.
 
+A distribution checkout has a `distro.toml` naming its build entry. There
+`orchard build` builds a whole release into `out/releases/dev-DATE-TIME`,
+`orchard run` boots its recovery on the attached device without installing, and
+`orchard install` installs the last build ([tooling](docs/tooling.md)).
+
 - [Kernel producers](kernel/README.md)
 - [Device bring-up](docs/device-bring-up.md)
 - [RAM builds and development](docs/ram-development.md)
