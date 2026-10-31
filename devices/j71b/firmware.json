@@ -78,6 +78,12 @@
       },
       "device": "/usr/share/firmware/multitouch/J71b.mtprops",
       "sha256": "3b48de549088ad3310516cd05ce09b53eb2a0fb4e69e24624703bc6dcfa78dfa"
+    },
+    "aop.im4p": {
+      "ipsw": {
+        "zip": "Firmware/AOP/aopfw-ipad7baop.RELEASE.im4p"
+      },
+      "sha256": "58fb27cfcd42cab4f3154fb47d92cc7d51e4329caad9b2432ec5130a2423607e"
     }
   },
   "outputs": [
@@ -182,6 +188,34 @@
           "packet": "K1HBPP14",
           "load_address": 1048576,
           "hbpp_version": 260
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/apple/aop-ipad7b.bin",
+      "sha256": "b9db3a9601b357d469ed79c2fa6b26c8e5fb4a3953ce289687f4ab434da338f1",
+      "steps": [
+        {
+          "step": "im4p-payload@1",
+          "input": "aop.im4p"
+        },
+        {
+          "step": "aop-image@1",
+          "coprocessor": "AOP"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/apple/aop-ipad7b-ext.bin",
+      "sha256": "25367930b9015e5c20d20a56d959a5e3e5fa713bc3b97aeef604c0ede9e74fc1",
+      "steps": [
+        {
+          "step": "im4p-payload@1",
+          "input": "aop.im4p"
+        },
+        {
+          "step": "aop-image@1",
+          "coprocessor": "AOP_ext"
         }
       ]
     }

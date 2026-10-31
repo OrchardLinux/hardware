@@ -9,7 +9,7 @@ import json
 import plistlib
 
 from orchard.apple import bluetool, d5500, smartio, z2fw, z2packet
-from orchard.apple.osserialize import apple_xml
+from orchard.apple.osserialize import apple_xml, binary
 
 
 def _copy(step, data, expected):
@@ -36,6 +36,10 @@ def _vxd(step, data, expected):
 
 def _im4p_payload(step, data, expected):
     return im4p_payload(data)
+
+
+def _aop_image(step, data, expected):
+    return aop_image(data, step['coprocessor'])
 
 
 def _touch_profile(data, name):
@@ -87,6 +91,8 @@ STEPS = {
     # VXD (DEVA) video-decoder firmware from AppleD5500.
     'vxd-firmware-from-kernelcache@1': (_vxd, {}),
     'im4p-payload@1': (_im4p_payload, {}),
+    # One image of an AOP firmware container (IPSW Firmware/AOP/aopfw-*.im4p payload).
+    'aop-image@1': (_aop_image, {'coprocessor': str}),
     # mtprops with one preconstructed packet (J71b).
     'z2fw-from-mtprops@1': (_z2fw, {'profile': str, 'packet': str, 'load_address': int, 'hbpp_version': int}),
     # mtprops with one complete preconstructed Z2 boot packet (iPad 5), wrapped unmodified.
@@ -212,3 +218,18 @@ def im4p_payload(blob):
     if payload[:4] in (b'bvx2', b'bvx1', b'bvx-', b'bvxn'):
         raise ValueError('Compressed IM4P payloads are not supported by im4p-payload@1')
     return payload
+
+
+def aop_image(container, coprocessor):
+    """The image for one coprocessor role ("AOP", "AOP_ext") of an AOP firmware
+    container: an OSSerializeBinary dictionary whose "firmware" array holds
+    {"header": {"coprocessor": ROLE, ...}, "data": IMAGE} entries."""
+    entries = binary(container).get('firmware')
+    if not isinstance(entries, list):
+        raise ValueError('AOP container has no firmware array')
+    images = [entry.get('data') for entry in entries
+              if isinstance(entry, dict) and isinstance(entry.get('header'), dict)
+              and entry['header'].get('coprocessor') == coprocessor]
+    if len(images) != 1 or not isinstance(images[0], bytes):
+        raise ValueError(f'AOP container needs exactly one {coprocessor} image')
+    return images[0]

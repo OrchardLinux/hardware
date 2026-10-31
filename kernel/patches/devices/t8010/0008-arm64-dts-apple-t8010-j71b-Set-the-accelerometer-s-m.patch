@@ -1,0 +1,46 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <henrik@goat-code.com>
+Date: Sat, 31 Oct 2026 20:26:10 +0000
+Subject: [PATCH] arm64: dts: apple: t8010-j71b: Set the accelerometer's mount
+ matrix
+
+The AOP firmware reports the accelerometer in the device frame: x right,
+y up, z out of the screen, +1 g opposite to gravity (flat, screen up:
+z = +1 g; upright: y = +1 g). iio-sensor-proxy, which desktops use for
+rotation, takes upright as negative y (and the sides by x) while keeping
+z: without a mount matrix every orientation comes out upside down.
+
+Rotate by 180 degrees about z, so that the desktop orientation matches
+the screen. Checked on an iPad 6 (J71b) with iio-sensor-proxy 3.9 and
+labwc in all four orientations.
+
+Assisted-by: LLM
+---
+ arch/arm64/boot/dts/apple/t8010-j71b.dts | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/t8010-j71b.dts b/arch/arm64/boot/dts/apple/t8010-j71b.dts
+index d3ffa34..3d2151e 100644
+--- a/arch/arm64/boot/dts/apple/t8010-j71b.dts
++++ b/arch/arm64/boot/dts/apple/t8010-j71b.dts
+@@ -26,6 +26,17 @@
+ 	status = "okay";
+ };
+ 
++/*
++ * The AOP reports the accelerometer in the device frame with y up when the
++ * iPad is upright; desktops (iio-sensor-proxy) take upright as y down and
++ * left/right accordingly, with z unchanged.
++ */
++&aop_accel {
++	mount-matrix = "-1", "0", "0",
++		       "0", "-1", "0",
++		       "0", "0", "1";
++};
++
+ &touchscreen {
+ 	firmware-name = "apple/j71b-fwstart.z2fw";
+ };
+-- 
+2.54.0 (Apple Git-157)
+

@@ -112,6 +112,7 @@ The CLI used to do that; it isn't needed for recipes any more.
 | `bluetool-hcd@1` | `input` (BlueTool) | the Bluetooth patchram whose hash is the output's |
 | `smartio-from-kernelcache@1` | `input` (kernelcache) | SmartIO coprocessor firmware |
 | `im4p-payload@1` | `input` | the payload of an IM4P container |
+| `aop-image@1` | `coprocessor` | one image (`AOP`, `AOP_ext`) of an AOP firmware container, the OSSerializeBinary payload of `Firmware/AOP/aopfw-*.im4p` |
 | `z2fw-from-mtprops@1` | `input`, `profile`, `packet`, `load_address`, `hbpp_version` | Z2 touch firmware with calibration records |
 | `z2fw-from-mtprops@2` | `input`, `profile`, `packet` | Z2 touch firmware from an mtprops packet array (iPhone 7 Plus) |
 | `z2fw-from-mtprops@3` | `input`, `profile`, `packet`, `touch_maximum`, `prox_maximum`, `fll_mval`, `ref_clk_div`, `clk32_clock_enable` | Legacy Gen1 Z2 touch firmware (iPhone 6), with full word counts, bounded calibration from the ADT and the board's kernel clock policy |
