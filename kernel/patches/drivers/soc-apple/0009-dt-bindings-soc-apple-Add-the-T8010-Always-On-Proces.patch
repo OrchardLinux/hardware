@@ -18,16 +18,16 @@ arguments carry.
 Signed-off-by: Dalton Alexandre <alley.nightly_0b@icloud.com>
 Assisted-by: LLM
 ---
- .../bindings/soc/apple/apple,t8010-aop.yaml   | 92 +++++++++++++++++++
- 1 file changed, 92 insertions(+)
+ .../bindings/soc/apple/apple,t8010-aop.yaml   | 102 ++++++++++++++++++
+ 1 file changed, 102 insertions(+)
  create mode 100644 Documentation/devicetree/bindings/soc/apple/apple,t8010-aop.yaml
 
 diff --git a/Documentation/devicetree/bindings/soc/apple/apple,t8010-aop.yaml b/Documentation/devicetree/bindings/soc/apple/apple,t8010-aop.yaml
 new file mode 100644
-index 000000000..b2fbeb896
+index 0000000..14726af
 --- /dev/null
 +++ b/Documentation/devicetree/bindings/soc/apple/apple,t8010-aop.yaml
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,102 @@
 +# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
 +%YAML 1.2
 +---
@@ -86,8 +86,17 @@ index 000000000..b2fbeb896
 +    description:
 +      A sensor served by the AOP firmware, named like the firmware's service.
 +    properties:
++      compatible:
++        enum:
++          - apple,t8010-aop-accel
++          - apple,t8010-aop-gyro
++          - apple,t8010-aop-compass
++          - apple,t8010-aop-pressure
++
 +      mount-matrix:
 +        description: The sensor's mounting rotation in the device.
++    required:
++      - compatible
 +    additionalProperties: false
 +
 +required:
@@ -117,6 +126,7 @@ index 000000000..b2fbeb896
 +            firmware-name = "apple/aop-ipad7b.bin", "apple/aop-ipad7b-ext.bin";
 +
 +            accel {
++                compatible = "apple,t8010-aop-accel";
 +            };
 +        };
 +    };

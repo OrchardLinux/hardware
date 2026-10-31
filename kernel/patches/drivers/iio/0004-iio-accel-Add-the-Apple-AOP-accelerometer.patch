@@ -24,8 +24,8 @@ Assisted-by: LLM
 ---
  drivers/iio/accel/Kconfig           |  12 ++
  drivers/iio/accel/Makefile          |   1 +
- drivers/iio/accel/apple_aop_accel.c | 284 ++++++++++++++++++++++++++++
- 3 files changed, 297 insertions(+)
+ drivers/iio/accel/apple_aop_accel.c | 285 ++++++++++++++++++++++++++++
+ 3 files changed, 298 insertions(+)
  create mode 100644 drivers/iio/accel/apple_aop_accel.c
 
 diff --git a/drivers/iio/accel/Kconfig b/drivers/iio/accel/Kconfig
@@ -65,10 +65,10 @@ index fa440a8..dc4778d 100644
  obj-$(CONFIG_BMA220_I2C) += bma220_i2c.o
 diff --git a/drivers/iio/accel/apple_aop_accel.c b/drivers/iio/accel/apple_aop_accel.c
 new file mode 100644
-index 0000000..27f6fd1
+index 0000000..96c9013
 --- /dev/null
 +++ b/drivers/iio/accel/apple_aop_accel.c
-@@ -0,0 +1,284 @@
+@@ -0,0 +1,285 @@
 +// SPDX-License-Identifier: GPL-2.0-only OR MIT
 +/*
 + * Accelerometer served by the Apple Always-On Processor (AOP)
@@ -89,6 +89,7 @@ index 0000000..27f6fd1
 +#include <linux/iio/iio.h>
 +#include <linux/iio/kfifo_buf.h>
 +#include <linux/module.h>
++#include <linux/mod_devicetable.h>
 +#include <linux/mutex.h>
 +#include <linux/platform_device.h>
 +#include <linux/soc/apple/aop.h>
@@ -335,18 +336,18 @@ index 0000000..27f6fd1
 +	return devm_iio_device_register(dev, indio_dev);
 +}
 +
-+static const struct platform_device_id apple_aop_accel_ids[] = {
-+	{ "apple-aop-accel" },
++static const struct of_device_id apple_aop_accel_of_match[] = {
++	{ .compatible = "apple,t8010-aop-accel" },
 +	{ }
 +};
-+MODULE_DEVICE_TABLE(platform, apple_aop_accel_ids);
++MODULE_DEVICE_TABLE(of, apple_aop_accel_of_match);
 +
 +static struct platform_driver apple_aop_accel_driver = {
 +	.driver = {
 +		.name = "apple-aop-accel",
++		.of_match_table = apple_aop_accel_of_match,
 +	},
 +	.probe = apple_aop_accel_probe,
-+	.id_table = apple_aop_accel_ids,
 +};
 +module_platform_driver(apple_aop_accel_driver);
 +
