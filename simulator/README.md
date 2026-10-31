@@ -47,7 +47,6 @@ podman machine ssh 'sudo $PWD/simulator/prepare-vm-linux.sh'
 ./simulator/build-vm-backlight
 # Only install while the VM is stopped; never mount a running VM disk.
 podman machine ssh 'sudo $PWD/simulator/vm-support/install-linux.sh'
-./simulator/install-vm-greeter
 ./simulator/run
 ```
 
@@ -55,18 +54,12 @@ Preparation refuses to overwrite an existing disk and uses a file-backed ext4 fi
 
 Logs, the kernel and disk are under `out/simulator/vm/`. No physical iPad is accessed.
 
-## Greeter prototype
-
-The simulator boots into a Labwc/Quickshell greeter backed by real greetd and PAM. The greeter and session lock use the same system-owned lock-screen UI, while their authentication remains separate. On first boot the greeter uses the packaged default theme; after the first login it uses an atomic snapshot of the tablet user's theme and wallpaper. Theme and wallpaper changes publish a new snapshot for the next greeter. The snapshot in `/var/lib/omarchy-greeter-theme` is user-owned and publicly readable by the greeter; select only wallpapers suitable for display before login. Unsupported video posters fall back to the packaged wallpaper. Enter **123456** on the keypad or keyboard; the sixth digit submits automatically at both sign-in and unlock. This is a disposable, deliberately public **VM test PIN**, not the account password; it does not change `sudo` credentials. A VM-only root service verifies the PIN for both greetd and the session lock through PAM; the PIN hash is not readable by the tablet user. Five failures across either flow trigger a shared 60-second lockout. Its state is in memory and resets on reboot or service restart, so this is not a production security policy. Login launches the existing tablet session; exiting Labwc returns to the greeter.
-
-Greeter source lives in `omarchy-a/desktop/greeter/` and is staged by `omarchy-a/desktop/stage.py`. To update the VM copy, stop the VM, run `install-vm-greeter`, then start it again. This installs signed Arch Linux ARM greetd plus VM-only PAM/test-PIN configuration. The installer preserves an existing test credential. **The published product rootfs has not yet been rebuilt or switched to greetd**, and the VM test PIN implementation must not be shipped as a product credential. Production PIN enrollment, password fallback/recovery, persistent throttling, and a reviewed privileged authentication service remain to be designed.
+The login screen, lock screen and PIN are the distribution's (Omarchy A's greeter) and the installer's, not the simulator's.
 
 ## Current limitations
 
 - The guest has a VM-only virtual Ethernet adapter using QEMU user-mode NAT and the Mac's existing network connection. Outbound network access works without a separate guest Wi-Fi connection; inbound connections and LAN discovery are not provided by default. This does not test iPad networking hardware.
-- There is no live source sync or QEMU guest agent. Greeter changes currently require reinstalling them into the stopped VM.
-- Index 4.0.2 is installed in the current disposable VM for evaluation only; it is not part of the desktop or rootfs build.
-- **Files (Flea touch preview)** runs the full upstream Flea 0.3.12 application with the version-pinned patch in `omarchy-a/desktop/files/flea-0.3.12-touch.patch`. Install or refresh it with the VM stopped using `./simulator/install-vm-flea-preview`; the VM greeter must already be installed. It is not the system default or file chooser. The patch enlarges common controls, adds long-press menus in list and grid views, and lets touch drags scroll instead of starting a file drag. Mouse drag-and-drop remains available in Mouse Input mode; touch file moves currently use the cut/paste menu instead. List and grid touch scrolling have been exercised in the simulator; the remaining views, multi-selection, all features, physical touch, and optional runtime dependencies have not yet been fully adapted or verified.
+- There is no live source sync or QEMU guest agent.
 - QEMU's software display is sent over an unauthenticated **loopback-only** VNC socket at `127.0.0.1:5908`; the app uses a raw-RFB client, not a screenshot polling viewer. This is local development infrastructure, not a security boundary. `vm start` refuses to start if the port is already occupied.
 - Resolution is 768×1024. Virtual backlight intensity is approximated by dimming the viewer; display color/brightness and iPad physical hardware are not validated. Performance and input mappings need more testing.
 
