@@ -237,7 +237,7 @@ if [ ! -x "$python" ]; then
 fi
 
 here=
-case "$0" in */install.sh) here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd) ;; esac
+case "$0" in install.sh|*/install.sh) here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd) ;; esac
 if [ -n "$here" ] && [ -f "$here/orchard-install.pyz" ]; then
     installer="$here/orchard-install.pyz"
 elif [ -n "$INSTALLER_URL" ]; then

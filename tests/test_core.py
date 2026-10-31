@@ -109,6 +109,11 @@ class Zipapp(Store):
                                    '[importlib.import_module(name) for name in sys.argv[2:]]',
                                    str(cores[0] / 'src'), *modules], capture_output=True, text=True)
         self.assertEqual(imported.returncode, 0, imported.stderr)
+        # Without package metadata the core knows its version from core.json (release checks need it).
+        known = subprocess.run([sys.executable, '-I', '-S', '-c',
+                                'import sys; sys.path.insert(0, sys.argv[1]); import orchard; print(orchard.version())',
+                                str(cores[0] / 'src')], capture_output=True, text=True)
+        self.assertEqual(known.stdout.strip(), receipt['version'], known.stderr)
 
     def test_the_same_inputs_give_the_same_zipapp(self):
         first = installer.build(self.home / 'a.pyz', loaders=self.loaders, boards=['j71b'])
