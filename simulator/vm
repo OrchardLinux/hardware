@@ -51,5 +51,23 @@ PY
     echo 'Shutdown request sent, but VM is still running; not forcing it off.' >&2
     exit 1
     ;;
-  *) echo "Usage: $0 {start|stop|status}" >&2; exit 2;;
+  kill)
+    # Power off at once, like pulling the plug; the guest gets no shutdown.
+    if ! running; then echo 'VM is not running'; exit 0; fi
+    python3 - "$D/qmp.sock" <<'PY'
+import socket, sys
+s = socket.socket(socket.AF_UNIX)
+s.settimeout(4)
+s.connect(sys.argv[1])
+s.recv(4096)
+s.sendall(b'{"execute":"qmp_capabilities"}\n')
+s.recv(4096)
+s.sendall(b'{"execute":"quit"}\n')
+s.close()
+PY
+    for i in $(seq 1 10); do if ! running; then echo 'VM forced off'; rm -f "$D/qemu.pid"; exit 0; fi; sleep 1; done
+    echo 'VM is still running' >&2
+    exit 1
+    ;;
+  *) echo "Usage: $0 {start|stop|kill|status}" >&2; exit 2;;
 esac

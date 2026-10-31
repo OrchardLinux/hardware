@@ -477,6 +477,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appMenu.addItem(mouse)
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit Orchard Simulator", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        if ProcessInfo.processInfo.environment["ORCHARD_VM_SCRIPT"] != nil {
+            let detach = NSMenuItem(title: "Quit and Keep VM Running", action: #selector(quitKeepingVM), keyEquivalent: "q")
+            detach.keyEquivalentModifierMask = [.command, .option]
+            detach.target = self
+            detach.isAlternate = true
+            appMenu.addItem(detach)
+        }
         appItem.submenu = appMenu
         app.mainMenu = menu
         window = SimulatorWindow(contentRect: NSRect(origin: .zero, size: Device.canvas), styleMask: [.borderless], backing: .buffered, defer: false)
@@ -534,26 +541,67 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             entry.state = entry === item ? .on : .off
         }
     }
-    @objc private func stopVM() {
-        guard let script = ProcessInfo.processInfo.environment["ORCHARD_VM_SCRIPT"] else { return }
+    // Quitting shuts the VM down with it, so no VM keeps running unseen. The
+    // test modes and Option-Quit leave it running.
+    private var keepVM = ["TOUCH_CHECK", "SWIPE_CHECK", "SELF_TEST", "RENDER_CHECK"].contains {
+        ProcessInfo.processInfo.environment["ORCHARD_SIMULATOR_" + $0] != nil
+    }
+    private var stopping = false
+    @objc private func quitKeepingVM() {
+        keepVM = true
+        NSApplication.shared.terminate(nil)
+    }
+    // Runs the VM script with COMMAND; calls DONE on the main queue with success and output.
+    private func runVM(_ command: String, done: @escaping (Bool, String) -> Void) {
+        guard let script = ProcessInfo.processInfo.environment["ORCHARD_VM_SCRIPT"] else { done(true, ""); return }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: script)
-        process.arguments = ["stop"]
+        process.arguments = [command]
         let output = Pipe()
         process.standardOutput = output
         process.standardError = output
         process.terminationHandler = { task in
-            guard task.terminationStatus != 0 else { return }
-            let message = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "The VM did not shut down."
-            DispatchQueue.main.async {
-                let alert = NSAlert()
-                alert.messageText = "VM shutdown failed"
-                alert.informativeText = message
-                alert.runModal()
-            }
+            let message = String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            DispatchQueue.main.async { done(task.terminationStatus == 0, message) }
         }
         do { try process.run() }
-        catch { let alert = NSAlert(error: error); alert.runModal() }
+        catch { done(false, error.localizedDescription) }
+    }
+    @objc private func stopVM() {
+        runVM("stop") { ok, message in
+            guard !ok else { return }
+            let alert = NSAlert()
+            alert.messageText = "VM shutdown failed"
+            alert.informativeText = message
+            alert.runModal()
+        }
+    }
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if keepVM || ProcessInfo.processInfo.environment["ORCHARD_VM_SCRIPT"] == nil { return .terminateNow }
+        if !stopping {
+            stopping = true
+            window.alphaValue = 0.5
+            runVM("stop") { ok, message in
+                if ok { sender.reply(toApplicationShouldTerminate: true); return }
+                let alert = NSAlert()
+                alert.messageText = "The VM did not shut down"
+                alert.informativeText = message
+                alert.addButton(withTitle: "Force Off")
+                alert.addButton(withTitle: "Leave Running")
+                alert.addButton(withTitle: "Cancel")
+                switch alert.runModal() {
+                case .alertFirstButtonReturn:
+                    self.runVM("kill") { _, _ in sender.reply(toApplicationShouldTerminate: true) }
+                case .alertSecondButtonReturn:
+                    sender.reply(toApplicationShouldTerminate: true)
+                default:
+                    self.stopping = false
+                    self.window.alphaValue = 1
+                    sender.reply(toApplicationShouldTerminate: false)
+                }
+            }
+        }
+        return .terminateLater
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 }

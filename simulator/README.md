@@ -6,7 +6,7 @@ Run on an Apple Silicon Mac:
 ./simulator/run
 ```
 
-This builds and opens the native AppKit viewer. If a VM disk is prepared, it starts the VM (or reconnects to it). Drag the frame or its corners to move or resize it; click the display to focus guest input. By default, a mouse press, drag and release on the display become single-finger events on a virtual touchscreen; keyboard input still works. Choose **Orchard Simulator → Mouse Input** for ordinary mouse movement, right-click and wheel scrolling, or **Touch Input** to return to touch. Touch mode has no hover, wheel or multi-finger gestures. Cmd-Q closes the viewer but **does not stop the VM**. The touchscreen device requires a VM restart after upgrading an already-running VM.
+This builds and opens the native AppKit viewer. If a VM disk is prepared, it starts the VM (or reconnects to it). Drag the frame or its corners to move or resize it; click the display to focus guest input. By default, a mouse press, drag and release on the display become single-finger events on a virtual touchscreen; keyboard input still works. Choose **Orchard Simulator → Mouse Input** for ordinary mouse movement, right-click and wheel scrolling, or **Touch Input** to return to touch. Touch mode has no hover, wheel or multi-finger gestures. Quitting (Cmd-Q, or closing the window) **shuts the VM down** and waits for it; if the guest has not powered off after 30 seconds, the viewer offers to force it off or leave it running. Option-Cmd-Q quits and keeps the VM running. The touchscreen device requires a VM restart after upgrading an already-running VM.
 
 The silver/white Wi-Fi frame uses the [iPad 6 dimensions](https://www.dimensions.com/element/apple-ipad-6th-gen-2018): 169.5 × 240 mm, with a 9.7-inch 4:3 display. Smaller details are visual approximations, not measured CAD geometry; it is not physical-size calibrated.
 
@@ -31,10 +31,11 @@ For the *development VM*, not the product device:
 ```sh
 ./simulator/vm status
 ./simulator/vm stop
+./simulator/vm kill
 ./simulator/vm start
 ```
 
-The app menu also offers **Shut Down Development VM**. `stop` sends a narrowly scoped shutdown request over a separate VM-only virtio channel, invoking the guest's `systemctl poweroff`; it waits and does not force shutdown if that fails. This management path does not imply the tethered iPad system has a working shutdown feature. The guest bridge accepts only the shutdown command, and host control sockets are owner-only.
+The app menu also offers **Shut Down Development VM**. `stop` sends a narrowly scoped shutdown request over a separate VM-only virtio channel, invoking the guest's `systemctl poweroff`; it waits 30 seconds and does not force shutdown if that fails. `kill` powers the VM off at once through QEMU, like pulling the plug. This management path does not imply the tethered iPad system has a working shutdown feature. The guest bridge accepts only the shutdown command, and host control sockets are owner-only.
 
 ## VM preparation
 
