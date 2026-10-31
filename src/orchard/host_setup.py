@@ -137,10 +137,19 @@ def _install(tool):
     return (lambda: subprocess.run([*argv, package], check=True)), f'install with {name}: {package}'
 
 
-def _palera1n_step(system, arch):
-    # Where Orchard installs it counts even when ~/.local/bin is not on PATH.
+def palera1n():
+    """The palera1n to run: on PATH, or the one ./setup and the installer put in ~/.local/bin.
+
+    That shared location counts even when ~/.local/bin is not on PATH.
+    """
     installed = Path.home() / '.local/bin/palera1n'
-    existing = shutil.which('palera1n') or (str(installed) if installed.is_file() else None)
+    if installed.is_file() and os.access(installed, os.X_OK):
+        return shutil.which('palera1n') or str(installed)
+    return shutil.which('palera1n')
+
+
+def _palera1n_step(system, arch):
+    existing = palera1n()
     if existing:
         return Step('palera1n', BOOT, True, existing)
     def apply():

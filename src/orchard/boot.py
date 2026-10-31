@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 
+from .host_setup import palera1n
 from .ram import verify_ram
 
 
@@ -51,7 +52,7 @@ def boot_ram(output, *, yes=False):
         ecid = device.get('ecid')
         if not ecid:
             raise ValueError('Missing device ECID')
-        if device['mode'] == 'dfu' and not shutil.which('palera1n'):
+        if device['mode'] == 'dfu' and not palera1n():
             raise ValueError('Install palera1n before booting')
         name = description['device']['name'] if not mismatch else device.get('product') or 'Unrecognized device'
         print(f'{name}, ECID {ecid:x}, USB {device["location"]}, mode {device["mode"]}.')

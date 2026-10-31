@@ -78,8 +78,11 @@ class PortReset(threading.Thread):
             finally:
                 try:
                     self.control.write_text('0')
+                    restored = True
                 except OSError:
-                    return
+                    restored = False
+            if not restored:
+                return
             self.resets += 1
             if self._await(self.wait, self._returned):
                 return

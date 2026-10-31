@@ -314,7 +314,7 @@ def current():
 
 
 def adopt(core, python, *, output=print):
-    """Make CORE the user's orchard unless the current one is as new; returns True if it did.
+    """Make CORE the user's orchard unless the current one is newer or CORE itself; True if it did.
 
     Writes store/core/current.json and ~/.local/bin/orchard, a launcher
     running CORE with PYTHON. A file there that is not such a launcher (a
@@ -323,7 +323,9 @@ def adopt(core, python, *, output=print):
     core, python = Path(core), Path(python)
     info = json.loads((core / 'core.json').read_text())
     existing = current()
-    if existing and version_tuple(existing['version']) >= version_tuple(info['version']):
+    # The last installer wins at an equal version; an older one never replaces a newer one.
+    if existing and (version_tuple(existing['version']) > version_tuple(info['version'])
+                     or Path(existing['core']) == core):
         return False
     record = cache_root() / 'core/current.json'
     record.parent.mkdir(parents=True, exist_ok=True)

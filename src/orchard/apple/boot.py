@@ -85,7 +85,8 @@ def start_pongo(device, image, log, say, *, chip, board, product, seconds=30):
     Every boot path goes through here so they share the cable hint, the
     process-group cleanup and the failure message.
     """
-    executable = shutil.which('palera1n')
+    from orchard.host_setup import palera1n
+    executable = palera1n()
     if not executable:
         raise ValueError('palera1n is required on the host to boot Pongo')
     usb.selected(device['location'], device['ecid'], chip=chip, board=board, mode='dfu')
