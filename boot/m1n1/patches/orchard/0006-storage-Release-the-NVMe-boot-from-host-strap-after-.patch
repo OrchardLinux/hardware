@@ -1,0 +1,117 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <henrik@goat-code.com>
+Date: Sun, 1 Nov 2026 04:30:00 +0800
+Subject: [PATCH] storage: Release the NVMe boot-from-host strap after a
+ USB-started iBoot
+
+When iBoot is started for a restore (iBSS/iBEC sent over USB), it marks
+/arm-io/apcie/pci-bridge0/s3e "ibec-boot" and drives the controller's
+boot_from_host strap GPIO high. The controller then waits for firmware
+from the host: its HMB size request reads 0, so the apcie backend
+refuses it ("HMB request 0x0") and Linux's pci-apple-ans gives up with
+"no usable ANS host memory buffer". A normal iBoot leaves the strap low.
+
+Drive the strap low before the port comes out of reset: in the apcie
+backend before it powers the port, and when publishing the HMB to a
+kernel that brings the controller up itself. The pin comes from the
+ADT's function-boot_from_host, and nothing changes without ibec-boot.
+
+Tested on J71b (iPad 6, T8010) booted through remote_boot's patched
+16.4 iBSS: with the strap low, m1n1 reads the GPT and Linux's NVMe
+reads 1 GiB.
+
+Assisted-by: LLM
+---
+ src/apcie_nvme.c | 31 +++++++++++++++++++++++++++++++
+ src/apcie_nvme.h |  1 +
+ src/kboot.c      |  3 +++
+ 3 files changed, 35 insertions(+)
+
+diff --git a/src/apcie_nvme.c b/src/apcie_nvme.c
+index c059c42..21cb144 100644
+--- a/src/apcie_nvme.c
++++ b/src/apcie_nvme.c
+@@ -22,6 +22,7 @@
+ 
+ #define APCIE_PATH  "/arm-io/apcie"
+ #define BRIDGE_PATH "/arm-io/apcie/pci-bridge0"
++#define S3E_PATH    BRIDGE_PATH "/s3e"
+ #define DART_PATH   "/arm-io/dart-apcie0"
+ #define NVMMU_PATH  "/arm-io/nvme-mmu0"
+ #define GPIO_PATH   "/arm-io/gpio"
+@@ -392,6 +393,35 @@ static int get_gpio(const char *prop, u32 *pin)
+     return 0;
+ }
+ 
++/*
++ * An iBoot started for a restore (iBSS/iBEC from USB) marks the controller
++ * "ibec-boot" and drives its boot_from_host strap high: the controller then
++ * waits for firmware from the host and never asks for its HMB. Strap it back
++ * to booting from its own flash, before the port comes out of reset.
++ */
++void apcie_nvme_release_boot_from_host(void)
++{
++    int node = adt_path_offset(adt, S3E_PATH);
++    const u8 *ibec_boot;
++    const u32 *fn;
++    u64 gpio;
++    u32 len;
++
++    if (node < 0)
++        return;
++    ibec_boot = adt_getprop(adt, node, "ibec-boot", &len);
++    if (!ibec_boot || !len || !ibec_boot[0])
++        return;
++    /* phandle, 'GPIO', pin, flags */
++    fn = adt_getprop(adt, node, "function-boot_from_host", &len);
++    if (!fn || len < 16 || get_reg(GPIO_PATH, 0, &gpio, NULL) < 0) {
++        printf("apcie-nvme: ibec-boot without a boot_from_host GPIO\n");
++        return;
++    }
++    clear32(gpio + 4 * fn[2], BIT(0));
++    printf("apcie-nvme: boot_from_host released (GPIO %u)\n", fn[2]);
++}
++
+ static int read_adt(void)
+ {
+     if (get_reg(APCIE_PATH, APCIE_REG_CONFIG, &cfg_base, NULL) < 0 ||
+@@ -1138,6 +1168,7 @@ bool apcie_nvme_init(void)
+             soc = &apcie_socs[i];
+     if (!soc || read_adt() < 0)
+         return false;
++    apcie_nvme_release_boot_from_host();
+ 
+     /* Nothing in apcie may be read before it is powered: that faults. */
+     if (pmgr_adt_power_enable(APCIE_PATH) < 0) {
+diff --git a/src/apcie_nvme.h b/src/apcie_nvme.h
+index 92ef41a..b9cebac 100644
+--- a/src/apcie_nvme.h
++++ b/src/apcie_nvme.h
+@@ -9,5 +9,6 @@ void apcie_nvme_shutdown(void);
+ bool apcie_nvme_read(u64 lba, void *buffer);
+ bool apcie_nvme_read_blocks(u64 lba, u32 count, void *buffer);
+ u32 apcie_nvme_max_blocks(void);
++void apcie_nvme_release_boot_from_host(void);
+ 
+ #endif
+diff --git a/src/kboot.c b/src/kboot.c
+index 87f6720..d8fa8c6 100644
+--- a/src/kboot.c
++++ b/src/kboot.c
+@@ -4,6 +4,7 @@
+ 
+ #include "kboot.h"
+ #include "adt.h"
++#include "apcie_nvme.h"
+ #include "akf_fw.h"
+ #include "assert.h"
+ #include "clk.h"
+@@ -377,6 +378,8 @@ static int dt_set_nvme_hmb(void)
+     if (fdt_setprop(dt, node, "reg", reg, sizeof(reg)))
+         bail("FDT: failed to set NVMe HMB region\n");
+     printf("FDT: NVMe HMB at 0x%lx size 0x%lx\n", region[0], region[1]);
++    /* Linux starts the controller itself; it must boot from its own flash */
++    apcie_nvme_release_boot_from_host();
+     return 0;
+ }
+ 
