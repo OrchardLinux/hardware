@@ -76,10 +76,9 @@ were confirmed. The p2-only write fence was unchanged. No reinstall occurred.
 ## Scope for the maintainer
 
 The initial requested refactor validation and packaging fix are recorded in
-[the integration report](https://github.com/micro23/ipadair2-omarchy/blob/11463ba09f5fbc0d1d5afb43d29f7ebe8c9eb3ce/integration/2026-10-29/REPORT.md). Both Pongo
-source variants failed in the [paired comparison](pongo/COMPARISON.md);
-quiet mode alone did not fix source-built Pongo. The pinned known-working
-prebuilt remains the qualified control.
+[the integration report](https://github.com/micro23/ipadair2-omarchy/blob/11463ba09f5fbc0d1d5afb43d29f7ebe8c9eb3ce/integration/2026-10-29/REPORT.md). The source-built
+Pongo of that round lacked upstream `ad8b2d1` (see the README), so this boot used
+the pinned prebuilt.
 
 The native installation and fresh-boot persistence are demonstrated, but this
 is still an experimental, unit-specific port. Only gpio-keys was detected as
