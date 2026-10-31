@@ -6,10 +6,10 @@ modules and every Apple DTB. A device name resolves to its platform through
 `devices/<device>/device.toml` `[kernel]` and additionally copies its DTB to
 `DIRECTORY/<device>.dtb`. Git and Podman are required.
 
-```sh
-./kernel/build j71b --output out/kernel/j71b     # platform "apple-16k" + j71b.dtb
-./kernel/build apple-16k --output out/kernel/apple-16k   # platform only
-```
+`orchard build` runs it; build with `orchard build --device j71b` (platform
+`apple-16k` plus the j71b DTB) or `orchard build --platform apple-16k`, not
+with `kernel/build` directly. It holds the shared tree's lock and switches the
+tree between patch series for every checkout (see [AGENTS.md](../AGENTS.md)).
 
 The source and compiler output live in one incremental tree per platform and
 upstream pin, shared by every hardware checkout and worktree:
