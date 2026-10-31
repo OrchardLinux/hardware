@@ -1,10 +1,10 @@
 # payload.toml: how `orchard build` turns this directory into a RAM payload.
 #
 # A payload is `init` (the first program the kernel runs) plus the files under
-# `rootfs/`, booted from RAM with `orchard run`. This file is optional; without
-# it every setting has its default. It describes the payload only: the board
-# to build for is your choice (`--device`, or `device` in orchard.local.toml or
-# ~/.config/orchard/config.toml), never this example's.
+# `rootfs/`. `orchard build` makes one for every board of a platform; `orchard
+# run` builds what is missing and boots the attached board. This file is
+# optional; without it every setting has its default. It describes the payload
+# only, never which board it is for.
 
 # By default every payload also gets the USB session helper
 # (/usr/libexec/orchard/usb-session: USB networking and SSH), which `init` can

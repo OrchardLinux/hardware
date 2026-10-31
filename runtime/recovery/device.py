@@ -83,7 +83,10 @@ def bootstrap(request):
 
 
 def start(request):
-    """Ask PID 1 to start an installed root in this boot; it checks and switches within a second."""
+    """Ask PID 1 to start an installed root in this boot; it checks and switches within a second.
+
+    The switch adds nothing to the system; it boots as from its own entry.
+    """
     target = {key: str(uuid.UUID(request[key])) for key in ('root', 'boot')}
     path = Path('/run/orchard/start.json')
     if path.exists():

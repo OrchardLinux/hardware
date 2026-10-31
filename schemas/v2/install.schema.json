@@ -1,0 +1,347 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Orchard install manifest v2",
+  "description": "One release of a distro for every platform: one root image, and per platform the recovery and orchard's platform layer (kernel, DTBs, modules). Each platform lists the boards its layer has DTBs for; their support status comes from orchard's device data.",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": 2
+    },
+    "kind": {
+      "const": "orchard.install"
+    },
+    "distro": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "boot_method": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "min_orchard": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+    },
+    "protocol": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "orchard": {
+      "type": "object",
+      "description": "The orchard revision the release was built with.",
+      "properties": {
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "modified": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "commit",
+        "modified"
+      ],
+      "additionalProperties": false
+    },
+    "install": {
+      "type": "object",
+      "properties": {
+        "default_root": {
+          "type": "string",
+          "pattern": "^/(?:[A-Za-z0-9][A-Za-z0-9._-]{0,63})?$"
+        },
+        "ready": {
+          "type": "string",
+          "pattern": "^/run/[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$",
+          "description": "A file the started system creates once it is ready; the installer waits for it over the session's SSH."
+        },
+        "account": {
+          "type": "object",
+          "description": "The image's one regular user, and what the installer sets for it.",
+          "properties": {
+            "user": {"type": "string", "pattern": "^[a-z_][a-z0-9_-]{0,31}$"},
+            "password": {"type": "boolean", "description": "Ask for the user's password (for sudo and login)."},
+            "pin": {"type": "boolean", "description": "Ask for a 6-digit lock-screen PIN."},
+            "passwordless_sudo": {"type": "boolean", "description": "sudo without a password (/etc/sudoers.d/orchard)."}
+          },
+          "required": ["user", "password", "pin", "passwordless_sudo"],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "default_root"
+      ],
+      "additionalProperties": false
+    },
+    "root": {
+      "$ref": "#/$defs/archive"
+    },
+    "pongo": {
+      "$ref": "#/$defs/receipt"
+    },
+    "platforms": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._-]*$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "boards": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9._-]*$"
+            }
+          },
+          "boot": {
+            "$ref": "#/$defs/receipt"
+          },
+          "layer": {
+            "$ref": "#/$defs/layer"
+          }
+        },
+        "required": [
+          "boards",
+          "boot",
+          "layer"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schema",
+    "kind",
+    "distro",
+    "name",
+    "version",
+    "boot_method",
+    "min_orchard",
+    "protocol",
+    "orchard",
+    "install",
+    "root",
+    "platforms"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "boot_method": {
+            "const": "checkm8-pongo"
+          }
+        },
+        "required": [
+          "boot_method"
+        ]
+      },
+      "then": {
+        "required": [
+          "pongo"
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "receipt": {
+      "type": "object",
+      "properties": {
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^https://[^\\s]+$"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "bytes",
+        "sha256"
+      ],
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "file"
+          ],
+          "not": {
+            "required": [
+              "url"
+            ]
+          }
+        },
+        {
+          "required": [
+            "url"
+          ],
+          "not": {
+            "required": [
+              "file"
+            ]
+          }
+        }
+      ]
+    },
+    "archive": {
+      "type": "object",
+      "properties": {
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^https://[^\\s]+$"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "compression": {
+          "enum": [
+            "gzip",
+            "zstd"
+          ]
+        },
+        "expanded_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "members": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "bytes",
+        "sha256",
+        "compression",
+        "expanded_bytes",
+        "members"
+      ],
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "file"
+          ],
+          "not": {
+            "required": [
+              "url"
+            ]
+          }
+        },
+        {
+          "required": [
+            "url"
+          ],
+          "not": {
+            "required": [
+              "file"
+            ]
+          }
+        }
+      ]
+    },
+    "layer": {
+      "type": "object",
+      "properties": {
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^https://[^\\s]+$"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "compression": {
+          "enum": [
+            "gzip",
+            "zstd"
+          ]
+        },
+        "expanded_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "members": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "kernel_release": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$"
+        }
+      },
+      "required": [
+        "bytes",
+        "sha256",
+        "compression",
+        "expanded_bytes",
+        "members",
+        "kernel_release"
+      ],
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "file"
+          ],
+          "not": {
+            "required": [
+              "url"
+            ]
+          }
+        },
+        {
+          "required": [
+            "url"
+          ],
+          "not": {
+            "required": [
+              "file"
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

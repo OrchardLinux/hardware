@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Offline checks for Orchard indexes and resolved manifests; not an installer."""
+"""Offline checks for Orchard indexes and resolved manifests; not an installer.
+
+The JSON schemas are checked where jsonschema is installed (development and
+release CI, which validate every manifest and descriptor they publish).
+orchard's core, which installs and launches, runs on the standard library
+alone: it checks what it relies on (kind, normalized paths, URLs, hashes as it
+verifies files) and nothing more.
+"""
 import argparse
 import json
 from pathlib import Path
@@ -8,14 +15,12 @@ import tomllib
 from .http import validate_url
 from .integrity import digest
 
-from jsonschema import Draft202012Validator
-
 from .hardware import ROOT
 
 SCHEMA_DIR = ROOT / 'schemas/v1'
 SCHEMAS = {
-    'orchard.index': SCHEMA_DIR / 'index.schema.json',
-    'orchard.install': SCHEMA_DIR / 'install.schema.json',
+    'orchard.index': ROOT / 'schemas/v2/index.schema.json',
+    'orchard.install': ROOT / 'schemas/v2/install.schema.json',
     'orchard.boot': SCHEMA_DIR / 'boot.schema.json',
     'hardware.device': SCHEMA_DIR / 'device.schema.json',
 }
@@ -32,13 +37,14 @@ class ManifestError(ValueError):
 
 def sources(document):
     if document['kind'] == 'orchard.index':
-        for device, methods in document['devices'].items():
-            for method, source in methods.items():
-                yield f'devices.{device}.{method}', source
+        yield 'release', document['release']
     elif document['kind'] in ('orchard.install', 'orchard.boot'):
         for name in ('root', 'boot', 'pongo'):
             if name in document:
                 yield name, document[name]
+        for platform, row in document.get('platforms', {}).items():
+            for name in ('boot', 'layer'):
+                yield f'platforms.{platform}.{name}', row[name]
 
 
 def check_source(source, where):
@@ -55,20 +61,34 @@ def check_source(source, where):
             raise ManifestError(f'{where}: {error}') from error
 
 
-def validate(document):
+def schema_validator():
+    """jsonschema's Draft 2020-12 validator, or None where jsonschema is not installed (orchard's core)."""
+    try:
+        from jsonschema import Draft202012Validator
+    except ImportError:
+        return None
+    return Draft202012Validator
+
+
+def validate(document, *, schema=None):
+    """DOCUMENT, checked; against its JSON schema if SCHEMA is true, or by default where jsonschema is installed."""
     if not isinstance(document, dict):
         raise ManifestError('Expected a TOML table')
     kind = document.get('kind')
     if not isinstance(kind, str) or kind not in SCHEMAS:
         raise ManifestError('Unknown manifest kind: ' + repr(kind))
-    schema = json.loads(SCHEMAS[kind].read_text())
-    Draft202012Validator.check_schema(schema)
-    errors = sorted(Draft202012Validator(schema).iter_errors(document),
-                    key=lambda error: str(list(error.absolute_path)))
-    if errors:
-        error = errors[0]
-        location = '.'.join(map(str, error.absolute_path)) or '<manifest>'
-        raise ManifestError(f'{location}: {error.message}')
+    validator = schema_validator() if schema is not False else None
+    if schema and validator is None:
+        raise ManifestError('Schema validation needs jsonschema (pip install jsonschema)')
+    if validator is not None:
+        definition = json.loads(SCHEMAS[kind].read_text())
+        validator.check_schema(definition)
+        errors = sorted(validator(definition).iter_errors(document),
+                        key=lambda error: str(list(error.absolute_path)))
+        if errors:
+            error = errors[0]
+            location = '.'.join(map(str, error.absolute_path)) or '<manifest>'
+            raise ManifestError(f'{location}: {error.message}')
     for where, source in sources(document):
         check_source(source, where)
     if kind == 'hardware.device':
@@ -110,29 +130,33 @@ def verify_file(receipt, bundle):
     return path
 
 
-def resolve_local(index, bundle, device, method):
-    """Select one pinned installation manifest, then check its scope matches."""
+def resolve_local(index, bundle):
+    """The index's pinned installation manifest, checked to belong to its distro."""
     validate(index)
     if index['kind'] != 'orchard.index':
         raise ManifestError('Expected distro index')
-    receipt = index['devices'].get(device, {}).get(method)
-    if receipt is None:
-        raise ManifestError(f'No supported installation for {device}/{method}')
-    path = verify_file(receipt, bundle)
+    path = verify_file(index['release'], bundle)
     manifest = load(path)
-    if (manifest['kind'] != 'orchard.install' or manifest['distro'] != index['distro'] or
-            manifest['device'] != device or manifest['boot_method'] != method):
-        raise ManifestError('Resolved manifest does not match distro/device/boot method')
+    if manifest['kind'] != 'orchard.install' or manifest['distro'] != index['distro']:
+        raise ManifestError('Resolved manifest does not match the index distro')
     return path, manifest
+
+
+def platform_for(manifest, board):
+    """The platform of MANIFEST that covers BOARD."""
+    matches = [name for name, row in manifest['platforms'].items() if board in row['boards']]
+    if len(matches) != 1:
+        covered = ', '.join(sorted(b for row in manifest['platforms'].values() for b in row['boards']))
+        raise ManifestError(f'This release does not cover {board}' + (f' (it covers {covered})' if covered else '')
+                            if not matches else f'{board} is listed under several platforms')
+    return matches[0]
 
 
 def verify_local_receipts(document, bundle):
     validate(document)
     if document['kind'] == 'orchard.index':
-        for device, methods in document['devices'].items():
-            for method in methods:
-                path, manifest = resolve_local(document, bundle, device, method)
-                verify_local_receipts(manifest, path.parent)
+        path, manifest = resolve_local(document, bundle)
+        verify_local_receipts(manifest, path.parent)
     elif document['kind'] == 'hardware.device':
         path = local_file(document['firmware']['recipe'], bundle)
         recipe = json.loads(path.read_text())
@@ -151,7 +175,8 @@ def main():
     failed = False
     for path in args.manifests:
         try:
-            document = load(path)
+            with Path(path).open('rb') as stream:
+                document = validate(tomllib.load(stream), schema=True)
             if args.verify_local:
                 verify_local_receipts(document, path.parent)
             level = 'schema + local receipts' if args.verify_local else 'schema'

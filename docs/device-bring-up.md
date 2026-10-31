@@ -7,15 +7,14 @@ Bring an unknown device, reuse the closest port, attempt a RAM boot, and contrib
 ```sh
 git clone https://github.com/OrchardLinux/orchard
 cd orchard
-ln -sf "$PWD/bin/orchard" ~/.local/bin/orchard   # once; needs uv
+./setup                                          # once: tools, the orchard command
 git worktree add ../orchard-BOARD -b BOARD       # your bring-up branch
 cd ../orchard-BOARD
-orchard --version
 ```
 
-See [BUILD.md](../BUILD.md) for compiler/container dependencies. `orchard` runs the checkout you are in, so this worktree's patches and device data are what you build; see the [README](../README.md#develop).
+`./setup` says what it will set up and asks first; `orchard doctor` shows what is still missing. `orchard` runs the checkout you are in, so this worktree's patches and device data are what you build; see the [README](../README.md#develop).
 
-Charge the device and build artifacts before entering DFU.
+Charge the device and build before entering DFU: `orchard build --platform PLATFORM` in the example.
 
 ## 2. Find a starting point
 
@@ -37,13 +36,14 @@ Get the model from Settings → General → About or the case's model number. Fo
 
 ```sh
 cd examples/minimal-boot
-orchard build --device BOARD
-orchard run
-# Without a prompt:
-orchard run --yes
+orchard run                        # a described board: built for it and booted
+orchard run --platform apple-16k   # a board not described yet: the closest platform
+orchard run --yes                  # without a prompt
 ```
 
-To keep your own experiment, copy an example anywhere (`cp -r examples/minimal-boot ~/board-tests`); with an `orchard.local.toml` naming this worktree (`orchard = "/path/to/orchard-BOARD"`, `device = "BOARD"`), `orchard build` there uses it.
+A payload carries every DTB of its platform, so one build boots each of its described boards; a board not yet described gets a warning first. Once your board has its `devices/BOARD/device.toml`, `orchard run` recognizes it.
+
+To keep your own experiment, copy an example anywhere (`cp -r examples/minimal-boot ~/board-tests`); with an `orchard.local.toml` naming this worktree (`orchard = "/path/to/orchard-BOARD"`), `orchard run` there uses it.
 
 The reference kernel/DTB is a starting experiment, not a guarantee it fits your board.
 

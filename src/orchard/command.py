@@ -22,18 +22,23 @@ def main():
     parser.add_argument('--version', action='version', version=version('orchard'))
     parser.add_argument('--verbose', action='store_true', help='show internal device events')
     commands = parser.add_subparsers(dest='action', required=True)
-    build = commands.add_parser('build', help='build DIRECTORY/init and optional DIRECTORY/rootfs into a RAM payload')
-    build.add_argument('directory', type=Path, nargs='?', default=Path('.'),
-                       help='a directory containing init and optional rootfs/ (default: this one)')
-    build.add_argument('--hardware', type=Path, help='use the hardware data and recipes of another orchard checkout')
-    build.add_argument('--device', help='the board to build for; default from orchard.local.toml or ~/.config/orchard/config.toml')
-    build.add_argument('--cache', type=Path, help='override the shared component cache')
-    build.add_argument('--kernel-dir', type=Path, help='reuse a staged kernel/DTB/module tree')
-    for component in ('pongo', 'busybox', 'loader'):
-        build.add_argument('--' + component, type=Path, help='reuse this local component')
-    build.add_argument('--modules', action='store_true', help='include matching modules for manual use; does not load them')
-    build.add_argument('--firmware', action='store_true',
-                       help="include the device's firmware from its recipe (read from the IPSW once, then cached)")
+    build = commands.add_parser('build', help='build DIRECTORY/init and optional DIRECTORY/rootfs into a RAM payload '
+                                'for every board of one platform; in a distribution checkout (distro.toml), its release')
+    run = commands.add_parser('run', help='build what is missing for the attached board, then boot it; in a '
+                              "distribution checkout, its release's recovery, without installing")
+    for command, what in ((build, 'a payload directory (init, optional rootfs/) or a distribution checkout'),
+                          (run, 'the payload directory or distribution checkout')):
+        command.add_argument('directory', type=Path, nargs='?', default=Path('.'), help=what + ' (default: this one)')
+        command.add_argument('--version', help='distribution checkouts: the version to build '
+                             '(default: dev-DATE-TIME)')
+        command.add_argument('--device', help='a board; its platform is built (default: orchard.local.toml, '
+                             'else the attached device)')
+        command.add_argument('--platform', help='the platform to build, e.g. apple-16k')
+        command.add_argument('--hardware', type=Path, help='use the hardware data and recipes of another orchard checkout')
+        command.add_argument('--cache', type=Path, help='override the shared component cache')
+        command.add_argument('--kernel-dir', type=Path, help='reuse a staged kernel/DTB/module tree')
+        for component in ('pongo', 'busybox', 'loader'):
+            command.add_argument('--' + component, type=Path, help='reuse this local component')
     cached = commands.add_parser('cache', help='list, remove or prune shared build components; no device access')
     cached.add_argument('remove', nargs='*', metavar='COMPONENT[/KEY]',
                         help='entries to delete, e.g. kernel-j71b/0bd1204e; lists entries when omitted')
@@ -41,9 +46,7 @@ def main():
                         help='keep only the most recently used entries of each component')
     cached.add_argument('--keep', type=int, default=5, help='entries per component that --prune keeps (default 5)')
     cached.add_argument('--cache', type=Path, help='override the shared component cache')
-    run = commands.add_parser('run', help='boot the last successful RAM payload for DIRECTORY')
-    run.add_argument('directory', type=Path, nargs='?', default=Path('.'),
-                     help='a directory whose out/ contains the built payload (default: this one)')
+    run.add_argument('--no-build', action='store_true', help='boot the last build without rebuilding')
     run.add_argument('-y', '--yes', action='store_true',
                      help='boot without prompting, including without an interactive terminal')
     commands.add_parser('shell', help='open a root shell on the running RAM payload over USB SSH')
@@ -57,7 +60,8 @@ def main():
         transfer.add_argument('--serial', action='store_true',
                               help='use the USB serial shell (payloads without SSH; up to 16 MiB)')
     guided = commands.add_parser('install', help='guided installation from distro name, index or manifest')
-    guided.add_argument('source', nargs='?', help='registered distro, local TOML or exact HTTPS URL')
+    guided.add_argument('source', nargs='?', help='registered distro, local TOML or exact HTTPS URL '
+                        "(default in a distribution checkout: its last build)")
     guided.add_argument('--manifest', '--release', dest='manifest', help='explicit index or installation manifest')
     launcher = commands.add_parser('launch', help="start an installed system from the device's boot entries")
     launcher.add_argument('--entry', help='boot entry id to start without asking')
@@ -70,6 +74,9 @@ def main():
     check.add_argument('--boot', action='store_true', help='resolve only boot assets')
     commands.add_parser('devices', help='list USB devices without modifying them')
     commands.add_parser('setup-host', help='install missing boot tools and Linux USB permissions; no device access')
+    configure = commands.add_parser('setup', help='show what this host needs to build and boot, then set it up; safe to rerun')
+    configure.add_argument('-y', '--yes', action='store_true', help='apply without asking')
+    commands.add_parser('doctor', help='show what this host has and lacks for building and booting; changes nothing')
     boot = commands.add_parser('boot', help='boot recovery from a manifest or explicit image')
     boot.add_argument('source', nargs='?', help='registered distro, local TOML or exact HTTPS URL')
     boot.add_argument('--manifest', '--release', dest='manifest')
@@ -84,12 +91,35 @@ def main():
     args = parser.parse_args()
     progress = Progress(verbose=args.verbose)
     try:
+        from orchard.cache import check_state
+        from orchard.sources import cache_root as build_cache
+        check_state()
+        check_state(build_cache())
+        if args.action in ('build', 'run'):
+            from orchard import distro
+            root = distro.find(args.directory)
+            payload_only = [name for name in ('device', 'platform', 'hardware', 'cache', 'kernel_dir',
+                                              'pongo', 'busybox', 'loader') if getattr(args, name) is not None]
+            if root is not None:
+                if payload_only:
+                    raise ValueError(f'--{payload_only[0].replace("_", "-")} is for RAM payloads; '
+                                     f'{root} is a distribution checkout (distro.toml)')
+                if args.action == 'build':
+                    distro.build(root, version=args.version)
+                else:
+                    if args.no_build and args.version:
+                        raise ValueError('--no-build boots the last build; leave out --version')
+                    result = distro.run(root, build_first=not args.no_build, version=args.version,
+                                        yes=args.yes, progress=progress)
+                    print(json.dumps(result, indent=2))
+                return
+            if args.version is not None:
+                raise ValueError('--version is for distribution checkouts (distro.toml)')
         if args.action == 'build':
             from orchard.ram import build_directory
             build_directory(args.directory, hardware=args.hardware, cache=args.cache,
                             kernel=args.kernel_dir, busybox=args.busybox, loader=args.loader,
-                            pongo=args.pongo, modules=args.modules, device=args.device,
-                            firmware=args.firmware)
+                            pongo=args.pongo, device=args.device, platform=args.platform)
             return
         if args.action in ('shell', 'exec', 'push', 'pull'):
             from orchard import ram_session
@@ -103,6 +133,11 @@ def main():
             else:
                 ram_session.pull(args.remote, args.local, serial=args.serial)
             return
+        if args.action in ('setup', 'doctor'):
+            from orchard import host_setup
+            if args.action == 'doctor':
+                raise SystemExit(host_setup.doctor())
+            raise SystemExit(host_setup.setup_interactive(yes=args.yes))
         if args.action == 'cache':
             from orchard import components
             if args.prune and args.remove:
@@ -116,7 +151,9 @@ def main():
             return
         if args.action == 'run':
             from orchard.boot import run_directory
-            run_directory(args.directory, yes=args.yes)
+            run_directory(args.directory, yes=args.yes, build=not args.no_build, device=args.device,
+                          platform=args.platform, hardware=args.hardware, cache=args.cache,
+                          kernel=args.kernel_dir, busybox=args.busybox, loader=args.loader, pongo=args.pongo)
             return
         with ExitStack() as stack:
             if args.action in ('boot', 'capture-adt'):
@@ -124,7 +161,11 @@ def main():
             if args.action == 'install':
                 source = args.manifest or args.source
                 if not source:
-                    raise ValueError('Specify a distro, index or manifest: orchard install SOURCE')
+                    from orchard import distro
+                    root = distro.find(Path('.'))
+                    if root is None:
+                        raise ValueError('Specify a distro, index or manifest: orchard install SOURCE')
+                    source = str(distro.latest(root))  # in a distribution checkout: its last build
                 result = install(source, progress=progress)
             elif args.action == 'launch':
                 from orchard.launch import launch

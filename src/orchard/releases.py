@@ -2,18 +2,18 @@
 from contextlib import nullcontext
 from concurrent.futures import ThreadPoolExecutor
 import fcntl
-from importlib.metadata import version
 import json
 import os
 from pathlib import Path
 import tempfile
 import tomllib
 
+from . import version
 from .hardware import device as hardware_device
 from .cache import cache_root
 from .downloads import download
 from .http import open_url
-from .manifests import ManifestError, check_source, local_file, validate, verify_file
+from .manifests import ManifestError, check_source, local_file, platform_for, validate, verify_file
 
 MAX_MANIFEST = 1024 * 1024
 
@@ -139,32 +139,36 @@ def select_manifest(source, profile, progress=None, clock=None, purpose='install
     if document['kind'] == 'orchard.index':
         if expected_distro and document['distro'] != expected_distro:
             raise ValueError('Distro index identity differs from its registered name')
-        methods = document['devices'].get(profile, {})
-        supported = hardware_device(profile)['boot']['methods']
-        matches = [method for method in methods if method in supported]
-        if len(matches) != 1:
-            raise ValueError('No unique supported boot method for this distro/device')
-        method = matches[0]
-        receipt = methods[method]
+        receipt = document['release']
         if receipt['bytes'] > MAX_MANIFEST:
             raise ValueError('Installation manifest exceeds size limit')
         path = materialize(receipt, bundle, None, clock)
         selected, local_bundle = read_document(path, progress, clock)
-        if (selected['kind'] != 'orchard.install' or selected['distro'] != document['distro'] or
-                selected['device'] != profile or selected['boot_method'] != method):
-            raise ValueError('Selected manifest does not match index distro/device/method')
+        if selected['kind'] != 'orchard.install' or selected['distro'] != document['distro']:
+            raise ValueError('Selected manifest does not match the index distro')
         document = selected
         bundle = local_bundle if 'file' in receipt else None
     elif expected_distro and document.get('distro') != expected_distro:
         raise ValueError('Registered distro does not match manifest')
     allowed = {'install': ('orchard.install',)}.get(purpose, ('orchard.install', 'orchard.boot'))
-    if document['kind'] not in allowed or document['device'] != profile:
-        raise ValueError('Manifest is not compatible with this device/operation')
+    if document['kind'] not in allowed:
+        raise ValueError('Manifest is not compatible with this operation')
+    described = hardware_device(profile)
+    if document['kind'] == 'orchard.install':
+        # One release serves every platform; the board picks its platform's files.
+        platform = platform_for(document, profile)
+        if platform != described['kernel']['platform']:
+            raise ValueError(f'This release lists {profile} under {platform}, '
+                             f'but orchard describes it as {described["kernel"]["platform"]}')
+    elif document['device'] != profile:
+        raise ValueError('Manifest is not compatible with this device')
+    if document['boot_method'] not in described['boot']['methods']:
+        raise ValueError(f'{profile} does not boot with {document["boot_method"]}')
     if document['boot_method'] != 'checkm8-pongo':
         raise ValueError('This Orchard build implements only checkm8-pongo')
     if document['protocol'] != 1:
         raise ValueError('Unsupported device protocol; this manifest is for another Orchard version')
-    actual = tuple(int(part) for part in version('orchard').split('.'))
+    actual = tuple(int(part) for part in version().split('.'))
     minimum = tuple(int(part) for part in document['min_orchard'].split('.'))
     if actual < minimum:
         raise ValueError('Upgrade Orchard to at least ' + document['min_orchard'])
@@ -174,18 +178,32 @@ def select_manifest(source, profile, progress=None, clock=None, purpose='install
 
 
 def resolve(manifest, profile, progress=None, clock=None, purpose='install'):
+    """The selected release's record and verified local files for PROFILE.
+
+    Files: pongo and recovery always; for installs also the root image and
+    the platform layer of the board's platform.
+    """
     document, bundle = select_manifest(manifest, profile, progress, clock, purpose)
-    roles = {'pongo': 'pongo', 'recovery': 'boot'}
-    if purpose == 'install':
-        roles['root'] = 'root'
-    paths, receipts = {}, {role: document[field] for role, field in roles.items()}
-    labels = {'pongo': 'Pongo', 'recovery': 'Recovery', 'root': document.get('name', 'Linux')}
-    with ThreadPoolExecutor(max_workers=len(roles)) as pool:
+    if document['kind'] == 'orchard.install':
+        platform = platform_for(document, profile)
+        files = document['platforms'][platform]
+        receipts = {'pongo': document['pongo'], 'recovery': files['boot']}
+        if purpose == 'install':
+            receipts.update(root=document['root'], layer=files['layer'])
+    else:
+        platform = None
+        receipts = {'pongo': document['pongo'], 'recovery': document['boot']}
+    labels = {'pongo': 'Pongo', 'recovery': 'Recovery', 'root': document.get('name', 'Linux'),
+              'layer': 'Kernel and modules'}
+    paths = {}
+    with ThreadPoolExecutor(max_workers=len(receipts)) as pool:
         futures = {role: pool.submit(materialize, receipt, bundle, progress, clock, label=labels[role])
                    for role, receipt in receipts.items()}
         for role, future in futures.items():
             paths[role] = future.result()
-    record = {'protocol': document['protocol'], 'profile': profile, 'assets': receipts,
+    record = {'protocol': document['protocol'], 'profile': profile, 'platform': platform, 'assets': receipts,
               'release': document.get('version'), 'name': document.get('name', 'Linux'),
-              'default_root': document.get('install', {}).get('default_root', '/linux')}
+              'default_root': document.get('install', {}).get('default_root', '/linux'),
+              'account': document.get('install', {}).get('account'),
+              'ready': document.get('install', {}).get('ready')}
     return record, paths

@@ -15,11 +15,12 @@ DISTRO = CLI / 'tests/fixtures/first'
 MINIMAL = CLI / 'tests/fixtures/second'
 sys.path.insert(0, str(CLI / 'tools'))
 from validate_manifest import ManifestError, load, resolve_local, validate, verify_file, verify_local_receipts
+from orchard.manifests import platform_for
 
 
 class ManifestContracts(unittest.TestCase):
     def setUp(self):
-        self.manifest = load(DISTRO / 'j71b-checkm8-pongo.toml')
+        self.manifest = load(DISTRO / 'release.toml')
         self.index = load(DISTRO / 'index.toml')
 
     def rejects(self, document):
@@ -35,81 +36,75 @@ class ManifestContracts(unittest.TestCase):
             with self.subTest(path=path):
                 verify_local_receipts(load(path), path.parent)
 
-    def test_device_method_resolves_one_manifest(self):
-        path, manifest = resolve_local(self.index, DISTRO, 'j71b', 'checkm8-pongo')
-        self.assertEqual(path, DISTRO / 'j71b-checkm8-pongo.toml')
+    def test_index_resolves_its_one_release(self):
+        path, manifest = resolve_local(self.index, DISTRO)
+        self.assertEqual(path, DISTRO / 'release.toml')
         self.assertEqual(manifest, self.manifest)
-        self.assertNotIn('variants', manifest)
-        self.assertNotIn('devices', manifest)
-        self.assertNotIn('artifacts', manifest)
+        self.assertEqual(platform_for(manifest, 'j71b'), 'apple-16k')
+        for key in ('variants', 'devices', 'device', 'artifacts'):
+            self.assertNotIn(key, manifest)
 
     def test_two_distro_repos_use_the_same_resolution_path(self):
         resolved = []
         for directory, distro in ((DISTRO, 'fixture-linux'), (MINIMAL, 'other-fixture-linux')):
             index = load(directory / 'index.toml')
-            path, manifest = resolve_local(index, directory, 'j71b', 'checkm8-pongo')
+            path, manifest = resolve_local(index, directory)
             self.assertEqual(manifest['distro'], distro)
             verify_local_receipts(manifest, path.parent)
             resolved.append(manifest)
-        self.assertEqual(resolved[0]['device'], resolved[1]['device'])
+        self.assertEqual(resolved[0]['platforms'], resolved[1]['platforms'])
         self.assertEqual(resolved[0]['boot_method'], resolved[1]['boot_method'])
         self.assertNotEqual(resolved[0]['install']['default_root'], resolved[1]['install']['default_root'])
 
-    def test_no_matching_target_is_an_error(self):
-        for device, method in (('missing', 'checkm8-pongo'), ('j71b', 'missing')):
-            with self.subTest(device=device, method=method):
-                with self.assertRaises(ManifestError):
-                    resolve_local(self.index, DISTRO, device, method)
+    def test_a_board_the_release_does_not_cover_is_an_error(self):
+        with self.assertRaisesRegex(ManifestError, 'does not cover missing.*it covers j71b'):
+            platform_for(self.manifest, 'missing')
+        self.manifest['platforms']['apple-4k'] = deepcopy(self.manifest['platforms']['apple-16k'])
+        with self.assertRaisesRegex(ManifestError, 'several platforms'):
+            platform_for(self.manifest, 'j71b')
 
-    def test_index_scope_must_match_resolved_manifest(self):
-        for field in ('distro', 'device', 'boot_method'):
-            with self.subTest(field=field):
-                index = deepcopy(self.index)
-                if field == 'distro':
-                    index['distro'] = 'another-distro'
-                    device, method = 'j71b', 'checkm8-pongo'
-                elif field == 'device':
-                    index['devices']['other'] = index['devices'].pop('j71b')
-                    device, method = 'other', 'checkm8-pongo'
-                else:
-                    methods = index['devices']['j71b']
-                    methods['other'] = methods.pop('checkm8-pongo')
-                    device, method = 'j71b', 'other'
-                with self.assertRaises(ManifestError):
-                    resolve_local(index, DISTRO, device, method)
+    def test_index_distro_must_match_resolved_manifest(self):
+        index = deepcopy(self.index)
+        index['distro'] = 'another-distro'
+        with self.assertRaises(ManifestError):
+            resolve_local(index, DISTRO)
 
     def test_manifest_pin_checked_before_loading(self):
-        self.index['devices']['j71b']['checkm8-pongo']['sha256'] = '0' * 64
+        self.index['release']['sha256'] = '0' * 64
         with self.assertRaises(ManifestError):
-            resolve_local(self.index, DISTRO, 'j71b', 'checkm8-pongo')
+            resolve_local(self.index, DISTRO)
 
-    def test_second_device_can_share_root_and_boot_without_changing_first(self):
-        text = (DISTRO / 'j71b-checkm8-pongo.toml').read_text()
-        with tempfile.TemporaryDirectory() as directory:
-            bundle = Path(directory).resolve()
-            (bundle / 'first.toml').write_text(text)
-            second_text = text.replace('device = "j71b"', 'device = "synthetic-second-device"')
-            (bundle / 'second.toml').write_text(second_text)
-            index = deepcopy(self.index)
-            for device, filename in (('j71b', 'first.toml'), ('synthetic-second-device', 'second.toml')):
-                data = (bundle / filename).read_bytes()
-                index['devices'][device] = {'checkm8-pongo': {
-                    'file': filename, 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}}
-            _, first = resolve_local(index, bundle, 'j71b', 'checkm8-pongo')
-            _, second = resolve_local(index, bundle, 'synthetic-second-device', 'checkm8-pongo')
-            self.assertEqual(first['root'], second['root'])
-            self.assertEqual(first['boot'], second['boot'])
-            self.assertEqual((bundle / 'first.toml').read_text(), text)
+    def test_one_root_serves_every_platform_and_its_boards(self):
+        document = deepcopy(self.manifest)
+        document['platforms']['apple-16k']['boards'].append('j71s')
+        document['platforms']['apple-4k'] = deepcopy(document['platforms']['apple-16k'])
+        document['platforms']['apple-4k']['boards'] = ['n61']
+        validate(document)
+        self.assertEqual([platform_for(document, board) for board in ('j71b', 'j71s', 'n61')],
+                         ['apple-16k', 'apple-16k', 'apple-4k'])
+        self.assertEqual(sorted(document), sorted(self.manifest))  # still one root, one Pongo
+
+    def test_a_platform_needs_boards_a_recovery_and_a_layer(self):
+        for key in ('boards', 'boot', 'layer'):
+            with self.subTest(key=key):
+                document = deepcopy(self.manifest)
+                del document['platforms']['apple-16k'][key]
+                self.rejects(document)
+        document = deepcopy(self.manifest)
+        document['platforms']['apple-16k']['boards'] = []
+        self.rejects(document)
+        del self.manifest['platforms']['apple-16k']['layer']['kernel_release']
+        self.rejects(self.manifest)
 
     def test_no_workflow_or_hook_registry_or_other_devices(self):
-        for key in ('variants', 'devices', 'artifacts', 'completion', 'finalize', 'hardware_abi', 'handoff'):
+        for key in ('variants', 'devices', 'device', 'artifacts', 'completion', 'finalize', 'hardware_abi', 'handoff'):
             with self.subTest(key=key):
                 document = deepcopy(self.manifest)
                 document[key] = {}
                 self.rejects(document)
 
     def test_unknown_fields_and_schema_versions_rejected(self):
-        for key, value in (('schema', 2), ('kind', 'unknown'), ('kind', {}), ('commands', [])):
+        for key, value in (('schema', 1), ('kind', 'unknown'), ('kind', {}), ('commands', [])):
             with self.subTest(key=key):
                 document = deepcopy(self.manifest)
                 document[key] = value
@@ -129,7 +124,7 @@ class ManifestContracts(unittest.TestCase):
         self.rejects(self.manifest)
 
     def test_exact_https_urls_for_artifacts_and_index_references(self):
-        for source in (self.manifest['root'], self.index['devices']['j71b']['checkm8-pongo']):
+        for source in (self.manifest['root'], self.manifest['platforms']['apple-16k']['layer'], self.index['release']):
             source.pop('file')
             source['url'] = 'https://downloads.example.invalid/content?version=1'
         validate(self.manifest)
@@ -204,7 +199,7 @@ class ManifestContracts(unittest.TestCase):
         self.rejects(self.manifest)
 
     def test_no_systemd_or_desktop_setting_in_headless_manifest(self):
-        document = load(MINIMAL / 'j71b-checkm8-pongo.toml')
+        document = load(MINIMAL / 'release.toml')
         self.assertNotIn('image', document)
         self.assertNotIn('completion', document)
         self.assertNotIn('init', document)

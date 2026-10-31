@@ -15,8 +15,27 @@ ext4 partition, launcher kernel, `switch_root`). Old installs are not migrated.
 | Part | Does | Never does |
 |---|---|---|
 | Bootloader (m1n1 + host) | Reads the boot partition, lists the entries, loads the chosen entry's kernel, initrd and DTB, applies the ADT fill-ins, boots | Mount or read a root filesystem, write to storage |
-| Installer | Creates the boot partition once; creates a root partition per system; runs the system's own install | Touch APFS beyond the agreed resize; touch another system's partition or files |
-| Installed system | Owns its root partition and its own files and entry on the boot partition; updates them with its normal kernel-install hooks | Touch another system's files |
+| Installer | Creates the boot partition once; creates a root partition per system; unpacks the system's root image and orchard's platform layer into it; writes the system's entry and its files from the layer | Touch APFS beyond the agreed resize; touch another system's partition or files |
+| Installed system | Owns its root partition | Install a kernel, initrd or boot entry; touch another system's files |
+
+## Kernel, DTBs and modules
+
+They are orchard's, not the distribution's. A distribution's root image holds no
+`/usr/lib/modules`; one image serves every platform. orchard's platform layer
+(`orchard.image.platform`, one per platform) holds `/usr/lib/modules/RELEASE/`
+with `vmlinuz`, the DTB of every board of the platform under `dtb/` and the
+modules, plus the regulatory database and hardware defaults under `/usr/lib`
+(orchard's `system/`). The installer writes it into the new root after the root
+image and refuses a file the image already has. Then it writes the entry below
+itself: the kernel, orchard's initrd and the board's DTB from the layer. So no
+distribution needs `kernel-install`, mkinitcpio or dracut, and every init system
+works the same way.
+
+orchard's initrd (`boot/initramfs/root`) holds BusyBox and the platform's storage
+modules only. It loads them, waits up to 30 s for the partition that
+`root=PARTUUID=` names, mounts it (`rootfstype=`, `rootflags=`, `ro`/`rw` as
+given) and starts its `/sbin/init` (or `init=`). If any step fails, it says
+which one and opens a shell on the console.
 
 ## Partitions (GPT)
 
@@ -36,7 +55,7 @@ The layout follows BLS:
 - one file per entry under `/loader/entries/<entry-id>.conf` on the boot partition;
 - the entry's files under `/<entry-token>/<version>/`.
 
-The entry token is the system's BLS entry token, for example its machine-id or `IMAGE_ID`. It keeps systems apart.
+The entry token is the system's id and the first group of its root's PARTUUID, for example `omarchy-4d6c1a2b`. It keeps systems apart, two installs of one distribution too. The entry is `/loader/entries/<entry-token>-<version>.conf`.
 
 ```
 title      Omarchy
@@ -52,13 +71,28 @@ options    root=PARTUUID=4d6c…-… rw quiet
 |---|---|
 | `linux` | Required. arm64 `Image`, raw or gzip-compressed |
 | `initrd` | Optional and repeatable. Several are concatenated in order, as BLS specifies |
-| `devicetree` | **Required.** The DTB for this board. m1n1 applies the ADT fill-ins (MAC addresses, calibration, memory, CPUs) to it, so the system ships the plain DTB from its kernel build. systemd's `kernel-install` copies it when `/etc/kernel/devicetree` names it. |
+| `devicetree` | **Required.** The DTB for this board. m1n1 applies the ADT fill-ins (MAC addresses, calibration, memory, CPUs) to it, so the plain DTB from the kernel build is used. The installer copies the board's DTB from the platform layer. |
 | `options` | Required. It must contain `root=PARTUUID=…` of the system's own root partition. Root discovery without `root=` is not used, because one device can hold several roots. |
 | `title`, `version`, `sort-key` | As BLS: shown in the host's list and used for its order. |
 | `machine-id`, `architecture` | Optional. If `architecture` is present, it must be `aa64`. |
 | `devicetree-overlay`, `efi`, `uki` | Not supported. Such entries are listed as unbootable. |
 
 **Boot counting** (`+tries` in the file name) is not supported yet. Such entries boot as if they had no counter.
+
+## Splash
+
+A system's boot splash ships in its root as `/usr/share/orchard/splash`; the
+installer copies it next to the entry's kernel (`/TOKEN/VERSION/splash`).
+When an entry starts, orchard's initrd paints it centred on the framebuffer
+as soon as it has mounted the root, before the system starts; it stays until
+the system clears it. Entries start quiet (`fbcon=map:9`), as the recovery
+does, so no console text covers it. A missing or malformed splash only costs
+the picture, never the boot.
+
+The format is `OSPL`, then width and height as little-endian u32, then
+width × height pixels as the bytes b, g, r, 0 (the framebuffer's XRGB8888), top row first. Distributions
+write it from the same artwork their own m1n1 draws, so install and launch
+show the same picture.
 
 ## Selection
 

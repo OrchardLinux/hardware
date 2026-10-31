@@ -38,6 +38,16 @@ def record(out, inode, name, mode, data):
     out.write(b'\0' * (-len(data) % 4))
 
 
+def write(files, output):
+    """FILES (from entries) as one newc/gzip archive at OUTPUT."""
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open('xb') as raw, gzip.GzipFile(fileobj=raw, mode='wb', filename='', mtime=0) as out:
+        for index, (name, (mode, data)) in enumerate(sorted(files.items()), 1):
+            record(out, index, name, mode, data)
+        record(out, len(files) + 1, 'TRAILER!!!', 0, b'')
+        out.write(b'\0' * 512)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, required=True, help='prepared initramfs runtime tree')
@@ -49,12 +59,7 @@ def main():
     files = entries([args.root, *args.overlay])
     if 'init' not in files or not stat.S_ISREG(files['init'][0]) or not files['init'][0] & 0o111:
         parser.error('runtime must provide an executable /init')
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    with args.output.open('xb') as raw, gzip.GzipFile(fileobj=raw, mode='wb', filename='', mtime=0) as out:
-        for index, (name, (mode, data)) in enumerate(sorted(files.items()), 1):
-            record(out, index, name, mode, data)
-        record(out, len(files) + 1, 'TRAILER!!!', 0, b'')
-        out.write(b'\0' * 512)
+    write(files, args.output)
     print(f'Built {args.output} from {len(files)} entries')
 
 

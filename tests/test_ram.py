@@ -37,6 +37,11 @@ class RamTests(unittest.TestCase):
         (self.kernel / 'kernel.release').write_text('test-release\n')
         (self.kernel / 'Image.gz').write_bytes(b'not a real kernel')
         (self.kernel / 'j71b.dtb').write_bytes(b'not a real DTB')
+        # The kernel bundle carries every DTB of its platform; payloads take them all.
+        self.boards = ram.boards_by_platform(self.hardware)['apple-16k']
+        (self.kernel / 'dtbs').mkdir()
+        for dtb in self.boards.values():
+            (self.kernel / 'dtbs' / (dtb + '.dtb')).write_bytes(dtb.encode())
         elf = bytearray(64)
         elf[:6] = b'\x7fELF\x02\x01'
         elf[18:20] = b'\xb7\x00'
@@ -70,20 +75,23 @@ class RamTests(unittest.TestCase):
         self.addCleanup(home.stop)
 
     def build(self, **kwargs):
-        options = dict(init=self.init, files={'usr/bin/test': self.script}, modules=True, device='j71b')
+        options = dict(init=self.init, files={'usr/bin/test': self.script}, modules=True,
+                       platform='apple-16k', boards=self.boards)
         options.update(kwargs)
         return ram.assemble_ram(self.hardware, self.output, **self.components, **options)
 
     def test_real_packaging_and_repeat(self):
         self.build()
-        self.assertEqual(ram.verify_ram(self.output)['device'], 'j71b')
+        receipt = ram.verify_ram(self.output)
+        self.assertEqual(receipt['platform'], 'apple-16k')
+        self.assertIn('j71b', receipt['boards'])
         archive = gzip.decompress((self.output / 'initramfs.cpio.gz').read_bytes())
         self.assertTrue(archive.startswith(b'070701'))
         self.assertIn(b'usr/bin/test\0', archive)
         self.assertIn(b'lib/modules/test-release/test.ko\0', archive)
         receipt = json.loads((self.output / 'linux.bin.json').read_text())
         self.assertEqual([row['name'] for row in receipt['components']],
-                         ['loader', 'bootargs', 'dtb', 'kernel', 'initramfs_header', 'initramfs'])
+                         ['loader', 'bootargs', *['dtb'] * len(self.boards), 'kernel', 'initramfs_header', 'initramfs'])
         self.build()
         ram.verify_ram(self.output)
 
@@ -193,18 +201,20 @@ class RamTests(unittest.TestCase):
 
     def test_cli_dispatches_directly_without_wrapper_or_outer_device_lock(self):
         from orchard.command import main
-        with patch('sys.argv', ['orchard', 'build', str(self.base), '--pongo', 'local.bin', '--modules']), \
+        with patch('sys.argv', ['orchard', 'build', str(self.base), '--pongo', 'local.bin']), \
                 patch.object(ram, 'build_directory') as build, \
                 patch('orchard.command.operation_lock') as lock:
             main()
             build.assert_called_once_with(self.base, hardware=None, cache=None, kernel=None,
-                                          busybox=None, loader=None, pongo=Path('local.bin'), modules=True, device=None,
-                                          firmware=False)
+                                          busybox=None, loader=None, pongo=Path('local.bin'), device=None,
+                                          platform=None)
             lock.assert_not_called()
         with patch('sys.argv', ['orchard', 'run', str(self.base)]), \
                 patch.object(boot, 'run_directory') as run:
             main()
-            run.assert_called_once_with(self.base, yes=False)
+            run.assert_called_once_with(self.base, yes=False, build=True, device=None, platform=None,
+                                        hardware=None, cache=None, kernel=None, busybox=None, loader=None,
+                                        pongo=None)
 
     def test_cli_noninteractive_run_flags(self):
         from orchard.command import main
@@ -214,7 +224,7 @@ class RamTests(unittest.TestCase):
                     patch.object(boot, 'run_directory') as run, \
                     patch('orchard.command.operation_lock') as lock:
                 main()
-                run.assert_called_once_with(self.base, yes=True)
+                self.assertIs(run.call_args.kwargs['yes'], True)
                 lock.assert_not_called()
 
     def test_noninteractive_pongo_boot_skips_only_confirmation(self):
@@ -272,10 +282,15 @@ class RamTests(unittest.TestCase):
         upload.assert_not_called()
 
     def test_noninteractive_run_never_retries(self):
+        built = self.base / 'out/apple-16k'
+        built.mkdir(parents=True)
+        (built / 'build.json').write_text('{}')
         with patch.object(boot, 'boot_ram', side_effect=RuntimeError('uncertain upload')) as upload, \
+                patch.object(ram, 'build_directory', return_value=built), \
+                patch('orchard.devices.attached_board', return_value=None), \
                 self.assertRaisesRegex(SystemExit, 'Inspect device state'):
             boot.run_directory(self.base, yes=True)
-        upload.assert_called_once_with(self.base / 'out', yes=True)
+        upload.assert_called_once_with(built, yes=True)
 
     def test_mismatch_confirmation_defaults_to_no(self):
         for answer in ('', 'n', 'no'):
@@ -305,8 +320,8 @@ class RamTests(unittest.TestCase):
                 prompt.assert_not_called()
             else:
                 prompt.assert_called_once_with('Try booting anyway? [y/N] ')
-            self.assertIn('This build was prepared for an iPad 6 (Wi-Fi)', str(output.call_args_list))
-            self.assertIn('Your connected device is different.', str(output.call_args_list))
+            self.assertIn('This build was prepared for apple-16k boards', str(output.call_args_list))
+            self.assertIn('your connected device is not one of them', str(output.call_args_list))
             self.assertIn('until you restart it', str(output.call_args_list))
             self.assertEqual(selected.call_count, 2)
             selected.assert_any_call('fake', 123, chip=0x8011, board=0x04, mode='pongo')
@@ -317,7 +332,7 @@ class RamTests(unittest.TestCase):
         self.build()
         path = self.output / 'build.json'
         receipt = json.loads(path.read_text())
-        receipt['device'] = 'experimental-unregistered-board'
+        receipt['boards'] = ['experimental-unregistered-board']
         path.write_text(json.dumps(receipt))
         device = dict(mode='pongo', chip=0x8011, board=0x04, ecid=123, location='fake')
         with patch('orchard.apple.usb.sole_target', return_value=device), \
@@ -383,22 +398,34 @@ class RamTests(unittest.TestCase):
             boot.boot_ram(self.output, yes=True)
         upload.assert_not_called()
 
-    def test_project_device_selects_recipe_dtb_and_payload_receipt(self):
+    def test_a_board_selects_its_platform_and_the_payload_carries_every_dtb(self):
+        boards = ram.boards_by_platform(self.hardware)
+        for dtb in boards['apple-4k'].values():
+            (self.kernel / 'dtbs' / (dtb + '.dtb')).write_bytes(dtb.encode())
+        directory = self.base / 'examples/nested/first-boot'
+        directory.mkdir(parents=True)
+        shutil.copyfile(self.init, directory / 'init')
+        for override, platform in ((None, 'apple-16k'), ('n61', 'apple-4k')):  # local file names j71b
+            with self.subTest(override=override), \
+                    patch.object(build, 'prepare_components', return_value=self.components) as prepare:
+                output = ram.build_directory(directory, hardware=self.hardware, device=override)
+                self.assertEqual(output, directory / 'out' / platform)
+                self.assertEqual(prepare.call_args.kwargs['device'], sorted(boards[platform])[0])
+                receipt = ram.verify_ram(output)
+                self.assertEqual((receipt['platform'], receipt['boards']), (platform, sorted(boards[platform])))
+                packed = json.loads((output / 'linux.bin.json').read_text())
+                dtbs = [row['sha256'] for row in packed['components'] if row['name'] == 'dtb']
+                self.assertEqual(sorted(dtbs), sorted(build.digest(self.kernel / 'dtbs' / (dtb + '.dtb'))
+                                                      for dtb in boards[platform].values()))
+
+    def test_an_undescribed_board_lists_the_platforms(self):
         (self.base / 'orchard.local.toml').write_text('device = "experimental"\n')
-        for override, expected in ((None, 'experimental'), ('other-board', 'other-board')):
-            with self.subTest(override=override):
-                dtb = self.kernel / (expected + '.dtb')
-                dtb.write_bytes(expected.encode())
-                directory = self.base / 'examples/nested/first-boot'
-                directory.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(self.init, directory / 'init')
-                with patch.object(build, 'prepare_components', return_value=self.components) as prepare:
-                    ram.build_directory(directory, hardware=self.hardware, device=override)
-                self.assertEqual(prepare.call_args.kwargs['device'], expected)
-                self.assertEqual(ram.verify_ram(directory / 'out')['device'], expected)
-                packed = json.loads((directory / 'out/linux.bin.json').read_text())
-                component = next(row for row in packed['components'] if row['name'] == 'dtb')
-                self.assertEqual(component['sha256'], build.digest(dtb))
+        with self.assertRaisesRegex(ValueError, r'No hardware support describes experimental.*apple-16k: .*j71b'):
+            ram.build_directory(self.base, hardware=self.hardware)
+        (self.base / 'orchard.local.toml').unlink()
+        with patch('orchard.devices.attached_board', return_value=None), \
+                self.assertRaisesRegex(ValueError, r'Which platform\?.*apple-4k: .*n61'):
+            ram.build_directory(self.base, hardware=self.hardware)
 
     def test_cli_device_option_overrides_project_default(self):
         from orchard.command import main
@@ -426,7 +453,7 @@ class RamTests(unittest.TestCase):
         shutil.copy2(self.script, tool)
         with patch.object(build, 'prepare_components', return_value=self.components):
             ram.build_directory(example, hardware=self.hardware)
-        output = example / 'out'
+        output = example / 'out/apple-16k'
         ram.verify_ram(output)
         archive = gzip.decompress((output / 'initramfs.cpio.gz').read_bytes())
         self.assertIn(b'usr/bin/test\0', archive)
@@ -435,8 +462,9 @@ class RamTests(unittest.TestCase):
         (tool.parent / 'new-file').write_text('new input')
         with self.assertRaises(ValueError):
             ram.verify_ram(output)
+        (example / 'payload.toml').write_text('modules = true\n')
         with patch.object(build, 'prepare_components', return_value=self.components):
-            ram.build_directory(example, hardware=self.hardware, modules=True)
+            ram.build_directory(example, hardware=self.hardware)
         self.assertIn(b'test.ko\0', gzip.decompress((output / 'initramfs.cpio.gz').read_bytes()))
 
     def test_usb_session_is_added_unless_the_project_opts_out(self):
@@ -445,7 +473,7 @@ class RamTests(unittest.TestCase):
         shutil.copyfile(self.init, example / 'init')
         with patch.object(build, 'prepare_components', return_value=self.components):
             ram.build_directory(example, hardware=self.hardware)
-        archive = gzip.decompress((example / 'out/initramfs.cpio.gz').read_bytes())
+        archive = gzip.decompress((example / 'out/apple-16k/initramfs.cpio.gz').read_bytes())
         self.assertIn(b'usr/libexec/orchard/usb-session\0', archive)
         self.assertIn(b'etc/orchard/authorized_keys\0', archive)
         public = (self.base / 'home/private/ram-ssh/id_ed25519.pub').read_bytes()
@@ -454,7 +482,7 @@ class RamTests(unittest.TestCase):
         (example / 'payload.toml').write_text('transport = false\n')
         with patch.object(build, 'prepare_components', return_value=self.components):
             ram.build_directory(example, hardware=self.hardware)
-        archive = gzip.decompress((example / 'out/initramfs.cpio.gz').read_bytes())
+        archive = gzip.decompress((example / 'out/apple-16k/initramfs.cpio.gz').read_bytes())
         self.assertNotIn(b'usr/libexec/orchard/usb-session\0', archive)
         self.assertNotIn(b'etc/orchard/authorized_keys\0', archive)
 
@@ -467,11 +495,12 @@ class RamTests(unittest.TestCase):
                     patch.object(build, 'prepare_components', return_value=self.components) as prepare, \
                     patch.object(build, 'cache_root', return_value=self.base / 'shared-cache'):
                 ram.build_directory(directory)
-                prepare.assert_called_once_with(self.hardware, self.base / 'shared-cache', device='j71b', kernel=None,
+                # Components are per platform; its first board selects them.
+                prepare.assert_called_once_with(self.hardware, self.base / 'shared-cache', device='d10', kernel=None,
                                                 busybox=None, loader=None, pongo=None)
-                ram.verify_ram(directory / 'out')
+                ram.verify_ram(directory / 'out/apple-16k')
                 if directory.name == 'charger 001':
-                    archive = gzip.decompress((directory / 'out/initramfs.cpio.gz').read_bytes())
+                    archive = gzip.decompress((directory / 'out/apple-16k/initramfs.cpio.gz').read_bytes())
                     self.assertIn(b'charger-001\n', archive)
 
     def test_directory_build_includes_the_hardware_tools(self):
@@ -481,36 +510,40 @@ class RamTests(unittest.TestCase):
         with patch.object(build, 'prepare_components', return_value=self.components), \
                 patch.object(build, 'cache_root', return_value=self.base / 'shared-cache'):
             ram.build_directory(directory)
-        archive = gzip.decompress((directory / 'out/initramfs.cpio.gz').read_bytes())
+        archive = gzip.decompress((directory / 'out/apple-16k/initramfs.cpio.gz').read_bytes())
         self.assertIn(b'usr/sbin/wpa_supplicant', archive)
         self.assertNotIn(b'usr/bin/busybox', archive)
 
-    def test_directory_build_firmware_follows_the_recipe(self):
+    def test_firmware_is_a_layer_for_the_booted_board_outside_the_project(self):
         from orchard import firmware
         directory = self.base / 'firmware-project'
         directory.mkdir()
         shutil.copyfile(self.init, directory / 'init')
+        (directory / 'payload.toml').write_text('firmware = true\n')
         outputs = self.base / 'firmware-outputs'
         outputs.mkdir()
         (outputs / ('a' * 64)).write_bytes(b'firmware blob')
         recipe = {'outputs': [{'destination': 'lib/firmware/brcm/test.bin', 'sha256': 'a' * 64}]}
         with patch.object(build, 'prepare_components', return_value=self.components), \
-                patch.object(build, 'cache_root', return_value=self.base / 'shared-cache'), \
-                patch.object(firmware, 'recipe_for', return_value=recipe) as recipe_for, \
+                patch.object(build, 'cache_root', return_value=self.base / 'shared-cache'):
+            output = ram.build_directory(directory)
+        # The project's payload is the same for every board and holds no firmware.
+        self.assertTrue(json.loads((output / 'build.json').read_text())['firmware'])
+        self.assertNotIn(b'firmware blob', gzip.decompress((output / 'initramfs.cpio.gz').read_bytes()))
+        with patch.object(firmware, 'recipe_for', return_value=recipe) as recipe_for, \
                 patch.object(firmware, 'ensure', return_value=outputs) as ensure:
-            ram.build_directory(directory, firmware=True)
-        recipe_for.assert_called_once_with('j71b', self.hardware)
+            layered = ram.with_firmware(output, 'j71b', hardware=self.hardware, cache=self.base / 'shared-cache')
+            again = ram.with_firmware(output, 'j71b', hardware=self.hardware, cache=self.base / 'shared-cache')
+        recipe_for.assert_called_with('j71b', self.hardware)
         self.assertEqual(ensure.call_args.kwargs['hardware'], self.hardware)
-        archive = gzip.decompress((directory / 'out/initramfs.cpio.gz').read_bytes())
-        self.assertIn(b'lib/firmware/brcm/test.bin', archive)
-        self.assertIn(b'firmware blob', archive)
-        (directory / 'rootfs/lib/firmware/brcm').mkdir(parents=True)
-        (directory / 'rootfs/lib/firmware/brcm/test.bin').write_bytes(b'mine')
-        with patch.object(build, 'prepare_components', return_value=self.components), \
-                patch.object(firmware, 'recipe_for', return_value=recipe), \
-                patch.object(firmware, 'ensure', return_value=outputs), \
-                self.assertRaisesRegex(ValueError, 'both provide'):
-            ram.build_directory(directory, firmware=True)
+        self.assertEqual(layered, again)
+        self.assertTrue(layered.is_relative_to(self.base / 'shared-cache/private'))
+        receipt = ram.verify_ram(layered)
+        self.assertEqual(receipt['boards'], ['j71b'])
+        image = (layered / 'linux.bin').read_bytes()
+        self.assertIn(gzip.compress(b'', mtime=0)[:3], image)  # gzip members of both layers
+        with self.assertRaisesRegex(ValueError, 'not n61'):
+            ram.with_firmware(output, 'n61', hardware=self.hardware, cache=self.base / 'shared-cache')
 
     def test_explicit_hardware_override_takes_precedence_over_active_package(self):
         directory = self.base / 'use_cases/override'
@@ -520,13 +553,27 @@ class RamTests(unittest.TestCase):
                 patch.object(build, 'prepare_components', return_value=self.components) as prepare:
             ram.build_directory(directory, hardware=self.hardware)
         self.assertEqual(prepare.call_args.args[0], self.hardware)
-        ram.verify_ram(directory / 'out')
+        ram.verify_ram(directory / 'out/apple-16k')
 
-    def test_run_directory_has_no_parent_layout_dependency(self):
+    def test_run_builds_for_the_attached_board_then_boots(self):
         directory = self.base / 'use_cases/deeply/nested/system'
-        with patch.object(boot, 'boot_ram') as upload:
+        directory.mkdir(parents=True)
+        shutil.copyfile(self.init, directory / 'init')
+        with patch('orchard.devices.attached_board', return_value='n61'), \
+                patch.object(ram, 'build_directory', return_value=directory / 'out/apple-4k') as compose, \
+                patch.object(boot, 'boot_ram') as upload:
+            (directory / 'out/apple-4k').mkdir(parents=True)
+            (directory / 'out/apple-4k/build.json').write_text('{"firmware": false}')
             boot.run_directory(directory)
-        upload.assert_called_once_with(directory / 'out', yes=False)
+        self.assertEqual(compose.call_args.kwargs['platform'], 'apple-4k')
+        upload.assert_called_once_with(directory / 'out/apple-4k', yes=False)
+
+    def test_run_without_build_needs_an_existing_build(self):
+        with patch('orchard.devices.attached_board', return_value='j71b'), \
+                patch.object(ram, 'build_directory') as compose, \
+                self.assertRaisesRegex(SystemExit, 'No apple-16k build'):
+            boot.run_directory(self.base, build=False)
+        compose.assert_not_called()
 
     def test_directory_requires_visible_init_before_building_components(self):
         with patch.object(build, 'prepare_components') as components:

@@ -21,7 +21,7 @@ class AdapterContract(unittest.TestCase):
 
     def test_identity_comes_from_the_hardware_descriptor(self):
         adapter = devices.load('j71b')
-        self.assertEqual((adapter.CHIP, adapter.BOARD, adapter.PRODUCT), (0x8010, 0x18, 'J71b Recovery'))
+        self.assertEqual((adapter.CHIP, adapter.BOARD, adapter.PRODUCT), (0x8010, 0x18, 'Orchard Recovery'))
         self.assertTrue(adapter.INSTALL)
 
     def test_unknown_profile_is_refused(self):

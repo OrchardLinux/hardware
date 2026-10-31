@@ -33,7 +33,8 @@ def choose() -> Tuple[Adapter, SelectedDevice]:
     device = usb.sole_target()
     adapters = [load(profile) for profile in profiles()]
     if device['mode'] == 'linux':
-        matches = [a for a in adapters if a.PRODUCT and device.get('product') == a.PRODUCT]
+        matches = [a for a in adapters if a.PRODUCT and device.get('product') == a.PRODUCT
+                   and device.get('profile') == a.PROFILE]
     else:
         matches = [a for a in adapters if a.matches_dfu(device)]
     if len(matches) != 1:
@@ -41,3 +42,19 @@ def choose() -> Tuple[Adapter, SelectedDevice]:
                          f"(chip {device.get('chip')}, board {device.get('board')})"
                          if not matches else 'The connected device matches several device descriptions')
     return matches[0], matches[0].discover()
+
+
+def attached_board() -> Optional[str]:
+    """The board of the one device attached in DFU or Pongo, if described; None otherwise.
+
+    Only lists USB devices: nothing is opened, reset or booted.
+    """
+    from .apple import usb
+    try:
+        found = [device for device in usb.devices() if device.get('mode') in ('dfu', 'pongo')]
+    except Exception:  # no libusb or USB access: no attached board to go by
+        return None
+    if len(found) != 1:
+        return None
+    matches = [profile for profile in profiles() if load(profile).matches_dfu(found[0])]
+    return matches[0] if len(matches) == 1 else None

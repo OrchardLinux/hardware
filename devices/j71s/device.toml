@@ -16,7 +16,7 @@ chip = 0x8000
 board = 0x10
 
 [match.linux]
-product = "J71s Recovery"
+recovery = true
 
 [boot]
 methods = ["checkm8-pongo"]

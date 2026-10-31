@@ -18,14 +18,18 @@ from orchard import firmware
 from .adt import validate as validate_adt
 
 
+# The recovery's USB product; its serial string names the board (BOARD:j71b).
+RECOVERY_PRODUCT = 'Orchard Recovery'
+
+
 class Device:
     def __init__(self, descriptor: Dict[str, Any]):
         identity = descriptor['device']
         self.PROFILE = identity['profile']
         self.NAME = identity['name']
         self.APPLE_PRODUCT = identity['apple_products'][0]
-        # USB product of the device's recovery system; absent until it has one.
-        self.PRODUCT = descriptor['match'].get('linux', {}).get('product')
+        # USB product of Orchard's recovery, the same on every device; absent until it has one.
+        self.PRODUCT = RECOVERY_PRODUCT if descriptor['match'].get('linux', {}).get('recovery') else None
         self.CHIP = descriptor['match']['dfu']['chip']
         self.BOARD = descriptor['match']['dfu']['board']
         dtb = descriptor.get('kernel', {}).get('dtb')
@@ -46,7 +50,7 @@ class Device:
     def recovery_endpoint(self) -> Dict[str, Any]:
         if self.PRODUCT is None:
             raise ValueError(f'The {self.NAME} has no Orchard recovery system yet')
-        return usb.recovery(self.PRODUCT)
+        return usb.recovery(self.PRODUCT, self.PROFILE)
 
     def connect(self, device: SelectedDevice) -> AbstractContextManager[Connection]:
         return ssh.session(DeviceState(self.PROFILE, device['ecid']), self.recovery_endpoint,
@@ -81,6 +85,7 @@ class Device:
         return apple_boot.boot(device, assets, manifest, progress,
                                profile=self.PROFILE, chip=self.CHIP, board=self.BOARD, product=self.PRODUCT)
 
-    def start_loader(self, device: SelectedDevice, loader: Dict[str, Path], progress: Progress) -> str:
+    def start_loader(self, device: SelectedDevice, loader: Dict[str, Path], progress: Progress,
+                     quiet: bool = False) -> str:
         return apple_boot.start_loader(device, loader, progress, profile=self.PROFILE,
-                                       chip=self.CHIP, board=self.BOARD, product=self.PRODUCT)
+                                       chip=self.CHIP, board=self.BOARD, product=self.PRODUCT, quiet=quiet)

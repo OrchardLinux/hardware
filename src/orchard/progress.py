@@ -50,21 +50,62 @@ class Progress:
         self.rows = {}
         self.rendered = 0
         self.log_path = None
+        self.opened = self.started
+        self.timings = []
+        self.indent = ''
 
     def task(self, name):
         return TaskProgress(self, name)
 
     def end_line(self):
         if self.active_line:
-            print(file=self.output, flush=True)
+            # A step or transfer line in place is cleared, not left behind.
+            print('\r\033[2K', end='', file=self.output, flush=True)
             self.active_line = False
         self.rows.clear()
         self.rendered = 0
 
-    def phase(self, message):
+    def say(self, message):
+        """A line of its own, outside any section's indent (headings, questions' context)."""
         with self.lock:
             self.end_line()
             print(message, file=self.output, flush=True)
+
+    def section(self, title):
+        """A blank line and a title; what follows is indented under it."""
+        with self.lock:
+            self.end_line()
+            bold = ('\033[1m', '\033[0m') if self.interactive else ('', '')
+            print(f'\n{bold[0]}{title}{bold[1]}', file=self.output, flush=True)
+            self.indent = '  '
+            self.timings.append([round(time.monotonic() - self.opened, 1), title])
+
+    def step(self, message):
+        """The current step of a section: one line, replaced by the next step."""
+        with self.lock:
+            self.timings.append([round(time.monotonic() - self.opened, 1), message])
+            if self.interactive:
+                self.end_line()
+                print('\r\033[2K' + self.indent + message, end='', file=self.output, flush=True)
+                self.active_line = True
+            else:
+                print(self.indent + message, file=self.output, flush=True)
+
+    def done(self, message=None):
+        """End the current step line, leaving MESSAGE (if any) in its place."""
+        with self.lock:
+            if self.active_line:
+                print('\r\033[2K', end='', file=self.output, flush=True)
+                self.active_line = False
+            if message:
+                print(self.indent + message, file=self.output, flush=True)
+
+    def phase(self, message):
+        with self.lock:
+            self.end_line()
+            print(self.indent + message, file=self.output, flush=True)
+            # Where the time goes: kept for the operation's report, not shown.
+            self.timings.append([round(time.monotonic() - self.opened, 1), message])
 
     def diagnostic(self, message):
         with self.lock:
@@ -89,11 +130,14 @@ class Progress:
                 return
             self.last = now
             message = transfer_text(sent, total, self.started, self.initial, now)
-            if self.interactive:
-                print('\r\033[2K' + message, end='', file=self.output, flush=True)
+            if sent == total:
+                # Done: the phase line above says what it was; no stray size line.
+                if self.active_line:
+                    print('\r\033[2K', end='', file=self.output, flush=True)
+                    self.active_line = False
+            elif self.interactive:
+                print('\r\033[2K' + self.indent + message, end='', file=self.output, flush=True)
                 self.active_line = True
-                if sent == total:
-                    self.end_line()
             else:
                 print(message, file=self.output, flush=True)
 
@@ -113,22 +157,33 @@ class Progress:
                 if self.rendered:
                     self.output.write(f'\033[{self.rendered}A')
                 for label, text in self.rows.items():
-                    self.output.write(f'\r\033[2K  {label:<20.20} {text}\n')
+                    self.output.write(f'\r\033[2K  {label:<16.16} {text}\n')
                 self.output.flush()
                 self.rendered = len(self.rows)
             elif complete:
-                print(f'  {name:<20.20} {message}', file=self.output, flush=True)
+                print(f'  {name:<16.16} {message}', file=self.output, flush=True)
+
+
+def size_text(count):
+    for unit, divisor in (('GiB', 1 << 30), ('MiB', 1 << 20), ('KiB', 1 << 10)):
+        if count >= divisor:
+            return f'{count / divisor:.1f} {unit}' if count < 10 * divisor else f'{count / divisor:.0f} {unit}'
+    return f'{count} B'
 
 
 def transfer_text(sent, total, started, initial, now):
-    rate = max(0, sent - initial) / max(now - started, 0.001)
+    elapsed = now - started
+    rate = max(0, sent - initial) / max(elapsed, 0.001)
+    # A rate means something after a moment; before that it is noise.
+    speed = f'  {size_text(rate)}/s' if elapsed >= 1 and rate else ''
+    if total is not None and sent >= total:
+        return size_text(total)
     if total is None:  # size known only once done, as for byte-range reads
-        return f'{sent / 1048576:5.0f} MiB  {rate / 1048576:5.1f} MiB/s'
-    unit, divisor = ('KiB', 1024) if total < 1048576 else ('MiB', 1048576)
-    eta = f'{(total - sent) / rate:.0f}s' if rate and sent < total else '—'
-    return (f'{sent * 100 / max(total, 1):3.0f}%  '
-            f'{sent / divisor:5.0f} / {total / divisor:5.0f} {unit}  '
-            f'{rate / 1048576:5.1f} MiB/s  {eta:>5}')
+        return size_text(sent) + speed
+    eta = (total - sent) / rate if elapsed >= 1 and rate else None
+    left = '' if eta is None else (f'  {eta:.0f} s left' if eta < 90 else f'  {eta / 60:.0f} min left')
+    return f'{sent * 100 / max(total, 1):3.0f}%  {size_text(sent)} of {size_text(total)}{speed}{left}'
+
 
 
 class TaskProgress(Progress):
@@ -147,7 +202,7 @@ class TaskProgress(Progress):
     def reset_transfer(self):
         self.started, self.last, self.initial = time.monotonic(), None, None
 
-    def transfer(self, sent, total):
+    def transfer(self, sent, total, prefix=''):
         now = time.monotonic()
         if self.initial is None:
             self.initial = sent
@@ -155,7 +210,7 @@ class TaskProgress(Progress):
         if sent != total and self.last is not None and now - self.last < interval:
             return
         self.last = now
-        self.parent.row(self.name, transfer_text(sent, total, self.started, self.initial, now),
+        self.parent.row(self.name, prefix + transfer_text(sent, total, self.started, self.initial, now),
                         complete=sent == total or not self.parent.interactive)
 
     def diagnostic(self, message):

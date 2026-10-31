@@ -40,17 +40,17 @@ class BuildConfigTests(unittest.TestCase):
         self.assertEqual(build.configured_device(self.example), 'unregistered-board')
         self.assertEqual(build.configured_device(self.root), 'unregistered-board')
 
-    def test_flag_then_checkout_then_user_config(self):
+    def test_flag_then_checkout_and_never_a_per_person_setting(self):
+        # Many work on several boards: no setting outside the checkout chooses one.
         self.user('device = "from-user"\n')
-        self.assertEqual(build.resolve_device(self.example), 'from-user')
+        self.assertIsNone(build.resolve_device(self.example))
         self.local.write_text('device = "from-checkout"\n')
         self.assertEqual(build.resolve_device(self.example), 'from-checkout')
         self.assertEqual(build.resolve_device(self.example, 'from-flag'), 'from-flag')
 
     def test_local_file_naming_only_an_orchard_checkout_leaves_the_device_open(self):
         self.local.write_text('orchard = "../orchard-gpu"\n')
-        self.user('device = "from-user"\n')
-        self.assertEqual(build.resolve_device(self.example), 'from-user')
+        self.assertIsNone(build.resolve_device(self.example))
 
     def test_does_not_inherit_another_repositorys_choice(self):
         self.local.write_text('device = "unrelated"\n')
@@ -58,11 +58,12 @@ class BuildConfigTests(unittest.TestCase):
         self.assertIsNone(build.configured_device(self.example))
 
     def test_payload_transport_defaults_on_and_can_be_turned_off(self):
-        self.assertEqual(build.payload_settings(self.example), {'transport': True})
-        (self.example / 'payload.toml').write_text('transport = false\n')
-        self.assertEqual(build.payload_settings(self.example), {'transport': False})
+        defaults = {'transport': True, 'modules': False, 'firmware': False}
+        self.assertEqual(build.payload_settings(self.example), defaults)
+        (self.example / 'payload.toml').write_text('transport = false\nfirmware = true\n')
+        self.assertEqual(build.payload_settings(self.example), {**defaults, 'transport': False, 'firmware': True})
         # Only the payload's own directory counts; a parent's file is another payload's.
-        self.assertEqual(build.payload_settings(self.example.parent), {'transport': True})
+        self.assertEqual(build.payload_settings(self.example.parent), defaults)
 
     def test_a_payload_names_no_device(self):
         (self.example / 'payload.toml').write_text('device = "j71b"\n')

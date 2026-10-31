@@ -68,7 +68,7 @@ def recipe_for(profile, hardware=None):
     if hardware is None:
         from .hardware import firmware_path
         return recipes.check(json.loads(firmware_path(profile).read_text()))
-    from .build import tomllib
+    import tomllib
     if not re.fullmatch(r'[a-z0-9][a-z0-9_-]*', profile):
         raise ValueError('Invalid device profile')
     descriptor = Path(hardware) / 'devices' / profile / 'device.toml'
@@ -109,10 +109,14 @@ def ensure(profile, clock, progress, *, allow_download=True, hardware=None):
     task = progress.task('Apple firmware')
     task.phase('Downloading only the needed parts')
     task.reset_transfer()
+    # Byte ranges of one IPSW: the total is known only at the end, so count files.
+    files, done = len(recipe['inputs']), [0]
     with clock.exclude('download'):
-        ipsw = Ipsw(source['url'], source['bytes'], on_bytes=lambda sent: task.transfer(sent, None))
+        ipsw = Ipsw(source['url'], source['bytes'], on_bytes=lambda sent: task.transfer(
+            sent, None, prefix=f'{min(done[0], files)} of {files} files  '))
 
         def read_input(name):
+            done[0] += 1
             location = recipe['inputs'][name]['ipsw']
             if 'zip' in location:
                 return ipsw.member(location['zip'])

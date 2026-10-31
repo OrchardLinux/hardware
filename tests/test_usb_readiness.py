@@ -7,13 +7,13 @@ from orchard.apple import boot
 
 ENDPOINT = {'mode':'linux', 'location':'linux-port', 'ecid':123,
             'boot_id':'11111111-1111-4111-8111-111111111111',
-            'product':'J71b Recovery', 'serial_port':'/dev/cu.recovery'}
+            'product':'Orchard Recovery', 'serial_port':'/dev/cu.recovery'}
 DEVICE = {'location':'dfu-port', 'ecid':123}
 
 
 class USBReadiness(unittest.TestCase):
     def wait(self, seconds=1):
-        return boot.wait_mode(DEVICE,'linux',chip=0x8010,board=0x18,product='J71b Recovery',seconds=seconds)
+        return boot.wait_mode(DEVICE,'linux',chip=0x8010,board=0x18,product='Orchard Recovery',seconds=seconds)
 
     def test_transient_enumeration_failure_then_real_identity_checked_success(self):
         for error in (subprocess.CalledProcessError(1,['ioreg'],stderr=b'transient registry failure'),
@@ -51,3 +51,14 @@ class USBReadiness(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class RunningSystem(unittest.TestCase):
+    def test_a_running_installed_system_is_not_a_target(self):
+        from unittest.mock import patch
+        from orchard.apple import usb
+        from orchard.state import EndpointUnavailable
+        system = {'location': 1, 'mode': 'system', 'product': 'Omarchy A', 'serial_port': '/dev/cu.x'}
+        with patch.object(usb, 'devices', return_value=[system]):
+            with self.assertRaisesRegex(EndpointUnavailable, 'DFU mode'):
+                usb.sole_target()
