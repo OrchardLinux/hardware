@@ -1,0 +1,64 @@
+{
+  "scope": "Measured J72 Linux7.0.12 RAM development code; not Orchard7.3 native integration",
+  "kernel_release": "7.0.12-j72spi2",
+  "code": {
+    "touch/j72_touch_session.c": {
+      "sha256": "3a24c2fcd1f427b5b16713e729b55548f5cecc853342d8930eb5dc8a49ba4253",
+      "status": "source copied byte-for-byte from local measured implementation"
+    },
+    "touch/j72-classic-contacts.h": {
+      "sha256": "0dc1f61c91f6a256f55ff6ec616af1b24b816943c539a61cf0a25eef0fb404b3",
+      "status": "source copied byte-for-byte from local measured implementation"
+    },
+    "touch/test-contacts.c": {
+      "sha256": "a7bc56a7726281a362b19f384b1c2e73ca3d9dd77aafeb6dc5cc9186fe5c5545",
+      "status": "source copied byte-for-byte from local measured implementation"
+    },
+    "battery/bq27xxx_battery_hdq_uart.c": {
+      "sha256": "cbbc75d392844ca9c26ef552a520cac082980a44888f8aa2626064f07c7db4df",
+      "status": "source copied byte-for-byte from local measured implementation"
+    },
+    "battery/test-hdq-core.c": {
+      "sha256": "a3f17bdd78ec47223a0e0a2d733f984ae42fe5c514ef74bb9df9ba151f865be3",
+      "status": "source copied byte-for-byte from local measured implementation"
+    },
+    "spi/spi-apple.c": {
+      "sha256": "5537f16910e83406c9a40f52495262739f41a36070b3959437069910c1548fe8",
+      "status": "source copied byte-for-byte from local measured implementation"
+    },
+    "spi/base/spi-apple.c": {
+      "sha256": "3ff7f5d361b3b775dad47161f00409aa9833fef4e46e8aa43ab6b6b85cbd8417",
+      "status": "reference/base source"
+    },
+    "charging/module/j72_input_limit_trial.c": {
+      "sha256": "5f9b3a76e1bbd584f8bdc7fc82bf03ccbea9085ae38faf27eab42325ebf7ab9b",
+      "status": "source copied byte-for-byte from local measured implementation"
+    },
+    "charging/module/j72-limit-core.h": {
+      "sha256": "df6450fab1405b402a861c00af0ce6891c8ddfa7472a557aad9ec462dea968f0",
+      "status": "source copied byte-for-byte from local measured implementation"
+    },
+    "charging/module/Makefile": {
+      "sha256": "f300810aa29eca9b62898f852be716910a30824ade88e329c6439cd5f3f8f2d1",
+      "status": "source copied byte-for-byte from local measured implementation"
+    },
+    "charging/test-core.c": {
+      "sha256": "7eb0e24406c503ef21905643bb95860d451e0899c2dfdcf3a37ff90a4776019b",
+      "status": "source copied byte-for-byte from local measured implementation"
+    },
+    "charging/j72_charger_snapshot.c": {
+      "sha256": "0af180003138e17c4c8c94a58185b39082e7435bdb6266c2dcc8ef08029c468b",
+      "status": "source copied byte-for-byte from local measured implementation"
+    },
+    "LICENSES/GPL-2.0.txt": {
+      "sha256": "8780e78a1a737e127f25a65f6d95269bffd36158dc261114de7859b490bfc5aa",
+      "status": "reference/base source"
+    }
+  },
+  "upstream_reference": {
+    "repo": "https://github.com/mattonik/ipad-nixos",
+    "commit": "b94d42f78e04c5465e290340a5b6879bbc5956b6"
+  },
+  "private_inputs": "Not distributed. No .inc, firmware, calibration, binary images or raw logs.",
+  "source_release": "https://github.com/thisiscamk/ipad-air-j72-linux/tree/090c68e/code"
+}

@@ -1,0 +1,17 @@
+--- a/drivers/power/supply/bq27xxx_battery.c
++++ b/drivers/power/supply/bq27xxx_battery.c
+@@ -2171,7 +2171,13 @@
+ 			val->intval = POWER_SUPPLY_TECHNOLOGY_LION;
+ 		break;
+ 	case POWER_SUPPLY_PROP_CHARGE_NOW:
+-		if (di->regs[BQ27XXX_REG_NAC] != INVALID_REG_ADDR)
++		/* J72's BQ27545 reports distinct compensated and uncompensated
++		 * capacity. Pair RemainingCapacity with FullChargeCapacity so
++		 * userspace does not compare NAC against compensated FCC.
++		 */
++		if (di->chip == BQ27545 && of_machine_is_compatible("apple,j72"))
++			ret = bq27xxx_battery_read_rc(di, val);
++		else if (di->regs[BQ27XXX_REG_NAC] != INVALID_REG_ADDR)
+ 			ret = bq27xxx_battery_read_nac(di, val);
+ 		else
+ 			ret = bq27xxx_battery_read_rc(di, val);
