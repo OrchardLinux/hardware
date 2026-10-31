@@ -18,16 +18,16 @@ arguments carry.
 Signed-off-by: Dalton Alexandre <alley.nightly_0b@icloud.com>
 Assisted-by: LLM
 ---
- .../bindings/soc/apple/apple,t8010-aop.yaml   | 79 +++++++++++++++++++
- 1 file changed, 79 insertions(+)
+ .../bindings/soc/apple/apple,t8010-aop.yaml   | 92 +++++++++++++++++++
+ 1 file changed, 92 insertions(+)
  create mode 100644 Documentation/devicetree/bindings/soc/apple/apple,t8010-aop.yaml
 
 diff --git a/Documentation/devicetree/bindings/soc/apple/apple,t8010-aop.yaml b/Documentation/devicetree/bindings/soc/apple/apple,t8010-aop.yaml
 new file mode 100644
-index 000000000..73b7c5d51
+index 000000000..b2fbeb896
 --- /dev/null
 +++ b/Documentation/devicetree/bindings/soc/apple/apple,t8010-aop.yaml
-@@ -0,0 +1,79 @@
+@@ -0,0 +1,92 @@
 +# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
 +%YAML 1.2
 +---
@@ -80,6 +80,16 @@ index 000000000..73b7c5d51
 +      The chip's unique ID (ECID), filled in by the bootloader. The
 +      firmware's boot arguments carry it.
 +
++patternProperties:
++  "^(accel|gyro|compass|pressure)$":
++    type: object
++    description:
++      A sensor served by the AOP firmware, named like the firmware's service.
++    properties:
++      mount-matrix:
++        description: The sensor's mounting rotation in the device.
++    additionalProperties: false
++
 +required:
 +  - compatible
 +  - reg
@@ -105,6 +115,9 @@ index 000000000..73b7c5d51
 +            mboxes = <&aop_mbox>;
 +            mbox-names = "mbox";
 +            firmware-name = "apple/aop-ipad7b.bin", "apple/aop-ipad7b-ext.bin";
++
++            accel {
++            };
 +        };
 +    };
 -- 
