@@ -3,7 +3,8 @@
 `usr/lib/modules/RELEASE/` holds the kernel (`vmlinuz`), orchard's initrd
 (`initrd`, see boot/initramfs/root), the DTB of every board of the platform
 (`dtb/`) and the modules. The regulatory database and the hardware defaults
-of `system/defaults` complete it, and `usr/lib/orchard/platform.json` says
+of `system/defaults` (vendor configuration and the sound cards' UCM
+profiles) complete it, and `usr/lib/orchard/platform.json` says
 what it is. The installer writes the layer into a root after the distro's
 root image, then writes the boot entry from it (docs/boot-contract.md). Root
 images carry no kernel, so one serves every platform, and a kernel change
@@ -29,6 +30,9 @@ SCHEMA = 1
 # What the initrd loads before it looks for the root, in order. Everything
 # else storage needs is built in; modprobe adds dependencies from modules.dep.
 STORAGE_MODULES = ('nvme',)
+# Where system/defaults may put files: vendor configuration under /usr/lib,
+# and the boards' ALSA UCM profiles where alsa-lib looks for them.
+DEFAULTS_UNDER = ('usr/lib/', 'usr/share/alsa/ucm2/')
 
 
 def boards(platform, hardware=None):
@@ -117,8 +121,8 @@ def files(bundle, platform, board_dtbs, *, busybox, hardware=None):
             raise ValueError(f'System defaults must not contain links: {path}')
         if path.is_file():
             name = path.relative_to(defaults).as_posix()
-            if not name.startswith('usr/lib/'):
-                raise ValueError(f'System defaults belong under /usr/lib: {name}')
+            if not name.startswith(DEFAULTS_UNDER):
+                raise ValueError(f'System defaults belong under /usr/lib or /usr/share/alsa/ucm2: {name}')
             result[name] = (path.read_bytes(), 0o644)
     description = {'schema': SCHEMA, 'platform': platform, 'kernel_release': release,
                    'boards': dict(sorted(board_dtbs.items()))}
