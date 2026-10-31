@@ -1,0 +1,32 @@
+{
+  "source_commit": "bb492b004265ce91123caa23b8bc04b2eff6d2b7",
+  "newlib_commit": "f9ea5054de8fb51dff6f6d3c2e7cdd4aa89744b8",
+  "compiler": "Apple clang version 21.0.0 (clang-2100.3.34.2)",
+  "sdk_version": "27.1",
+  "source_diff_held_fixed": true,
+  "forced_target_rebuild": true,
+  "hardware_tested_by_this_script": false,
+  "runs": [
+    {
+      "variant": "quiet-1",
+      "quiet_define": true,
+      "bytes": 238104,
+      "sha256": "c6aa270ba22d40036487b027d5bb9b67955c35def61ceb65cff2b358dd40d80b",
+      "matches_recorded_build": true
+    },
+    {
+      "variant": "normal-1",
+      "quiet_define": false,
+      "bytes": 238104,
+      "sha256": "90086685c73a066a05b736cc1908308ba2cda2a5283cdfebc1f7d9b62d41234d",
+      "matches_recorded_build": true
+    },
+    {
+      "variant": "quiet-2",
+      "quiet_define": true,
+      "bytes": 238104,
+      "sha256": "c6aa270ba22d40036487b027d5bb9b67955c35def61ceb65cff2b358dd40d80b",
+      "matches_recorded_build": true
+    }
+  ]
+}

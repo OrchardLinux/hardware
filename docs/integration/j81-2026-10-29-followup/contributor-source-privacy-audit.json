@@ -1,0 +1,15 @@
+{
+  "date": "2026-10-29",
+  "repository": "micro23/ipadair2-omarchy",
+  "candidate_files_scanned": 257,
+  "historical_blobs_scanned": 255,
+  "matches": {
+    "password_or_encoded_or_derived_key": 0,
+    "owner_ssid": 0,
+    "owner_ecid": 0
+  },
+  "credential_queries_sent_to_remote": false,
+  "credential_file_or_private_runtime_state_included": false,
+  "binary_rootfs_or_firmware_distribution": false,
+  "result": "PASS"
+}
