@@ -1,0 +1,36 @@
+// SPDX-License-Identifier: GPL-2.0-only OR MIT
+/* J208 ADT: UART5, AIC IRQ 221, AP GPIO 163 selector 1.
+ * Its existing PMGR domain is held by j208-battery-runtime.c before apply.
+ * No charging, gauge programming, NVMEM or internal storage nodes.
+ */
+/dts-v1/;
+/plugin/;
+
+&{/soc/pinctrl@20f100000} {
+	j208_battery_swi: j208-battery-swi {
+		pinmux = <0x000100a3>;
+	};
+};
+
+&{/soc} {
+	#address-cells = <2>;
+	#size-cells = <2>;
+	serial@20a0d4000 {
+		compatible = "apple,t8011-uart", "apple,t8010-uart";
+		reg = <2 0x0a0d4000 0 0x4000>;
+		reg-io-width = <4>;
+		interrupt-parent = <0x01>;
+		interrupts = <0 221 4>;
+		clocks = <0x05>, <0x05>;
+		clock-names = "uart", "clk_uart_baud0";
+		pinctrl-0 = <&j208_battery_swi>;
+		pinctrl-names = "default";
+		status = "okay";
+		onewire {
+			compatible = "ti,hdq-uart";
+			fuel-gauge {
+				compatible = "ti,bq27540-hdq";
+			};
+		};
+	};
+};

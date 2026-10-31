@@ -1,0 +1,462 @@
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/bus.h
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/bus.h
+@@ -180,6 +180,7 @@
+ 	enum brcmf_fwvendor fwvid;
+ 	bool always_use_fws_queue;
+ 	bool wowl_supported;
++	bool j208_rx_bidirectional; /* exact PCIe profile only */
+ 	bool removing;		/* device removal in progress; quiesce async work */
+ 	struct mutex bus_reset_lock;
+ 
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/core.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/core.c
+@@ -1184,9 +1184,6 @@
+ {
+ 	mutex_lock(&bus_if->bus_reset_lock);
+ 	bus_if->removing = true;
+-	/* Firmware lookup can fail before brcmf_attach() initializes this
+-	 * work item. Do not cancel uninitialized work from the FW callback.
+-	 */
+ 	if (bus_if->drvr && bus_if->drvr->bus_reset.func)
+ 		cancel_work_sync(&bus_if->drvr->bus_reset);
+ 	mutex_unlock(&bus_if->bus_reset_lock);
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/firmware.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/firmware.c
+@@ -409,16 +409,10 @@
+ 	if (eth_platform_get_mac_address(dev, mac) == 0)
+ 		nvp.strip_mac = true;
+ 
+-	/* This specific iPad's public NVRAM lacks macaddr; require its own ADT
+-	 * local-mac-address to be attached to the PCI OF node before any FW
+-	 * request can complete. Never print the MAC or private calibration.
+-	 */
+-	if (of_machine_is_compatible("apple,j71b")) {
+-		brcmf_info("J71B_WIFI_OF_MAC_PRESENT=%u\n", nvp.strip_mac);
+-		if (!nvp.strip_mac) {
+-			kfree(nvp.nvram);
+-			return NULL;
+-		}
++	/* Require this device's validated platform address; never log it. */
++	if (of_machine_is_compatible("apple,j208") && !nvp.strip_mac) {
++		kfree(nvp.nvram);
++		return NULL;
+ 	}
+ 
+ 	while (nvp.pos < data_len) {
+@@ -562,6 +556,10 @@
+ 	brcmf_dbg(TRACE, "enter: dev=%s\n", dev_name(fwctx->dev));
+ 
+ 	cur = &fwctx->req->items[fwctx->curpos];
++
++	/* The J208 test must not substitute EFI/SROM for its exact file. */
++	if (of_machine_is_compatible("apple,j208") && (!fw || !fw->data))
++		return -ENOENT;
+ 
+ 	if (fw && fw->data) {
+ 		data = (u8 *)fw->data;
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/msgbuf.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/msgbuf.c
+@@ -1638,17 +1638,19 @@
+ 						     DMA_TO_DEVICE);
+ 	if (!msgbuf->tx_pktids)
+ 		goto fail;
+-	/* Hypothesis: J71b BCM4355C1 reads host-posted RX buffers during
+-	 * association. DART3 enforces direction: DMA_FROM_DEVICE gives only
+-	 * IOMMU_WRITE; stream0 READ FAULT (0x10) is consistent with that.
+-	 * Limit the extra READ permission to brcmfmac's RX packet IDs in
+-	 * this isolated Wi-Fi experiment. The same pktids->direction is
+-	 * used by map AND unmap.
++	/* J208 BCM4355/10 reports stream-0 READ FAULTs during association
++	 * with write-only RX mappings. Test the same limited RX permission
++	 * correction used by the BCM4355 J71b port. The PCIe profile guard
++	 * sets this flag only for J208 with translated DMA; all map/unmap
++	 * operations continue to use the stored pktids direction.
+ 	 */
+ 	msgbuf->rx_pktids = brcmf_msgbuf_init_pktids(NR_RX_PKTIDS,
+-						     DMA_BIDIRECTIONAL);
++				 drvr->bus_if->j208_rx_bidirectional ?
++				 DMA_BIDIRECTIONAL : DMA_FROM_DEVICE);
+ 	if (!msgbuf->rx_pktids)
+ 		goto fail;
++	if (drvr->bus_if->j208_rx_bidirectional)
++		dev_info(drvr->bus_if->dev, "J208_WIFI_RX_DMA bidirectional=1 translated=1\n");
+ 
+ 	msgbuf->flow = brcmf_flowring_attach(drvr->bus_if->dev,
+ 					     if_msgbuf->max_flowrings);
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/pcie.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/pcie.c
+@@ -5,7 +5,9 @@
+ 
+ #include <linux/kernel.h>
+ #include <linux/module.h>
++#include <linux/mutex.h>
+ #include <linux/of.h>
++#include <linux/iommu.h>
+ #include <linux/firmware.h>
+ #include <linux/pci.h>
+ #include <linux/vmalloc.h>
+@@ -359,6 +361,10 @@
+ 	struct brcmf_mp_device *settings;
+ 	struct brcmf_otp_params otp;
+ 	bool fwseed;
++	bool j208_profile_matched;
++	bool j208_shutdown_started;
++	/* Serialize asynchronous firmware setup with final shutdown quiesce. */
++	struct mutex j208_shutdown_lock;
+ #ifdef DEBUG
+ 	u32 console_interval;
+ 	bool console_active;
+@@ -869,6 +875,10 @@
+ 	u8 ch;
+ 	u32 newidx;
+ 
++	/* Firmware console may contain device identity or calibration. */
++	if (of_machine_is_compatible("apple,j208"))
++		return;
++
+ 	if (!error && !BRCMF_FWCON_ON())
+ 		return;
+ 
+@@ -1745,8 +1755,6 @@
+ 
+ 			address -= rand_len;
+ 			brcmf_pcie_provide_random_bytes(devinfo, address);
+-			if (of_machine_is_compatible("apple,j71b"))
+-				brcmf_info("J71B_WIFI_SEED_WRITTEN bytes=%zu\n", rand_len);
+ 		}
+ 	} else {
+ 		brcmf_dbg(PCIE, "No matching NVRAM file found %s\n",
+@@ -1772,10 +1780,6 @@
+ 		loop_counter--;
+ 	}
+ 	if (sharedram_addr == sharedram_addr_written) {
+-		if (of_machine_is_compatible("apple,j71b"))
+-			brcmf_info("J71B_WIFI_FW_TIMEOUT ram_bytes=%u shared_before=0x%08x shared_after=0x%08x\n",
+-				   devinfo->ci->ramsize, sharedram_addr_written,
+-				   sharedram_addr);
+ 		brcmf_err(bus, "FW failed to initialize\n");
+ 		return -ENODEV;
+ 	}
+@@ -1805,7 +1809,11 @@
+ 		return err;
+ 	}
+ 
+-	pci_set_master(pdev);
++	/* J208 RAM test enables DMA only after exact-profile firmware lookup. */
++	if (of_machine_is_compatible("apple,j208"))
++		pci_clear_master(pdev);
++	else
++		pci_set_master(pdev);
+ 
+ 	/* Bar-0 mapped address */
+ 	bar0_addr = pci_resource_start(pdev, 0);
+@@ -1839,6 +1847,8 @@
+ 
+ static void brcmf_pcie_release_resource(struct brcmf_pciedev_info *devinfo)
+ {
++	if (of_machine_is_compatible("apple,j208"))
++		pci_clear_master(devinfo->pdev);
+ 	if (devinfo->tcm)
+ 		iounmap(devinfo->tcm);
+ 	if (devinfo->regs)
+@@ -1961,8 +1971,9 @@
+ 		return -EINVAL;
+ 
+ 	/* At this point both strings are guaranteed NUL-terminated */
+-	brcmf_dbg(PCIE, "OTP: chip_params='%s' board_params='%s'\n",
+-		  chip_params, board_params);
++	if (!of_machine_is_compatible("apple,j208"))
++		brcmf_dbg(PCIE, "OTP: chip_params='%s' board_params='%s'\n",
++			  chip_params, board_params);
+ 
+ 	p = skip_spaces(board_params);
+ 	while (*p) {
+@@ -1998,9 +2009,10 @@
+ 		p = skip_spaces(end);
+ 	}
+ 
+-	brcmf_dbg(PCIE, "OTP: module=%s vendor=%s version=%s\n",
+-		  devinfo->otp.module, devinfo->otp.vendor,
+-		  devinfo->otp.version);
++	if (!of_machine_is_compatible("apple,j208"))
++		brcmf_dbg(PCIE, "OTP: module=%s vendor=%s version=%s\n",
++			  devinfo->otp.module, devinfo->otp.vendor,
++			  devinfo->otp.version);
+ 
+ 	if (!devinfo->otp.module[0] ||
+ 	    !devinfo->otp.vendor[0] ||
+@@ -2008,12 +2020,6 @@
+ 		return -EINVAL;
+ 
+ 	devinfo->otp.valid = true;
+-	/* Bounded, non-unique board profile only. Never log raw OTP, MAC,
+-	 * calibration, NVRAM or firmware payloads in this experiment.
+-	 */
+-	brcmf_info("J71B_WIFI_OTP_PROFILE module=%s vendor=%s version=%s\n",
+-		   devinfo->otp.module, devinfo->otp.vendor,
+-		   devinfo->otp.version);
+ 	return 0;
+ }
+ 
+@@ -2127,10 +2133,12 @@
+ 	/* Map bus window to SROM/OTP shadow area in core */
+ 	base = brcmf_pcie_buscore_prep_addr(devinfo->pdev, base + core->base);
+ 
+-	brcmf_dbg(PCIE, "OTP data:\n");
++	if (!of_machine_is_compatible("apple,j208"))
++		brcmf_dbg(PCIE, "OTP data:\n");
+ 	for (idx = 0; idx < words; idx++) {
+ 		otp[idx] = brcmf_pcie_read_reg16(devinfo, base + 2 * idx);
+-		brcmf_dbg(PCIE, "[%8x] 0x%04x\n", base + 2 * idx, otp[idx]);
++		if (!of_machine_is_compatible("apple,j208"))
++			brcmf_dbg(PCIE, "[%8x] 0x%04x\n", base + 2 * idx, otp[idx]);
+ 	}
+ 
+ 	if (coreid == BCMA_CORE_CHIPCOMMON) {
+@@ -2159,29 +2167,32 @@
+ 	struct brcmf_pciedev_info *devinfo;
+ 	struct brcmf_commonring **flowrings;
+ 	u32 i, nvram_len;
++	bool j208, stopping;
+ 
+ 	bus = dev_get_drvdata(dev);
+ 	pcie_bus_dev = bus->bus_priv.pcie;
+ 	devinfo = pcie_bus_dev->devinfo;
++	j208 = devinfo->j208_profile_matched;
++	if (j208) {
++		mutex_lock(&devinfo->j208_shutdown_lock);
++		if (READ_ONCE(devinfo->j208_shutdown_started)) {
++			/* This late request has not been submitted to the device. */
++			if (fwreq) {
++				release_firmware(fwreq->items[BRCMF_PCIE_FW_CODE].binary);
++				brcmf_fw_nvram_free(fwreq->items[BRCMF_PCIE_FW_NVRAM].nv_data.data);
++				release_firmware(fwreq->items[BRCMF_PCIE_FW_CLM].binary);
++				release_firmware(fwreq->items[BRCMF_PCIE_FW_TXCAP].binary);
++				kfree(fwreq);
++			}
++			mutex_unlock(&devinfo->j208_shutdown_lock);
++			return;
++		}
++	}
+ 
+ 	/* check firmware loading result */
+ 	if (ret)
+ 		goto fail;
+ 
+-	/* Bounded startup evidence only: sizes and branch flags, never bytes,
+-	 * MAC, NVRAM contents, OTP payload or per-device calibration.
+-	 */
+-	if (of_machine_is_compatible("apple,j71b"))
+-		brcmf_info("J71B_WIFI_BOOT_INPUTS fw_bytes=%zu nvram_bytes=%u seed=%u clm_bytes=%zu txcap_bytes=%zu ram_bytes=%u\n",
+-			   fwreq->items[BRCMF_PCIE_FW_CODE].binary->size,
+-			   fwreq->items[BRCMF_PCIE_FW_NVRAM].nv_data.len,
+-			   devinfo->fwseed,
+-			   fwreq->items[BRCMF_PCIE_FW_CLM].binary ?
+-			   fwreq->items[BRCMF_PCIE_FW_CLM].binary->size : 0,
+-			   fwreq->items[BRCMF_PCIE_FW_TXCAP].binary ?
+-			   fwreq->items[BRCMF_PCIE_FW_TXCAP].binary->size : 0,
+-			   devinfo->ci->ramsize);
+-
+ 	brcmf_pcie_attach(devinfo);
+ 
+ 	fw = fwreq->items[BRCMF_PCIE_FW_CODE].binary;
+@@ -2206,6 +2217,21 @@
+ 	 */
+ 	brcmf_pcie_adjust_ramsize(devinfo, (u8 *)fw->data, fw->size);
+ 
++	if (of_machine_is_compatible("apple,j208")) {
++		u16 command;
++
++		pci_set_master(devinfo->pdev);
++		if (pci_read_config_word(devinfo->pdev, PCI_COMMAND, &command) ||
++		    !(command & PCI_COMMAND_MASTER)) {
++			pci_err(devinfo->pdev, "J208 host still blocks endpoint DMA\n");
++			release_firmware(fw);
++			brcmf_fw_nvram_free(nvram);
++			goto fail;
++		}
++		pci_info(devinfo->pdev,
++			 "J208_WIFI_FW_START exact angerb YSBU-m-2.3 profile, translated DMA\n");
++	}
++
+ 	ret = brcmf_pcie_download_fw_nvram(devinfo, fw, nvram, nvram_len);
+ 	if (ret)
+ 		goto fail;
+@@ -2252,12 +2278,21 @@
+ 
+ 	brcmf_pcie_fwcon_timer(devinfo, true);
+ 
++	if (j208)
++		mutex_unlock(&devinfo->j208_shutdown_lock);
+ 	return;
+ 
+ fail:
++	if (j208) {
++		stopping = READ_ONCE(devinfo->j208_shutdown_started);
++		/* Never wait for device_release_driver() with this lock held. */
++		mutex_unlock(&devinfo->j208_shutdown_lock);
++		if (stopping)
++			return;
++	}
+ 	brcmf_err(bus, "Dongle setup failed\n");
+ 	brcmf_pcie_bus_console_read(devinfo, true);
+-	if (devinfo->state == BRCMFMAC_PCIE_STATE_UP)
++	if (!of_machine_is_compatible("apple,j208"))
+ 		brcmf_fw_crashed(dev);
+ 	device_release_driver(dev);
+ }
+@@ -2273,19 +2308,32 @@
+ 		{ ".txcap_blob", devinfo->txcap_name },
+ 	};
+ 
+-	/* This private J71b research package maps apple,j71b to the exact
+-	 * figaroa/YSBC/u/4.3 public IPSW files. Refuse every other OTP/board
+-	 * BEFORE requesting or DMA-loading potentially wrong NVRAM/firmware.
+-	 */
+-	if (of_machine_is_compatible("apple,j71b") &&
+-	    (!devinfo->fwseed || !devinfo->otp.valid ||
+-	     strcmp(devinfo->otp.module, "YSBC") ||
+-	     strcmp(devinfo->otp.vendor, "u") ||
+-	     strcmp(devinfo->otp.version, "4.3") ||
+-	     !devinfo->settings->board_type ||
+-	     strcmp(devinfo->settings->board_type, "apple,j71b"))) {
+-		brcmf_err(NULL, "J71b OTP/board profile mismatch: firmware denied\n");
+-		return NULL;
++	/* Exact profile observed by the no-DMA J208 identification probe. */
++	if (of_machine_is_compatible("apple,j208")) {
++		struct iommu_domain *domain =
++			iommu_get_domain_for_dev(&devinfo->pdev->dev);
++		struct brcmf_bus *bus = dev_get_drvdata(&devinfo->pdev->dev);
++
++		if (devinfo->pdev->vendor != 0x14e4 ||
++		    devinfo->pdev->device != 0x43dc ||
++		    devinfo->ci->chip != BRCM_CC_4355_CHIP_ID ||
++		    devinfo->ci->chiprev != 10 || !devinfo->fwseed ||
++		    !devinfo->otp.valid ||
++		    strcmp(devinfo->otp.module, "YSBU") ||
++		    strcmp(devinfo->otp.vendor, "m") ||
++		    strcmp(devinfo->otp.version, "2.3") ||
++		    !devinfo->settings->board_type ||
++		    strcmp(devinfo->settings->board_type, "apple,j208") ||
++		    !devinfo->settings->cal_blob || !devinfo->settings->cal_size ||
++		    of_property_count_u8_elems(devinfo->pdev->dev.of_node,
++					      "local-mac-address") != ETH_ALEN ||
++		    !domain || domain->type != IOMMU_DOMAIN_DMA) {
++			pci_err(devinfo->pdev,
++				"J208 profile, platform data or translated DMA guard failed\n");
++			return NULL;
++		}
++		devinfo->j208_profile_matched = true;
++		bus->j208_rx_bidirectional = true;
+ 	}
+ 
+ 	fwreq = brcmf_fw_alloc_request(devinfo->ci->chip, devinfo->ci->chiprev,
+@@ -2297,17 +2345,32 @@
+ 
+ 	fwreq->items[BRCMF_PCIE_FW_CODE].type = BRCMF_FW_TYPE_BINARY;
+ 	fwreq->items[BRCMF_PCIE_FW_NVRAM].type = BRCMF_FW_TYPE_NVRAM;
+-	/* Exact J71b profile requires NVRAM; don't boot without it/seed. */
+-	if (!of_machine_is_compatible("apple,j71b"))
++	if (!of_machine_is_compatible("apple,j208"))
+ 		fwreq->items[BRCMF_PCIE_FW_NVRAM].flags = BRCMF_FW_REQF_OPTIONAL;
+ 	fwreq->items[BRCMF_PCIE_FW_CLM].type = BRCMF_FW_TYPE_BINARY;
+-	fwreq->items[BRCMF_PCIE_FW_CLM].flags = BRCMF_FW_REQF_OPTIONAL;
++	if (!of_machine_is_compatible("apple,j208"))
++		fwreq->items[BRCMF_PCIE_FW_CLM].flags = BRCMF_FW_REQF_OPTIONAL;
+ 	fwreq->items[BRCMF_PCIE_FW_TXCAP].type = BRCMF_FW_TYPE_BINARY;
+-	fwreq->items[BRCMF_PCIE_FW_TXCAP].flags = BRCMF_FW_REQF_OPTIONAL;
++	if (!of_machine_is_compatible("apple,j208"))
++		fwreq->items[BRCMF_PCIE_FW_TXCAP].flags = BRCMF_FW_REQF_OPTIONAL;
+ 	/* NVRAM reserves PCI domain 0 for Broadcom's SDK faked bus */
+ 	fwreq->domain_nr = pci_domain_nr(devinfo->pdev->bus) + 1;
+ 	fwreq->bus_nr = devinfo->pdev->bus->number;
+ 
++
++	/* No generic/family fallback: these four names are manifest-verified. */
++	if (of_machine_is_compatible("apple,j208")) {
++		strscpy(devinfo->fw_name,
++			"brcm/brcmfmac4355-pcie.apple,j208.bin", BRCMF_FW_NAME_LEN);
++		strscpy(devinfo->nvram_name,
++			"brcm/brcmfmac4355-pcie.apple,j208.txt", BRCMF_FW_NAME_LEN);
++		strscpy(devinfo->clm_name,
++			"brcm/brcmfmac4355-pcie.apple,j208.clm_blob", BRCMF_FW_NAME_LEN);
++		strscpy(devinfo->txcap_name,
++			"brcm/brcmfmac4355-pcie.apple,j208.txcap_blob", BRCMF_FW_NAME_LEN);
++		return fwreq;
++	}
++
+ 	/* Apple platforms with fancy firmware/NVRAM selection */
+ 	if (devinfo->settings->board_type &&
+ 	    devinfo->settings->antenna_sku &&
+@@ -2510,6 +2573,7 @@
+ 		return ret;
+ 
+ 	devinfo->pdev = pdev;
++	mutex_init(&devinfo->j208_shutdown_lock);
+ 	pcie_bus_dev = NULL;
+ 	devinfo->ci = brcmf_chip_attach(devinfo, pdev->device,
+ 					&brcmf_pcie_buscore_ops);
+@@ -2812,13 +2876,63 @@
+ 
+ 
+ MODULE_DEVICE_TABLE(pci, brcmf_pcie_devid_table);
++
++
++/* Quiesce only the observed J208 profile; retain all DMA allocations. */
++static void brcmf_pcie_shutdown(struct pci_dev *pdev)
++{
++	struct brcmf_bus *bus = dev_get_drvdata(&pdev->dev);
++	struct brcmf_pciedev_info *devinfo;
++	u16 command;
++	u32 irq_mask;
++	int ret;
+ 
++	if (!of_machine_is_compatible("apple,j208") ||
++	    pdev->vendor != 0x14e4 || pdev->device != 0x43dc || !bus)
++		return;
++	devinfo = bus->bus_priv.pcie->devinfo;
++	if (!devinfo->j208_profile_matched)
++		return;
+ 
++	WRITE_ONCE(devinfo->j208_shutdown_started, true);
++	/* Do not hold the reset gate while waiting for its IRQ-using worker. */
++	mutex_lock(&bus->bus_reset_lock);
++	bus->removing = true;
++	mutex_unlock(&bus->bus_reset_lock);
++	if (bus->drvr && bus->drvr->bus_reset.func)
++		cancel_work_sync(&bus->drvr->bus_reset);
++	/* The reset worker only launches the asynchronous firmware request. */
++	mutex_lock(&devinfo->j208_shutdown_lock);
++	brcmf_bus_change_state(bus, BRCMF_BUS_DOWN);
++	WRITE_ONCE(devinfo->state, BRCMFMAC_PCIE_STATE_DOWN);
++#ifdef DEBUG
++	WRITE_ONCE(devinfo->console_active, false);
++	timer_shutdown_sync(&devinfo->timer);
++#endif
++	brcmf_pcie_intr_disable(devinfo);
++	/* Flush the posted interrupt-mask write before draining handlers. */
++	brcmf_pcie_read_reg32(devinfo, devinfo->reginfo->mailboxmask);
++	if (devinfo->irq_allocated)
++		synchronize_irq(pdev->irq);
++	/* A handler already past its UP check could have re-enabled it. */
++	brcmf_pcie_intr_disable(devinfo);
++	irq_mask = brcmf_pcie_read_reg32(devinfo, devinfo->reginfo->mailboxmask);
++	pci_clear_master(pdev);
++	ret = pci_read_config_word(pdev, PCI_COMMAND, &command);
++	if (irq_mask || ret || (command & PCI_COMMAND_MASTER))
++		pci_err(pdev, "J208_WIFI_SHUTDOWN quiesce readback failed\n");
++	else
++		pci_info(pdev,
++			 "J208_WIFI_SHUTDOWN irq_mask=0 bus_master=0 buffers_retained=1\n");
++	mutex_unlock(&devinfo->j208_shutdown_lock);
++}
++
+ static struct pci_driver brcmf_pciedrvr = {
+ 	.name = KBUILD_MODNAME,
+ 	.id_table = brcmf_pcie_devid_table,
+ 	.probe = brcmf_pcie_probe,
+ 	.remove = brcmf_pcie_remove,
++	.shutdown = brcmf_pcie_shutdown,
+ #ifdef CONFIG_PM
+ 	.driver.pm = &brcmf_pciedrvr_pm,
+ #endif
