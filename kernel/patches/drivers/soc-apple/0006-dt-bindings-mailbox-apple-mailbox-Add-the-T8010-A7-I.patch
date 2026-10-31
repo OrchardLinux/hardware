@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <henrik@goat-code.com>
+Date: Fri, 30 Oct 2026 01:18:20 +0800
+Subject: [PATCH] dt-bindings: mailbox: apple,mailbox: Add the T8010 A7 IOP
+ mailbox
+
+The coprocessors of the A10 (T8010), such as the GPU coprocessor and the
+always-on processor, use an older mailbox than the ASC and M3 variants:
+each message is a single 64-bit word, with the endpoint in bits 63:56
+and a 56-bit payload. Its four interrupts are the same as those of the
+other variants.
+
+Add a compatible for it.
+
+Assisted-by: LLM
+---
+ .../devicetree/bindings/mailbox/apple,mailbox.yaml         | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/mailbox/apple,mailbox.yaml b/Documentation/devicetree/bindings/mailbox/apple,mailbox.yaml
+index 28985cc..ba035ff 100644
+--- a/Documentation/devicetree/bindings/mailbox/apple,mailbox.yaml
++++ b/Documentation/devicetree/bindings/mailbox/apple,mailbox.yaml
+@@ -52,6 +52,13 @@ properties:
+               - apple,t6000-m3-mailbox
+           - const: apple,m3-mailbox-v2
+ 
++      - description:
++          The A7 IOP mailbox (AppleA7IOP) is an older variant found on the
++          A10, used for example by the GPU and always-on coprocessors. Each
++          message is a single 64-bit word with the endpoint in its top byte.
++        items:
++          - const: apple,t8010-a7iop-mailbox
++
+   reg:
+     maxItems: 1
+ 
+-- 
+2.54.0 (Apple Git-157)
+

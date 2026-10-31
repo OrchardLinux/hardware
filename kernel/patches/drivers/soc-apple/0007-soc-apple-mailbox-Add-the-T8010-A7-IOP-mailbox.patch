@@ -1,0 +1,215 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <henrik@goat-code.com>
+Date: Fri, 30 Oct 2026 01:18:20 +0800
+Subject: [PATCH] soc: apple: mailbox: Add the T8010 A7 IOP mailbox
+
+The coprocessors of the A10 (AppleA7IOP, such as the GPU coprocessor
+"gfx-kf" and the always-on processor) use an older mailbox than the ASC
+and M3 variants: each message is a single 64-bit word with the endpoint
+in bits 63:56 and a 56-bit payload, sent through one register and
+received from another.
+
+Add an apple,t8010-a7iop-mailbox variant for it. Its interrupts are
+masked through a set/clear register pair rather than enabled and acked,
+and both FIFOs have to be enabled in their control registers. Set this
+up on every start, as the coprocessor's power domain may have been off
+in between, and unmask only the two interrupts the driver uses.
+
+This lets the mainline apple-rtkit core drive A10 coprocessors.
+
+Assisted-by: LLM
+---
+ drivers/soc/apple/mailbox.c | 118 +++++++++++++++++++++++++++++++++---
+ 1 file changed, 108 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/soc/apple/mailbox.c b/drivers/soc/apple/mailbox.c
+index 5c48455..1417dba 100644
+--- a/drivers/soc/apple/mailbox.c
++++ b/drivers/soc/apple/mailbox.c
+@@ -4,9 +4,11 @@
+  *
+  * Copyright The Asahi Linux Contributors
+  *
+- * This driver adds support for two mailbox variants (called ASC and M3 by
+- * Apple) found in Apple SoCs such as the M1. It consists of two FIFOs used to
+- * exchange 64+32 bit messages between the main CPU and a co-processor.
++ * This driver adds support for the mailbox variants called ASC and M3 by Apple,
++ * found in Apple SoCs such as the M1, and the older A7 IOP variant (AppleA7IOP
++ * V2) found in A9/A10 SoCs. ASC and M3 consist of two FIFOs used to exchange
++ * 64+32 bit messages between the main CPU and a co-processor. The A7 IOP
++ * variant moves a single 64-bit word, with the endpoint in its top byte.
+  * Various coprocessors implement different IPC protocols based on these simple
+  * messages and shared memory buffers.
+  *
+@@ -72,6 +74,29 @@
+ #define APPLE_M3_MBOX_IRQ_I2A_EMPTY BIT(2)
+ #define APPLE_M3_MBOX_IRQ_I2A_NOT_EMPTY BIT(3)
+ 
++/*
++ * A7 IOP mailbox. Its interrupts are masked through a set/clear register pair
++ * and each FIFO has to be enabled in its control register.
++ */
++#define APPLE_A7IOP_MBOX_IRQ_MASK_SET 0x00
++#define APPLE_A7IOP_MBOX_IRQ_MASK_CLEAR 0x04
++#define APPLE_A7IOP_MBOX_IRQ_A2I_EMPTY BIT(0)
++#define APPLE_A7IOP_MBOX_IRQ_A2I_NOT_EMPTY BIT(4)
++#define APPLE_A7IOP_MBOX_IRQ_I2A_EMPTY BIT(8)
++#define APPLE_A7IOP_MBOX_IRQ_I2A_NOT_EMPTY BIT(12)
++#define APPLE_A7IOP_MBOX_IRQ_ALL                                          \
++	(APPLE_A7IOP_MBOX_IRQ_A2I_EMPTY | APPLE_A7IOP_MBOX_IRQ_A2I_NOT_EMPTY | \
++	 APPLE_A7IOP_MBOX_IRQ_I2A_EMPTY | APPLE_A7IOP_MBOX_IRQ_I2A_NOT_EMPTY)
++#define APPLE_A7IOP_MBOX_A2I_CONTROL 0x08
++#define APPLE_A7IOP_MBOX_A2I_SEND 0x10
++#define APPLE_A7IOP_MBOX_I2A_CONTROL 0x20
++#define APPLE_A7IOP_MBOX_I2A_RECV 0x38
++#define APPLE_A7IOP_MBOX_CONTROL_ENABLE BIT(0)
++#define APPLE_A7IOP_MBOX_CONTROL_FULL BIT(16)
++#define APPLE_A7IOP_MBOX_CONTROL_EMPTY BIT(17)
++#define APPLE_A7IOP_MBOX_MSG_ENDPOINT GENMASK_ULL(63, 56)
++#define APPLE_A7IOP_MBOX_MSG_PAYLOAD GENMASK_ULL(55, 0)
++
+ #define APPLE_MBOX_MSG1_OUTCNT GENMASK(56, 52)
+ #define APPLE_MBOX_MSG1_INCNT GENMASK(51, 48)
+ #define APPLE_MBOX_MSG1_OUTPTR GENMASK(47, 44)
+@@ -92,9 +117,20 @@ struct apple_mbox_hw {
+ 	unsigned int i2a_recv0;
+ 	unsigned int i2a_recv1;
+ 
++	/* One 64-bit word per message, endpoint (msg1) in bits 63:56 */
++	bool packed_endpoint;
++	/* FIFOs must be enabled through APPLE_A7IOP_MBOX_CONTROL_ENABLE */
++	bool needs_enable;
++
+ 	bool has_irq_controls;
+ 	unsigned int irq_enable;
+ 	unsigned int irq_ack;
++
++	bool has_irq_mask;
++	unsigned int irq_mask_set;
++	unsigned int irq_mask_clear;
++	unsigned int irq_mask_all;
++
+ 	unsigned int irq_bit_recv_not_empty;
+ 	unsigned int irq_bit_send_empty;
+ };
+@@ -107,6 +143,11 @@ int apple_mbox_send(struct apple_mbox *mbox, const struct apple_mbox_msg msg,
+ 	u32 mbox_ctrl;
+ 	long t;
+ 
++	if (mbox->hw->packed_endpoint &&
++	    ((msg.msg0 & ~APPLE_A7IOP_MBOX_MSG_PAYLOAD) ||
++	     msg.msg1 > FIELD_MAX(APPLE_A7IOP_MBOX_MSG_ENDPOINT)))
++		return -EINVAL;
++
+ 	spin_lock_irqsave(&mbox->tx_lock, flags);
+ 	mbox_ctrl = readl_relaxed(mbox->regs + mbox->hw->a2i_control);
+ 
+@@ -153,9 +194,15 @@ int apple_mbox_send(struct apple_mbox *mbox, const struct apple_mbox_msg msg,
+ 		mbox_ctrl = readl_relaxed(mbox->regs + mbox->hw->a2i_control);
+ 	}
+ 
+-	writeq_relaxed(msg.msg0, mbox->regs + mbox->hw->a2i_send0);
+-	writeq_relaxed(FIELD_PREP(APPLE_MBOX_MSG1_MSG, msg.msg1),
+-		       mbox->regs + mbox->hw->a2i_send1);
++	if (mbox->hw->packed_endpoint) {
++		writeq_relaxed(FIELD_PREP(APPLE_A7IOP_MBOX_MSG_ENDPOINT, msg.msg1) |
++				       msg.msg0,
++			       mbox->regs + mbox->hw->a2i_send0);
++	} else {
++		writeq_relaxed(msg.msg0, mbox->regs + mbox->hw->a2i_send0);
++		writeq_relaxed(FIELD_PREP(APPLE_MBOX_MSG1_MSG, msg.msg1),
++			       mbox->regs + mbox->hw->a2i_send1);
++	}
+ 
+ 	spin_unlock_irqrestore(&mbox->tx_lock, flags);
+ 
+@@ -190,10 +237,16 @@ static int apple_mbox_poll_locked(struct apple_mbox *mbox)
+ 	u32 mbox_ctrl = readl_relaxed(mbox->regs + mbox->hw->i2a_control);
+ 
+ 	while (!(mbox_ctrl & mbox->hw->control_empty)) {
+-		msg.msg0 = readq_relaxed(mbox->regs + mbox->hw->i2a_recv0);
+-		msg.msg1 = FIELD_GET(
+-			APPLE_MBOX_MSG1_MSG,
+-			readq_relaxed(mbox->regs + mbox->hw->i2a_recv1));
++		if (mbox->hw->packed_endpoint) {
++			u64 word = readq_relaxed(mbox->regs + mbox->hw->i2a_recv0);
++
++			msg.msg0 = FIELD_GET(APPLE_A7IOP_MBOX_MSG_PAYLOAD, word);
++			msg.msg1 = FIELD_GET(APPLE_A7IOP_MBOX_MSG_ENDPOINT, word);
++		} else {
++			msg.msg0 = readq_relaxed(mbox->regs + mbox->hw->i2a_recv0);
++			msg.msg1 = FIELD_GET(APPLE_MBOX_MSG1_MSG,
++					     readq_relaxed(mbox->regs + mbox->hw->i2a_recv1));
++		}
+ 
+ 		mbox->rx(mbox, msg, mbox->cookie);
+ 		ret++;
+@@ -265,6 +318,28 @@ int apple_mbox_start(struct apple_mbox *mbox)
+ 			       mbox->regs + mbox->hw->irq_enable);
+ 	}
+ 
++	/*
++	 * Variants with an interrupt mask get the same treatment: only the two
++	 * interrupts used here are unmasked. This state is set up on every
++	 * start because the coprocessor's power domain may have been off.
++	 */
++	if (mbox->hw->has_irq_mask) {
++		writel_relaxed(mbox->hw->irq_mask_all,
++			       mbox->regs + mbox->hw->irq_mask_set);
++		writel_relaxed(mbox->hw->irq_bit_recv_not_empty |
++				       mbox->hw->irq_bit_send_empty,
++			       mbox->regs + mbox->hw->irq_mask_clear);
++	}
++
++	if (mbox->hw->needs_enable) {
++		writel_relaxed(readl_relaxed(mbox->regs + mbox->hw->a2i_control) |
++				       APPLE_A7IOP_MBOX_CONTROL_ENABLE,
++			       mbox->regs + mbox->hw->a2i_control);
++		writel_relaxed(readl_relaxed(mbox->regs + mbox->hw->i2a_control) |
++				       APPLE_A7IOP_MBOX_CONTROL_ENABLE,
++			       mbox->regs + mbox->hw->i2a_control);
++	}
++
+ 	enable_irq(mbox->irq_recv_not_empty);
+ 	mbox->active = true;
+ 	return 0;
+@@ -407,6 +482,28 @@ static const struct apple_mbox_hw apple_mbox_t8015_hw = {
+ 	.has_irq_controls = false,
+ };
+ 
++static const struct apple_mbox_hw apple_mbox_a7iop_hw = {
++	.control_full = APPLE_A7IOP_MBOX_CONTROL_FULL,
++	.control_empty = APPLE_A7IOP_MBOX_CONTROL_EMPTY,
++
++	.a2i_control = APPLE_A7IOP_MBOX_A2I_CONTROL,
++	.a2i_send0 = APPLE_A7IOP_MBOX_A2I_SEND,
++
++	.i2a_control = APPLE_A7IOP_MBOX_I2A_CONTROL,
++	.i2a_recv0 = APPLE_A7IOP_MBOX_I2A_RECV,
++
++	.packed_endpoint = true,
++	.needs_enable = true,
++	.has_irq_controls = false,
++
++	.has_irq_mask = true,
++	.irq_mask_set = APPLE_A7IOP_MBOX_IRQ_MASK_SET,
++	.irq_mask_clear = APPLE_A7IOP_MBOX_IRQ_MASK_CLEAR,
++	.irq_mask_all = APPLE_A7IOP_MBOX_IRQ_ALL,
++	.irq_bit_recv_not_empty = APPLE_A7IOP_MBOX_IRQ_I2A_NOT_EMPTY,
++	.irq_bit_send_empty = APPLE_A7IOP_MBOX_IRQ_A2I_EMPTY,
++};
++
+ static const struct apple_mbox_hw apple_mbox_asc_hw = {
+ 	.control_full = APPLE_ASC_MBOX_CONTROL_FULL,
+ 	.control_empty = APPLE_ASC_MBOX_CONTROL_EMPTY,
+@@ -444,6 +541,7 @@ static const struct apple_mbox_hw apple_mbox_m3_hw = {
+ static const struct of_device_id apple_mbox_of_match[] = {
+ 	{ .compatible = "apple,asc-mailbox-v4", .data = &apple_mbox_asc_hw },
+ 	{ .compatible = "apple,t8015-asc-mailbox", .data = &apple_mbox_t8015_hw },
++	{ .compatible = "apple,t8010-a7iop-mailbox", .data = &apple_mbox_a7iop_hw },
+ 	{ .compatible = "apple,m3-mailbox-v2", .data = &apple_mbox_m3_hw },
+ 	{}
+ };
+-- 
+2.54.0 (Apple Git-157)
+

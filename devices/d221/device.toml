@@ -15,9 +15,9 @@ dt_compatible = ["apple,d221"]
 chip = 0x8015
 board = 0x0e
 
-# USB product of the Orchard recovery system ("<Board> Recovery").
+# Orchard Recovery runs here (USB "Orchard Recovery", serial BOARD:<profile>).
 [match.linux]
-product = "D221 Recovery"
+recovery = true
 
 [boot]
 methods = ["checkm8-pongo"]
