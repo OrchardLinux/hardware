@@ -1,0 +1,29 @@
+From ddbf9cb33a725c5922cc1e2f8b88ac7aa4388fae Mon Sep 17 00:00:00 2001
+From: Eduardo Martins <372861+edulmartins@users.noreply.github.com>
+Date: Sat, 31 Oct 2026 12:58:07 -0500
+Subject: [PATCH] arm64: dts: apple: t8015: Enable the backlight
+
+t8015-common.dtsi describes the A11 boards (iPhone 8, 8 Plus and iPhone X)
+but never enables their dwi_bl node, even though the driver and the node
+sit ready in t8015.dtsi. The A10 boards enable it the same way in
+t8010-common.dtsi. On an iPhone X the framebuffer and panel already come
+up, and this exposes the panel's brightness control.
+---
+ arch/arm64/boot/dts/apple/t8015-common.dtsi | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/apple/t8015-common.dtsi b/arch/arm64/boot/dts/apple/t8015-common.dtsi
+index f1d6804..1a52fc2 100644
+--- a/arch/arm64/boot/dts/apple/t8015-common.dtsi
++++ b/arch/arm64/boot/dts/apple/t8015-common.dtsi
+@@ -47,6 +47,10 @@
+ 	};
+ };
+ 
++&dwi_bl {
++	status = "okay";
++};
++
+ &serial0 {
+ 	status = "okay";
+ };
