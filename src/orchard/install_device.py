@@ -478,6 +478,9 @@ def remove_old_entries(boot_root, partuuid):
     return removed
 
 
+# A distribution's boot splash in its root; launch paints it (OSPL: see launch.py).
+SPLASH = 'usr/share/orchard/splash'
+
 def entry_token(entry, partuuid):
     """The BLS entry token: the system's id and its root, so two installs never share files."""
     return f'{entry["id"]}-{partuuid.split("-")[0]}'
@@ -496,12 +499,15 @@ def write_entry(boot_root, root, version, entry, partuuid):
     token = entry_token(entry, partuuid)
     files = {'linux': source / 'vmlinuz', 'initrd': source / 'initrd',
              entry['devicetree']: source / 'dtb' / entry['devicetree']}
+    # The system's boot splash (docs/boot-contract.md), if it ships one.
+    splash = root / SPLASH
+    extra = {'splash': splash} if splash.is_file() and not splash.is_symlink() else {}
     for name, path in files.items():
         if path.is_symlink() or not path.is_file():
             raise InstallError('no-kernel', f'The platform layer lacks /{path.relative_to(root)}')
     directory = boot_root / token / version
     directory.mkdir(parents=True, exist_ok=True)
-    for name, path in files.items():
+    for name, path in {**files, **extra}.items():
         with path.open('rb') as data, (directory / name).open('wb') as output:
             while chunk := data.read(1 << 20):
                 output.write(chunk)

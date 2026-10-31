@@ -10,6 +10,8 @@ The host brings only Pongo and that m1n1, which ship with Orchard
 (orchard.hardware.loader) or are built from the hardware source, so any
 host with Orchard can launch any installed system, from any distro.
 """
+import struct
+
 from .bootdisk import BootDiskError, Disk, read_boot
 from .devices import choose
 from .progress import Clock, Progress
@@ -58,8 +60,33 @@ def load(proxy, fat, path, align=BLOCK):
     return addr, size
 
 
+SPLASH_MAGIC = b'OSPL'
+
+
+def paint_splash(proxy, fat, entry, progress):
+    """Paint the boot entry's splash, centred on black, before its kernel loads.
+
+    `splash` next to the entry's kernel: b'OSPL', u32 width, u32 height, then
+    width x height pixels as bytes r, g, b, 0. The quiet m1n1 shows black
+    until then; the kernel keeps this frame until the system clears it.
+    Anything wrong here only costs the splash, never the boot.
+    """
+    path = entry.get('linux').rsplit('/', 1)[0] + '/splash'
+    try:
+        addr, size = load(proxy, fat, path)
+        magic, width, height = struct.unpack('<4sII', proxy.read(addr, 12))
+        screen_width, screen_height = proxy.screen_size()
+        if magic != SPLASH_MAGIC or size != 12 + width * height * 4 or width > screen_width or height > screen_height:
+            raise ValueError(f'{path}: not a splash for this screen')
+        proxy.fill(0, 0, screen_width, screen_height, 0)
+        proxy.blit((screen_width - width) // 2, (screen_height - height) // 2, width, height, addr + 12)
+    except (BootDiskError, M1n1Error, ValueError, struct.error) as error:
+        progress.diagnostic(f'splash: {error}')
+
+
 def start(proxy, fat, entry, progress):
     progress.phase('Starting ' + entry.title)
+    paint_splash(proxy, fat, entry, progress)
     runs, _ = fat.file(entry.get('linux'))
     kernel = proxy.memalign(KERNEL_ALIGN, KERNEL_SPACE)
     if fat.disk.read(runs[0][0], 2) == b'\x1f\x8b':

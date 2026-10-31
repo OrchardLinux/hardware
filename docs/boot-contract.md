@@ -79,6 +79,19 @@ options    root=PARTUUID=4d6c…-… rw quiet
 
 **Boot counting** (`+tries` in the file name) is not supported yet. Such entries boot as if they had no counter.
 
+## Splash
+
+A system's boot splash ships in its root as `/usr/share/orchard/splash`; the
+installer copies it next to the entry's kernel (`/TOKEN/VERSION/splash`).
+After choosing an entry, `orchard launch` paints it centred on black before
+the kernel loads, and the kernel keeps that frame until the system clears it.
+A missing or malformed splash only costs the picture, never the boot.
+
+The format is `OSPL`, then width and height as little-endian u32, then
+width × height pixels as the bytes r, g, b, 0, top row first. Distributions
+write it from the same artwork their own m1n1 draws, so install and launch
+show the same picture.
+
 ## Selection
 
 The host lists every valid entry in BLS order and boots the one the user picks. Invalid entries are listed with the reason and never hidden. Reasons include:

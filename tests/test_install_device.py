@@ -120,6 +120,21 @@ class BootEntry(unittest.TestCase):
             with self.assertRaisesRegex(D.InstallError, 'lacks /usr/lib/modules/7.3-orchard/initrd'):
                 D.write_entry(boot, work / 'root', '7.3-orchard', entry, partuuid)
 
+    def test_the_system_splash_goes_next_to_its_kernel(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            source = work / 'root/usr/lib/modules/7.3-orchard'
+            (source / 'dtb').mkdir(parents=True)
+            for name in ('vmlinuz', 'initrd', 'dtb/t8010-j71b.dtb'):
+                (source / name).write_bytes(b'x')
+            (work / 'root' / D.SPLASH).parent.mkdir(parents=True)
+            (work / 'root' / D.SPLASH).write_bytes(b'OSPL-image')
+            boot = work / 'boot'
+            boot.mkdir()
+            entry = {'id': 'omarchy', 'title': 'Omarchy', 'options': '', 'devicetree': 't8010-j71b.dtb'}
+            D.write_entry(boot, work / 'root', '7.3-orchard', entry, '4d6c1a2b-0000-4000-8000-000000000001')
+            self.assertEqual((boot / 'omarchy-4d6c1a2b/7.3-orchard/splash').read_bytes(), b'OSPL-image')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -22,6 +22,8 @@ P_SMP_START_SECONDARIES = 0x500
 P_GZDEC = 0x401
 P_MAIN_STORAGE_INIT, P_MAIN_STORAGE_SHUTDOWN, P_MAIN_STORAGE_READ = 0xf08, 0xf09, 0xf0a
 P_CPUFREQ_INIT = 0x1300
+P_GET_BOOTARGS = 0x001
+P_FB_BLIT, P_FB_FILL = 0xd02, 0xd04
 
 M1N1_HEAP = 128 << 20   # room left to m1n1's own heap, as proxyclient does
 HOST_HEAP = 1 << 30
@@ -203,6 +205,20 @@ class M1n1Proxy:
         if result < 0:
             raise M1n1Error('Kernel decompression failed')
         return result
+
+    def screen_size(self):
+        """The framebuffer's (width, height) from the boot arguments m1n1 got."""
+        base = self.call(P_GET_BOOTARGS)
+        # struct boot_args: u16, u16, four u64, then boot_video {base, display, stride, width, height, depth}.
+        _, _, _, width, height, _ = struct.unpack('<6Q', self.read(base + 40, 48))
+        return width, height
+
+    def fill(self, x, y, w, h, rgb=0):
+        self.call(P_FB_FILL, x, y, w, h, rgb)
+
+    def blit(self, x, y, w, h, addr):
+        """Draw W x H pixels at ADDR (bytes r, g, b, x per pixel)."""
+        self.call(P_FB_BLIT, x, y, w, h, addr, w)  # stride w, PIX_FMT_XRGB (0) in the high half
 
     def boot_linux(self, kernel, dtb, initrd, initrd_size, bootargs):
         self.call(P_KBOOT_SET_CHOSEN, self.string('bootargs'), self.string(bootargs))
