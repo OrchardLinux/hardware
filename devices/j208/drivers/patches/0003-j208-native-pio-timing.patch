@@ -1,0 +1,42 @@
+--- a/drivers/spi/spi-apple.c
++++ b/drivers/spi/spi-apple.c
+@@ -130,6 +130,7 @@
+ 	struct dmaengine_result dma_result;
+ 	const struct apple_spi_hw *hw;
+ 	u32 word_delay;
++	bool j208_native_pio;
+ };
+ 
+ static inline void reg_write(struct apple_spi *spi, int offset, u32 value)
+@@ -165,7 +166,7 @@
+ static void apple_spi_t8010_write_status_config(struct apple_spi *spi,
+ 						bool use_descriptor)
+ {
+-	if (use_descriptor)
++	if (use_descriptor || spi->j208_native_pio)
+ 		reg_write(spi, APPLE_SPI_STATUS,
+ 			  APPLE_SPI_T8010_DESC_STATUS_CFG);
+ }
+@@ -238,7 +239,8 @@
+ {
+ 	u32 word_delay = spi->word_delay;
+ 
+-	if (use_descriptor && (device->mode & SPI_CPOL) &&
++	if ((use_descriptor || spi->j208_native_pio) &&
++	    (device->mode & SPI_CPOL) &&
+ 	    word_delay <= 1)
+ 		word_delay = 2;
+ 
+@@ -961,6 +963,12 @@
+ 	if (ret)
+ 		return dev_err_probe(&pdev->dev, ret, "Unable to bind to interrupt\n");
+ 
++	/* J208 SPI3 has native spi-version 1. AppleSamsungSPI applies
++	 * its STATUS template and CPOL delay floor to every transfer,
++	 * including full-duplex PIO beyond the 16-word FIFO.
++	 */
++	spi->j208_native_pio = spi->hw->legacy_status &&
++		of_machine_is_compatible("apple,j208");
+ 	spi->word_delay = spi->hw->default_word_delay;
+ 	of_property_read_u32(pdev->dev.of_node, "apple,t8010-word-delay",
+ 			     &spi->word_delay);

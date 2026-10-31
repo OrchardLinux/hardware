@@ -1,0 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-only OR MIT
+/* Existing J208 bus, clock, pinctrl and power provider only. No ALS client. */
+/dts-v1/;
+/plugin/;
+
+&{/soc/i2c@20a113000} {
+	status = "okay";
+};

@@ -1,0 +1,52 @@
+# iPad Pro 10.5 cellular (J208). The verified drivers are stored beside this
+# descriptor; kernel/series does not apply them yet.
+schema = 1
+kind = "hardware.device"
+
+[device]
+profile = "j208"
+name = "iPad Pro 10.5 (Cellular)"
+apple_products = ["iPad7,4"]
+dt_compatible = ["apple,j208"]
+
+[match.dfu]
+chip = 0x8011
+board = 0x06
+
+[boot]
+methods = ["checkm8-pongo"]
+
+[kernel]
+platform = "apple-16k"
+dtb = "t8011-j208"
+
+[firmware]
+recipe = "firmware.json"
+
+[support]
+install = false
+status = "experimental"
+caveats = [
+  "Touch, Wi-Fi, backlight, battery readout and both light sensors passed on the previous RAM desktop. Their sources are in devices/j208/drivers and are not applied by kernel/series.",
+  "This kernel series has no t8011-j208 board tree, so Orchard does not build or install a J208 system.",
+  "Audio, GPU acceleration, charging and internal storage are not included. Firmware blobs are not in this checkout.",
+]
+wifi = true
+usb_serial = true
+usb_network = false
+
+[features]
+display = "partial"
+touch = "partial"
+wifi = "partial"
+bluetooth = "untested"
+storage = "missing"
+battery = "partial"
+charging = "missing"
+backlight = "partial"
+buttons = "untested"
+audio = "missing"
+camera = "missing"
+cellular = "missing"
+suspend = "missing"
+gpu = "missing"

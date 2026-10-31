@@ -1,0 +1,412 @@
+--- a/drivers/pci/controller/pcie-apple-h9p.c
++++ b/drivers/pci/controller/pcie-apple-h9p.c
+@@ -172,6 +172,8 @@
+ 	u32 value;
+ };
+ 
++#include "pcie-apple-j208-tunables.h"
++
+ /* Serialized by T8010 boot firmware as apcie-common-tunables. */
+ static const struct apple_h9p_tunable h9p_rc_common_tunables[] = {
+ 	{ 0x0008, 0x7f7f7f7f, 0x00000000 },
+@@ -292,6 +294,7 @@
+ 	bool pwrctrl_powered;
+ 	bool j172_bridge_quirk;
+ 	bool enumeration_only;
++	bool t8011_wifi;
+ 
+ 	struct apple_h9p_nvmmu nvmmu;
+ 
+@@ -850,10 +853,9 @@
+ 				       int where, int size, u32 val)
+ {
+ 	struct pci_config_window *cfg = bus->sysdata;
+-	struct apple_h9p_pcie *pcie;
++	struct apple_h9p_pcie *pcie = apple_h9p_pcie_lookup(cfg->parent);
+ 
+ 	if (bus->number == cfg->busr.start) {
+-		pcie = apple_h9p_pcie_lookup(cfg->parent);
+ 		if (!pcie || PCI_SLOT(devfn) >= H9P_NUM_PORTS ||
+ 		    !(pcie->enabled_ports & BIT(PCI_SLOT(devfn))))
+ 			return PCIBIOS_DEVICE_NOT_FOUND;
+@@ -862,6 +864,24 @@
+ 	if (where <= PCI_INTERRUPT_LINE && where + size > PCI_INTERRUPT_LINE)
+ 		val |= 0xffu << ((PCI_INTERRUPT_LINE - where) << 3);
+ 
++	/* J208 DMA test admits only root port2 and the observed BCM4355. */
++	if (pcie && pcie->t8011_wifi && where <= PCI_COMMAND &&
++	    where + size > PCI_COMMAND) {
++		bool allow = !pcie->enumeration_only;
++		u32 id;
++
++		if (bus->number == cfg->busr.start)
++			allow &= devfn == PCI_DEVFN(2, 0);
++		else if (bus->number == cfg->busr.start + 1 && !devfn)
++			allow &= !pci_generic_config_read(bus, devfn, PCI_VENDOR_ID,
++							 4, &id) && id == 0x43dc14e4;
++		else
++			allow = false;
++		if (!allow)
++			apple_h9p_limit_config_field(&val, where, size, PCI_COMMAND,
++						      PCI_COMMAND_MASTER, 0);
++	}
++
+ 	return pci_generic_config_write(bus, devfn, where, size, val);
+ }
+ 
+@@ -934,6 +954,7 @@
+ 	struct pci_dev *pdev;
+ 	unsigned long flags;
+ 	unsigned int port;
++	unsigned int slots = pcie->t8011_wifi ? 4 : H9P_MSI_PER_PORT;
+ 	int ret, slot;
+ 
+ 	if (nr_irqs != 1 || !msi_dev || !dev_is_pci(msi_dev))
+@@ -950,8 +971,8 @@
+ 		return -ENOSPC;
+ 
+ 	spin_lock_irqsave(&pcie->used_msi_lock, flags);
+-	slot = find_first_zero_bit(pcie->used_msi[port], H9P_MSI_PER_PORT);
+-	if (slot >= H9P_MSI_PER_PORT) {
++	slot = find_first_zero_bit(pcie->used_msi[port], slots);
++	if (slot >= slots) {
+ 		spin_unlock_irqrestore(&pcie->used_msi_lock, flags);
+ 		return -ENOSPC;
+ 	}
+@@ -1473,7 +1494,131 @@
+ 	writel(0, pcie->base_phy_ip +
+ 	       H9P_PHY_IP_PORT(phy_lane, H9P_PHY_IP_PORT_CLEAR2));
+ }
++
++/* AppleT8011PCIe::_commonInit, 21H461, 0xfffffff006aa4f04.
++ * Unlike H9P, 0x24 is status and 0x28 is a tunable. No port-0 control write.
++ * The common table is restricted to global registers and the Wi-Fi port.
++ */
++static int apple_j208_setup_common(struct apple_h9p_pcie *pcie)
++{
++	int ret;
+ 
++	writel(0x10, pcie->base_rc + 0x4); /* J208 lane-cfg = 0 */
++	apple_h9p_apply_tunables(pcie->base_phy, j208_phy_adt_tunables,
++				 ARRAY_SIZE(j208_phy_adt_tunables));
++	writel(1, pcie->base_rc + 0x34);
++	ret = apple_h9p_wait(pcie->base_rc + 0x24, BIT(0), BIT(0),
++			     BIT(0), 250000);
++	if (ret)
++		return dev_err_probe(pcie->dev, ret, "J208 common ready timeout\n");
++	h9p_rmw(pcie->base_rc + 0x30, BIT(0), 0);
++	apple_h9p_apply_tunables(pcie->base_rc, j208_rc_wifi_tunables,
++				 ARRAY_SIZE(j208_rc_wifi_tunables));
++	return 0;
++}
++
++/* AppleT801xPCIePort::enablePortHardware, 0xfffffff006aa3144;
++ * AppleT8011PCIePort::_waitForPipeClock, 0xfffffff006aa5b4c.
++ * Only port 2 is accepted by probe. All waits are bounded for the RAM test.
++ */
++static int apple_j208_enable_port(struct apple_h9p_pcie *pcie)
++{
++	ktime_t deadline;
++	unsigned int stable = 0;
++	int ret;
++
++	h9p_rmw(pcie->base_rc + 0x234, BIT(0), 0);
++	h9p_rmw(pcie->base_rc + 0x224, 0, BIT(0));
++	ret = apple_h9p_wait(pcie->base_rc + 0x24, BIT(4), BIT(4),
++			     BIT(4), 250000);
++	if (ret)
++		return ret;
++	usleep_range(100, 200);
++	h9p_rmw(pcie->base_rc + 0x228, BIT(4), 0);
++	ret = apple_h9p_wait(pcie->base_rc + 0x204, BIT(0), 0, 0, 250000);
++	if (ret)
++		return ret;
++	h9p_rmw(pcie->base_rc + 0x200, 0, BIT(0));
++	h9p_rmw(pcie->base_rc + 0x200, BIT(8), 0);
++	/* t-refclk-to-perst = 100, passed to IODelay without scaling. */
++	usleep_range(100, 200);
++	h9p_rmw(pcie->base_rc + 0x234, 0, BIT(0));
++	deadline = ktime_add_ms(ktime_get(), 250);
++	do {
++		if (readl(pcie->base_port[2] + 0x208) & BIT(2))
++			stable = 0;
++		else if (++stable == 2)
++			break;
++		usleep_range(5000, 6000);
++	} while (ktime_before(ktime_get(), deadline));
++	if (stable < 2)
++		return -ETIMEDOUT;
++
++	writel(3, pcie->base_rc + 0x40a0);
++	h9p_rmw(pcie->base_rc + 0x224, BIT(8), 0);
++	return 0;
++}
++
++static int apple_j208_setup_port(struct apple_h9p_pcie *pcie,
++				enum apple_h9p_port_result *result)
++{
++	void __iomem *config = pcie->base_config + 2 * H9P_CFG_PORT_STRIDE;
++	void __iomem *port = pcie->base_port[2];
++	u32 linksts;
++	u64 cap;
++	int ret;
++
++	*result = APPLE_H9P_PORT_DISABLED;
++	ret = gpiod_direction_output(pcie->perst[2], 1);
++	if (ret)
++		return ret;
++	/* Original host property perst-to-refclk-delay-us = 60. */
++	usleep_range(60, 100);
++	ret = apple_j208_enable_port(pcie);
++	if (ret)
++		return dev_err_probe(pcie->dev, ret, "J208 port2 clock timeout\n");
++	ret = apple_dart_reload_configuration(pcie->manual_dart[2], 0);
++	if (ret)
++		return dev_err_probe(pcie->dev, ret, "J208 DART2 reload failed\n");
++
++	cap = apple_h9p_read_pci_cap(pcie, 2 << 3, PCI_CAP_ID_EXP);
++	if (!cap)
++		return dev_err_probe(pcie->dev, -ENODEV, "J208 missing PCIe capability\n");
++	pcie->pcie_cap[2] = cap;
++	h9p_rmww(config + cap + PCI_EXP_LNKCTL2, PCI_EXP_LNKCTL2_TLS,
++		 H9P_LINK_SPEED_2_5GT);
++	apple_h9p_apply_tunables(port, j208_port_adt_tunables,
++				 ARRAY_SIZE(j208_port_adt_tunables));
++	apple_h9p_apply_tunables(config, j208_config_adt_tunables,
++				 ARRAY_SIZE(j208_config_adt_tunables));
++	/* T8011 enablePortHardware override, 0xfffffff006aa5814. */
++	h9p_rmw(config + 0x8e0, 0, BIT(0));
++	h9p_rmw(config + 0x80c, 0, BIT(17));
++	h9p_rmw(config + 0x890, 0, BIT(9) | BIT(12));
++
++	writel(H9P_PORT_IRQMASK_PRE_LINK, port + H9P_PORT_IRQMASK);
++	writel(H9P_PORT_IRQSTAT_PRE_LINK, port + H9P_PORT_IRQSTAT);
++	h9p_rmw(port + H9P_PORT_ENABLE, 0, H9P_PORT_ENABLE_APPLE);
++	/* Original MSI constructor: count 4 and global vector base 16. */
++	writel(0x21, port + H9P_PORT_PWRCTL);
++	writel(0x00100010, port + H9P_PORT_MSIVECBASE);
++	writel(H9P_PORT_IRQMASK_LINK_UP, port + H9P_PORT_IRQMASK);
++	ret = gpiod_direction_output(pcie->perst[2], 0);
++	if (ret)
++		return ret;
++	h9p_rmw(port + H9P_PORT_LTSSMCTL, 0, H9P_PORT_LTSSM_ENABLE);
++	ret = apple_h9p_wait_link(pcie, 2, &linksts);
++	if (ret) {
++		writel(H9P_PORT_IRQMASK_ALL, port + H9P_PORT_IRQMASK);
++		dev_warn(pcie->dev, "J208 port2 link timeout (linksts=%#x)\n", linksts);
++		return ret;
++	}
++	*result = APPLE_H9P_PORT_READY;
++	dev_info(pcie->dev, "J208 port2 link ready; endpoint DMA %s\n",
++		 pcie->enumeration_only ? "disabled" : "permitted for 14e4:43dc");
++	return 0;
++}
++
+ static int apple_h9p_setup_port(struct apple_h9p_pcie *pcie, unsigned int port,
+ 				enum apple_h9p_port_result *result)
+ {
+@@ -1485,6 +1630,9 @@
+ 	u32 linksts;
+ 	int ret;
+ 
++	if (pcie->t8011_wifi)
++		return apple_j208_setup_port(pcie, result);
++
+ 	*result = APPLE_H9P_PORT_READY;
+ 	if (apple_h9p_link_up(pcie, port))
+ 		return 0;
+@@ -1638,6 +1786,9 @@
+ {
+ 	int ret;
+ 
++	if (pcie->t8011_wifi)
++		return apple_j208_setup_common(pcie);
++
+ 	writel(H9P_RC_COMMON_CTL_INIT,
+ 	       pcie->base_rc + H9P_RC_COMMON_CTL0);
+ 	h9p_rmw(pcie->base_rc + H9P_RC_PORT_CTL1(0), 0,
+@@ -1759,6 +1910,9 @@
+ 	if (ret)
+ 		return ret;
+ 
++	if (pcie->t8011_wifi)
++		return 0;
++
+ 	ret = apple_h9p_setup_nvmmu(pcie);
+ 	return ret;
+ }
+@@ -1786,10 +1940,12 @@
+ 	if (IS_ERR(pcie->base_phy))
+ 		return PTR_ERR(pcie->base_phy);
+ 
+-	pcie->base_phy_ip =
+-		devm_platform_ioremap_resource_byname(pdev, "phy-ip");
+-	if (IS_ERR(pcie->base_phy_ip))
+-		return PTR_ERR(pcie->base_phy_ip);
++	if (!pcie->t8011_wifi) {
++		pcie->base_phy_ip =
++			devm_platform_ioremap_resource_byname(pdev, "phy-ip");
++		if (IS_ERR(pcie->base_phy_ip))
++			return PTR_ERR(pcie->base_phy_ip);
++	}
+ 
+ 	for (i = 0; i < H9P_NUM_PORTS; i++) {
+ 		char name[8];
+@@ -1804,6 +1960,10 @@
+ 			return PTR_ERR(pcie->base_port[i]);
+ 	}
+ 
++	/* A Wi-Fi-only host must not map the storage DMA controller. */
++	if (!(pcie->enabled_ports & BIT(0)))
++		return 0;
++
+ 	pcie->nvmmu.base =
+ 		devm_platform_ioremap_resource_byname(pdev, "nvmmu");
+ 	if (IS_ERR(pcie->nvmmu.base))
+@@ -1968,6 +2128,8 @@
+ 	pci_pwrctrl_destroy_devices(pcie->dev);
+ }
+ 
++static atomic_t j208_wifi_attempted = ATOMIC_INIT(0);
++
+ static int apple_h9p_pcie_probe(struct platform_device *pdev)
+ {
+ 	struct device *dev = &pdev->dev;
+@@ -1984,6 +2146,8 @@
+ 	pcie->dev = dev;
+ 	pcie->pdev = pdev;
+ 	pcie->bridge = bridge;
++	pcie->t8011_wifi = of_device_is_compatible(dev->of_node,
++						  "apple,t8011-pcie-wifi");
+ 	pcie->enumeration_only = of_property_read_bool(dev->of_node,
+ 						      "apple,enumeration-only");
+ 	spin_lock_init(&pcie->used_msi_lock);
+@@ -2007,6 +2171,14 @@
+ 		return dev_err_probe(dev, -EPERM,
+ 				     "discovery candidate requires only storage root0\n");
+ 
++	if (pcie->t8011_wifi &&
++	    (pcie->enabled_ports != BIT(2) || pcie->preinit_phy_ports ||
++	     pcie->link_retry_ports || pcie->hardware_trained_phy_ports ||
++	     pcie->deferred_power_ports || pcie->inherited_perst_ports ||
++	     pcie->phy_lane[2] != 2 || pcie->max_link_speed[2] != 1 ||
++	     !pcie->manual_dart[2] || pcie->manual_dart_sid[2]))
++		return dev_err_probe(dev, -EPERM, "J208 requires only Wi-Fi port2\n");
++
+ 	ret = apple_h9p_pcie_map_resources(pdev, pcie);
+ 	if (ret)
+ 		return ret;
+@@ -2036,6 +2208,10 @@
+ 	if (ret)
+ 		return dev_err_probe(dev, ret, "failed to get clocks\n");
+ 
++	/* Dependencies may defer before the first power/clock operation. */
++	if (pcie->t8011_wifi && atomic_xchg(&j208_wifi_attempted, 1))
++		return -EALREADY;
++
+ 	ret = apple_h9p_pcie_attach_genpd(pcie);
+ 	if (ret)
+ 		return dev_err_probe(dev, ret, "failed to attach power domains\n");
+@@ -2120,6 +2296,20 @@
+ 	bool readonly = of_property_read_bool(pdev->dev.of_node,
+ 					      "apple,readonly-storage");
+ 
++	if (of_device_is_compatible(pdev->dev.of_node, "apple,t8011-pcie-wifi")) {
++		bool dma_test = of_property_read_bool(pdev->dev.of_node,
++						    "apple,wifi-dma-test");
++
++		if (!of_machine_is_compatible("apple,j208") ||
++		    enumeration == dma_test ||
++		    readonly || IS_ENABLED(CONFIG_NVME_APPLE) ||
++		    IS_ENABLED(CONFIG_NVME_CORE) || IS_ENABLED(CONFIG_BLK_DEV_NVME))
++			return -EPERM;
++		ret = apple_h9p_pcie_probe(pdev);
++		if (ret == -EPROBE_DEFER && atomic_read(&j208_wifi_attempted))
++			return -EIO;
++		return ret;
++	}
+ 	if (!of_machine_is_compatible("apple,j71b"))
+ 		return apple_h9p_pcie_probe(pdev);
+ 	if (enumeration == readonly || IS_ENABLED(CONFIG_NVME_APPLE))
+@@ -2154,6 +2344,7 @@
+ 		.data = &apple_h9p_j172_bridge_quirk,
+ 	},
+ 	{ .compatible = "apple,t8010-pcie" },
++	{ .compatible = "apple,t8011-pcie-wifi" },
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(of, apple_h9p_pcie_of_match);
+--- a/drivers/pci/controller/pcie-apple-j208-tunables.h
++++ b/drivers/pci/controller/pcie-apple-j208-tunables.h
+@@ -0,0 +1,71 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++/* Exact J208 ADT tunables. RC table retains global registers and port 2 only.
++ * PHY table remains the original common-init table; lane subsets are unproven.
++ * Source: captured J208 ADT and AppleT8011PCIe from 21H461. */
++
++static const struct apple_h9p_tunable j208_rc_wifi_tunables[] = {
++	{ 0x0008, 0x7f7f7f7f, 0x00000000 },
++	{ 0x000c, 0x00073f3f, 0x00043f00 },
++	{ 0x0010, 0x00000700, 0x00000000 },
++	{ 0x0018, 0x00ffffff, 0x000c0960 },
++	{ 0x001c, 0x00001fff, 0x0000092c },
++	{ 0x0028, 0x000000ff, 0x00000009 },
++	{ 0x0200, 0x31100010, 0x21000000 },
++	{ 0x0208, 0x00000707, 0x00000000 },
++	{ 0x020c, 0x00073f3f, 0x00043f00 },
++	{ 0x0214, 0x00000011, 0x00000001 },
++	{ 0x0218, 0x00000007, 0x00000000 },
++	{ 0x021c, 0x00073f3f, 0x00043f00 },
++	{ 0x0220, 0x0333003f, 0x0111000f },
++	{ 0x0230, 0x000000ff, 0x0000000f },
++	{ 0x0238, 0x000001ff, 0x000000f2 },
++	{ 0x0200, 0x00000010, 0x00000010 },
++};
++
++static const struct apple_h9p_tunable j208_config_adt_tunables[] = {
++	{ 0x0164, 0x00f8ff00, 0x00000000 },
++	{ 0x08a8, 0x00ffff0f, 0x00001001 },
++	{ 0x08e0, 0x00000005, 0x00000005 },
++};
++
++static const struct apple_h9p_tunable j208_port_adt_tunables[] = {
++	{ 0x0090, 0x00ffffff, 0x0003a980 },
++	{ 0x0130, 0x0000000f, 0x00000007 },
++	{ 0x0134, 0x00000001, 0x00000001 },
++	{ 0x0138, 0x00007f7f, 0x00000000 },
++	{ 0x013c, 0x00000003, 0x00000002 },
++	{ 0x0140, 0x0073ffff, 0x00703d09 },
++	{ 0x0090, 0x00ffffff, 0x0003a980 },
++	{ 0x0130, 0x0000000f, 0x00000007 },
++	{ 0x0134, 0x00000001, 0x00000001 },
++	{ 0x0138, 0x00007f7f, 0x00000000 },
++	{ 0x013c, 0x00000003, 0x00000002 },
++	{ 0x0140, 0x0073ffff, 0x00703d09 },
++};
++
++static const struct apple_h9p_tunable j208_phy_adt_tunables[] = {
++	{ 0x0814, 0x00000001, 0x00000001 },
++	{ 0x0914, 0x0000001f, 0x00000006 },
++	{ 0x0918, 0x0000001f, 0x00000006 },
++	{ 0x091c, 0x0000001f, 0x00000006 },
++	{ 0x0934, 0x00000007, 0x00000007 },
++	{ 0x0958, 0x0000001f, 0x00000018 },
++	{ 0x095c, 0x0000000f, 0x00000000 },
++	{ 0x0960, 0x0000000f, 0x00000000 },
++	{ 0x0964, 0x00000001, 0x00000001 },
++	{ 0x09ac, 0x0000001f, 0x00000006 },
++	{ 0x09b0, 0x0000001f, 0x00000006 },
++	{ 0x09b4, 0x0000001f, 0x00000006 },
++	{ 0x0a3c, 0x0000001f, 0x00000006 },
++	{ 0x0a40, 0x0000001f, 0x00000006 },
++	{ 0x0a44, 0x0000001f, 0x00000006 },
++	{ 0x0acc, 0x0000001f, 0x00000006 },
++	{ 0x0ad0, 0x0000001f, 0x00000006 },
++	{ 0x0ad4, 0x0000001f, 0x00000006 },
++	{ 0x0b5c, 0x0000001f, 0x00000006 },
++	{ 0x0b60, 0x0000001f, 0x00000006 },
++	{ 0x0b64, 0x0000001f, 0x00000006 },
++	{ 0x0bec, 0x0000001f, 0x00000006 },
++	{ 0x0bf0, 0x0000001f, 0x00000006 },
++	{ 0x0bf4, 0x0000001f, 0x00000006 },
++};

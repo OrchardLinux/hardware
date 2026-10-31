@@ -1,0 +1,11 @@
+--- a/drivers/spi/spi-apple.c
++++ b/drivers/spi/spi-apple.c
+@@ -344,7 +344,7 @@
+ 			cfg |= APPLE_SPI_T8010_DESC_CPOL_LOW;
+ 		if (device->mode & SPI_CPHA)
+ 			cfg |= APPLE_SPI_CFG_CPHA;
+-		cfg |= APPLE_SPI_T8010_DESC_WORD_BITS << word_index;
++		cfg |= word_index << APPLE_SPI_T8010_DESC_WORD_BITS;
+ 		return cfg;
+ 	}
+ 

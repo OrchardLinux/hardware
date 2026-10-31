@@ -1,0 +1,1294 @@
+--- a/drivers/input/touchscreen/apple_z2.c
++++ b/drivers/input/touchscreen/apple_z2.c
+@@ -23,6 +23,7 @@
+ #include <linux/regulator/consumer.h>
+ #include <linux/spi/spi.h>
+ #include <linux/unaligned.h>
++#include <linux/sysfs.h>
+ 
+ #define APPLE_Z2_NUM_FINGERS_OFFSET      16
+ #define APPLE_Z2_FINGERS_OFFSET          24
+@@ -56,6 +57,7 @@
+ #define APPLE_Z2_HBPP_CMD_BLOB           0x3001
+ #define APPLE_Z2_FW_MAGIC                0x5746325A
+ #define APPLE_Z2_RX_BUF_SIZE             4000
++#define APPLE_Z2_J208_RX_BUF_SIZE        8192
+ #define APPLE_Z2_D111_CAL_SIZE           0x400
+ #define LOAD_COMMAND_INIT_PAYLOAD        0
+ #define LOAD_COMMAND_SEND_BLOB           1
+@@ -93,6 +95,7 @@
+ enum apple_z2_variant {
+ 	APPLE_Z2_VARIANT_GENERIC,
+ 	APPLE_Z2_VARIANT_J172,
++	APPLE_Z2_VARIANT_J208,
+ 	APPLE_Z2_VARIANT_D11,
+ 	APPLE_Z2_VARIANT_D111,
+ };
+@@ -109,6 +112,22 @@
+ 	struct gpio_desc *power_ldo_gpio;
+ 	struct gpio_desc *display_sync_gpio;
+ 	struct gpio_desc *display_sync1_gpio;
++	struct gpio_desc *display_eb_gpio;
++	struct regulator *analog_supply;
++	bool analog_enabled;
++	u8 *diagnostic_frame;
++	size_t diagnostic_frame_len;
++	u64 diagnostic_frames;
++	u64 diagnostic_reads;
++	u64 diagnostic_no_data;
++	u64 diagnostic_invalid;
++	u64 diagnostic_empty;
++	u16 diagnostic_result_len;
++	int diagnostic_header_checksum;
++	u8 diagnostic_command;
++	size_t diagnostic_packet_len;
++	int diagnostic_error;
++	size_t rx_buf_size;
+ 	struct pinctrl *j172_sync_pinctrl;
+ 	struct pinctrl_state *j172_sync_active_state;
+ 	struct regulator *hv_supply;
+@@ -125,6 +144,9 @@
+ 	bool upload_irq_masked;
+ 	bool runtime_frame_valid;
+ 	bool surface_descriptor_valid;
++	bool grid_profile_valid;
++	bool grid_fallback_valid;
++	u8 diagnostic_surface[APPLE_Z2_SURFACE_DESCRIPTOR_SIZE];
+ 	bool j172_sync_pinctrl_active;
+ 	bool hv_enabled;
+ 	bool core_enabled;
+@@ -148,6 +170,18 @@
+ static bool apple_z2_is_j172(const struct apple_z2 *z2)
+ {
+ 	return z2->variant == APPLE_Z2_VARIANT_J172;
++}
++
++static bool apple_z2_is_j208(const struct apple_z2 *z2)
++{
++	return z2->variant == APPLE_Z2_VARIANT_J208;
++}
++
++static bool apple_z2_is_hbpp14(const struct apple_z2 *z2)
++{
++	return apple_z2_is_j172(z2) || apple_z2_is_j208(z2) ||
++	       z2->variant == APPLE_Z2_VARIANT_D11 ||
++	       z2->variant == APPLE_Z2_VARIANT_D111;
+ }
+ 
+ static bool apple_z2_is_d11(const struct apple_z2 *z2)
+@@ -472,6 +506,10 @@
+ 	const u8 *report;
+ 	u16 report_len;
+ 
++	/* J208 reports are captured after checksum validation, not interpreted. */
++	if (apple_z2_is_j208(z2))
++		return;
++
+ 	/* iPhone 7 Plus Gen2 packets carry the legacy report header directly. */
+ 	if (apple_z2_is_iphone7_plus(z2)) {
+ 		if (payload_len < APPLE_Z2_FINGERS_OFFSET)
+@@ -535,8 +573,30 @@
+ 		checksum -= buf[5 + i];
+ 
+ 	return !checksum;
++}
++
++/* Metadata only: never print report contents or device identity. */
++static const char *apple_z2_frame_rejection(const u8 *buf, size_t len,
++					  u8 counter, bool strict_counter)
++{
++	u16 payload_len;
++
++	if (len < 7)
++		return "short-frame";
++	if ((buf[0] & 0xfe) != 0xea)
++		return "frame-command";
++	if ((buf[0] + buf[1] + buf[2] + buf[3] + buf[4]) & 0xff)
++		return "header-checksum";
++	if (strict_counter ? buf[1] != counter : buf[1] != 1 && buf[1] != 2)
++		return "counter";
++	payload_len = get_unaligned_le16(buf + 2);
++	if (payload_len < 2 || payload_len + 5 > len)
++		return "payload-length";
++	return "payload-checksum";
+ }
+ 
++static bool apple_z2_z2_checksum_valid(const u8 *cmd, unsigned int len);
++
+ static int apple_z2_read_packet(struct apple_z2 *z2)
+ {
+ 	struct spi_transfer xfer = { };
+@@ -548,6 +608,14 @@
+ 	u8 counter;
+ 
+ 	z2->runtime_frame_valid = false;
++	if (apple_z2_is_j208(z2)) {
++		z2->diagnostic_reads++;
++		z2->diagnostic_error = 0;
++		z2->diagnostic_packet_len = 0;
++		z2->diagnostic_command = 0;
++		z2->diagnostic_result_len = 0;
++		z2->diagnostic_header_checksum = -1;
++	}
+ 	memset(z2->tx_buf, 0, APPLE_Z2_CMD_SIZE);
+ 	memset(z2->rx_buf, 0, APPLE_Z2_CMD_SIZE);
+ 	z2->tx_buf[0] = APPLE_Z2_CMD_READ_INTERRUPT_DATA;
+@@ -559,15 +627,60 @@
+ 	xfer.len = APPLE_Z2_CMD_SIZE;
+ 
+ 	error = spi_sync_transfer(z2->spidev, &xfer, 1);
+-	if (error)
++	if (error) {
++		if (apple_z2_is_j208(z2)) {
++			z2->diagnostic_error = error;
++			dev_err(&z2->spidev->dev, "J208 runtime header transport error=%d\n", error);
++		}
+ 		return error;
++	}
+ 	apple_z2_post_z2_xfer_delay(z2);
+ 
+-	if (z2->rx_buf[0] != APPLE_Z2_REPLY_INTERRUPT_DATA)
++	if (apple_z2_is_j208(z2))
++		z2->diagnostic_command = z2->rx_buf[0];
++	if (z2->rx_buf[0] != APPLE_Z2_REPLY_INTERRUPT_DATA) {
++		if (apple_z2_is_j208(z2)) {
++			z2->diagnostic_no_data++;
++			dev_info_ratelimited(&z2->spidev->dev,
++				"J208 runtime header command=%02x no-data-response\n",
++				z2->rx_buf[0]);
++		}
+ 		return 0;
++	}
+ 
++	if (apple_z2_is_j208(z2)) {
++		z2->diagnostic_result_len = get_unaligned_le16(z2->rx_buf + 1);
++		z2->diagnostic_header_checksum =
++			apple_z2_z2_checksum_valid(z2->rx_buf, APPLE_Z2_CMD_SIZE);
++		dev_info_ratelimited(&z2->spidev->dev,
++			"J208 runtime length raw-bytes=%u checksum-valid=%d\n",
++			z2->diagnostic_result_len, z2->diagnostic_header_checksum);
++		/* Native deviceGetResultLength (21H461, 0x5db28f0..2900)
++		 * checks the E1 checksum before consuming its length.
++		 */
++		if (!z2->diagnostic_header_checksum) {
++			z2->diagnostic_invalid++;
++			return -EPROTO;
++		}
++		/* Native readOneFrameOfData, 0x5db2678..267c: an empty
++		 * result has no body. 0x5db2750..2768 advances tag 1 <-> 2.
++		 */
++		if (!z2->diagnostic_result_len) {
++			z2->diagnostic_empty++;
++			z2->index_parity = !z2->index_parity;
++			return 0;
++		}
++	}
+ 	pkt_len = (get_unaligned_le16(z2->rx_buf + 1) + 8) & 0xfffffffc;
+-	if (pkt_len > APPLE_Z2_RX_BUF_SIZE) {
++	if (apple_z2_is_j208(z2)) {
++		z2->diagnostic_packet_len = pkt_len;
++		dev_info_ratelimited(&z2->spidev->dev,
++			"J208 runtime header command=%02x packet-bytes=%zu\n",
++			z2->rx_buf[0], pkt_len);
++	}
++	if (pkt_len > z2->rx_buf_size) {
++		if (apple_z2_is_j208(z2))
++			z2->diagnostic_error = -EMSGSIZE;
+ 		dev_warn(&z2->spidev->dev, "packet too large: %zu\n", pkt_len);
+ 		return -EMSGSIZE;
+ 	}
+@@ -576,7 +689,7 @@
+ 		wire_len = max_t(size_t, wire_len,
+ 				 APPLE_Z2_GEN2_MIN_RESULT_SIZE);
+ 
+-	if (apple_z2_is_j172(z2) || apple_z2_is_iphone7_plus(z2)) {
++	if (apple_z2_is_hbpp14(z2)) {
+ 		memset(z2->rx_buf, 0xa5, wire_len);
+ 		xfer.tx_buf = z2->rx_buf;
+ 		xfer.rx_buf = z2->rx_buf;
+@@ -585,8 +698,13 @@
+ 	} else {
+ 		error = spi_read(z2->spidev, z2->rx_buf, pkt_len);
+ 	}
+-	if (error)
++	if (error) {
++		if (apple_z2_is_j208(z2)) {
++			z2->diagnostic_error = error;
++			dev_err(&z2->spidev->dev, "J208 runtime body transport error=%d\n", error);
++		}
+ 		return error;
++	}
+ 	if (apple_z2_is_iphone7_plus(z2))
+ 		apple_z2_post_z2_xfer_delay(z2);
+ 
+@@ -597,9 +715,29 @@
+ 	z2->runtime_frame_valid =
+ 		apple_z2_gen2_packet_valid(z2->rx_buf, pkt_len, counter,
+ 					   strict_counter);
+-	if (!z2->runtime_frame_valid)
++	if (!z2->runtime_frame_valid) {
++		if (apple_z2_is_j208(z2)) {
++			z2->diagnostic_invalid++;
++			dev_info_ratelimited(&z2->spidev->dev,
++				"J208 runtime rejected command=%02x bytes=%zu counter=%u declared-payload=%u header-checksum-valid=%u reason=%s\n",
++				z2->rx_buf[0], pkt_len, z2->rx_buf[1],
++				get_unaligned_le16(z2->rx_buf + 2),
++				!((z2->rx_buf[0] + z2->rx_buf[1] + z2->rx_buf[2] +
++				   z2->rx_buf[3] + z2->rx_buf[4]) & 0xff),
++				apple_z2_frame_rejection(z2->rx_buf, pkt_len,
++							 counter, strict_counter));
++		}
+ 		return 0;
++	}
+ 
++	if (apple_z2_is_j208(z2)) {
++		memcpy(z2->diagnostic_frame, z2->rx_buf, pkt_len);
++		z2->diagnostic_frame_len = pkt_len;
++		z2->diagnostic_frames++;
++		dev_info_ratelimited(&z2->spidev->dev,
++			"J208 checksum-valid diagnostic frame: %zu bytes (no input events)\n",
++			pkt_len);
++	}
+ 	payload_len = get_unaligned_le16(z2->rx_buf + 2);
+ 	apple_z2_dispatch_frame(z2, z2->rx_buf + 5, payload_len - 2);
+ 	z2->index_parity = !z2->index_parity;
+@@ -613,6 +751,8 @@
+ 	z2->index_parity = 0;
+ 	z2->runtime_frame_valid = false;
+ 	z2->surface_descriptor_valid = false;
++	z2->grid_profile_valid = false;
++	z2->grid_fallback_valid = false;
+ }
+ 
+ static int apple_z2_advance_protocol(struct apple_z2 *z2,
+@@ -623,6 +763,8 @@
+ 		return -EPROTO;
+ 
+ 	z2->protocol_state = next;
++	if (apple_z2_is_j208(z2))
++		dev_info(&z2->spidev->dev, "J208 diagnostic protocol stage %u\n", next);
+ 	return 0;
+ }
+ 
+@@ -662,8 +804,11 @@
+ 
+ static unsigned int apple_z2_effective_cs_delay_us(struct apple_z2 *z2)
+ {
+-	/* J172 firmware expresses this field in ns; Linux SPI uses us here. */
+-	return apple_z2_is_j172(z2) ? 10 : z2->z2_cs_delay_us;
++	/* Native AppleSamsungSPI (21H461, 0xfffffff0059e5b20) rounds CS Delay
++	 * up from ns to us. The reviewed J207 profile's 10000 ns is 10 us.
++	 */
++	return apple_z2_is_j172(z2) || apple_z2_is_j208(z2) ?
++		10 : z2->z2_cs_delay_us;
+ }
+ 
+ static void apple_z2_apply_z2_delays(struct apple_z2 *z2)
+@@ -735,9 +880,10 @@
+ 	if (post_delay)
+ 		apple_z2_post_z2_xfer_delay(z2);
+ 
+-	dev_dbg(&z2->spidev->dev, "%s tx=%*ph rx=%*ph\n", tag,
+-		APPLE_Z2_CMD_SIZE, z2->tx_buf, APPLE_Z2_CMD_SIZE,
+-		z2->rx_buf);
++	if (!apple_z2_is_j208(z2))
++		dev_dbg(&z2->spidev->dev, "%s tx=%*ph rx=%*ph\n", tag,
++			APPLE_Z2_CMD_SIZE, z2->tx_buf, APPLE_Z2_CMD_SIZE,
++			z2->rx_buf);
+ 	return 0;
+ }
+ 
+@@ -764,13 +910,16 @@
+ 	return apple_z2_z2_cmd_locked_delay(z2, cmd, report, tag, true);
+ }
+ 
+-static int apple_z2_read_device_info_locked(struct apple_z2 *z2)
++static int apple_z2_read_device_info_attempt_locked(struct apple_z2 *z2,
++						 unsigned int attempt, bool *invalid_reply)
+ {
++	bool checksum_valid;
+ 	u16 max_packet_size;
+ 	u8 interface_version;
+ 	u8 platform_id;
+ 	int error;
+ 
++	*invalid_reply = false;
+ 	error = apple_z2_z2_cmd_locked_delay(z2, APPLE_Z2_CMD_WAKE, 0,
+ 					     "device-info-wake", false);
+ 	if (error)
+@@ -788,21 +937,55 @@
+ 	if (error)
+ 		return error;
+ 
+-	if (z2->rx_buf[0] != APPLE_Z2_CMD_DEVICE_INFO ||
+-	    !apple_z2_z2_checksum_valid(z2->rx_buf, APPLE_Z2_CMD_SIZE))
++	checksum_valid = apple_z2_z2_checksum_valid(z2->rx_buf,
++						 APPLE_Z2_CMD_SIZE);
++	if (apple_z2_is_j208(z2))
++		dev_info(&z2->spidev->dev,
++			 "J208 DeviceInfo attempt=%u response-command=%02x checksum-valid=%u\n",
++			 attempt, z2->rx_buf[0], checksum_valid);
++	if (z2->rx_buf[0] != APPLE_Z2_CMD_DEVICE_INFO || !checksum_valid) {
++		*invalid_reply = true;
+ 		return -EPROTO;
++	}
+ 
+ 	platform_id = z2->rx_buf[1];
+ 	interface_version = z2->rx_buf[2];
+ 	max_packet_size = get_unaligned_le16(z2->rx_buf + 3);
+ 
+-	dev_dbg(&z2->spidev->dev,
+-		"device info: platform=%u interface=%u max-packet=%u\n",
+-		 platform_id, interface_version, max_packet_size);
++	if (apple_z2_is_j208(z2))
++		dev_info(&z2->spidev->dev,
++			 "J208 DeviceInfo validated: platform=%u interface=%u max-packet=%u\n",
++			 platform_id, interface_version, max_packet_size);
++	else
++		dev_dbg(&z2->spidev->dev,
++			"device info: platform=%u interface=%u max-packet=%u\n",
++			platform_id, interface_version, max_packet_size);
+ 	return apple_z2_advance_protocol(z2, APPLE_Z2_STATE_FIRMWARE_READY,
+ 					 APPLE_Z2_STATE_DEVICE_INFO);
+ }
+ 
++static int apple_z2_read_device_info_locked(struct apple_z2 *z2)
++{
++	unsigned int attempts = apple_z2_is_j208(z2) ? 4 : 1;
++	unsigned int attempt;
++	bool invalid_reply;
++	int error;
++
++	/* Native getDeviceInfo (21H461, 0x5dafd58) permits four attempts,
++	 * separated by 5 ms after an invalid reply. Do not retry a Linux
++	 * transport error: controller/DMA quiescence is not established there.
++	 */
++	for (attempt = 1; attempt <= attempts; attempt++) {
++		error = apple_z2_read_device_info_attempt_locked(z2, attempt,
++							       &invalid_reply);
++		if (!invalid_reply || attempt == attempts)
++			return error;
++		msleep(5);
++	}
++
++	return -EPROTO;
++}
++
+ static int apple_z2_write_report_locked(struct apple_z2 *z2, u8 report,
+ 					const u8 *data, u8 len,
+ 					const char *tag)
+@@ -859,10 +1042,21 @@
+ 		snprintf(xfer_tag, sizeof(xfer_tag), "%s-info-%u", tag, i + 1);
+ 		error = apple_z2_z2_cmd_locked(z2, APPLE_Z2_CMD_REPORT_INFO,
+ 					       report, xfer_tag);
+-		if (error)
++		if (error) {
++			if (apple_z2_is_j208(z2) && report == APPLE_Z2_REPORT_SURFACE)
++				dev_info(&z2->spidev->dev,
++					 "J208 D9 stage=info transfer=%u transport-error=%d\n",
++					 i + 1, error);
+ 			return error;
++		}
+ 	}
+ 
++	if (apple_z2_is_j208(z2) && report == APPLE_Z2_REPORT_SURFACE)
++		dev_info(&z2->spidev->dev,
++			 "J208 D9 stage=info command=%02x header1=%02x status=%u length=%u checksum=%u\n",
++			 z2->rx_buf[0], z2->rx_buf[1], z2->rx_buf[2],
++			 get_unaligned_le16(z2->rx_buf + 3),
++			 apple_z2_z2_checksum_valid(z2->rx_buf, APPLE_Z2_CMD_SIZE));
+ 	if (z2->rx_buf[0] != APPLE_Z2_CMD_REPORT_INFO ||
+ 	    z2->rx_buf[1] != report ||
+ 	    !apple_z2_z2_checksum_valid(z2->rx_buf, APPLE_Z2_CMD_SIZE))
+@@ -885,7 +1079,7 @@
+ 	unsigned int data_len;
+ 	int error;
+ 
+-	if (!len || len > APPLE_Z2_RX_BUF_SIZE - 5)
++	if (!len || len > z2->rx_buf_size - 5)
+ 		return -EMSGSIZE;
+ 
+ 	memset(z2->tx_buf, 0, APPLE_Z2_CMD_SIZE);
+@@ -919,7 +1113,306 @@
+ 		return error;
+ 	apple_z2_post_z2_xfer_delay(z2);
+ 	dev_dbg(&z2->spidev->dev, "%s long read len=%u\n", tag, data_len);
++
++	return 0;
++}
++
++/* Native 21H461 getReportGated caps property payloads at 512 bytes.
++ * These read-only queries identify the native grid fallback profile;
++ * they do not enable reports or input events.
++ */
++static int apple_z2_j208_read_property_locked(struct apple_z2 *z2, u8 report,
++					    u16 *payload_len)
++{
++	struct spi_transfer xfer = { };
++	unsigned int i, wire_len;
++	u16 len, min_len, max_len;
++	u8 command;
++	int error;
++
++	switch (report) {
++	case 0xd1: min_len = 1; max_len = 512; break;
++	case 0xd3: min_len = 5; max_len = 512; break;
++	case 0xd0: min_len = 1; max_len = 1 + 20 * 7; break;
++	default: return -EINVAL;
++	}
++	if (z2->rx_buf_size < APPLE_Z2_CMD_SIZE)
++		return -EMSGSIZE;
++
++	/* E3 twice is the native two-stage metadata transaction, not retry. */
++	for (i = 0; i < 2; i++) {
++		error = apple_z2_z2_cmd_locked(z2, APPLE_Z2_CMD_REPORT_INFO,
++					       report, "j208-property-info");
++		if (error) {
++			dev_info(&z2->spidev->dev,
++				 "J208 property=%02x stage=info transfer=%u transport-error=%d\n",
++				 report, i + 1, error);
++			return error;
++		}
++	}
++	len = get_unaligned_le16(z2->rx_buf + 3);
++	dev_info(&z2->spidev->dev,
++		 "J208 property=%02x stage=info command=%02x header1=%02x status=%u length=%u checksum=%u\n",
++		 report, z2->rx_buf[0], z2->rx_buf[1], z2->rx_buf[2], len,
++		 apple_z2_z2_checksum_valid(z2->rx_buf, APPLE_Z2_CMD_SIZE));
++	/* Native getReportInfo checks command/checksum, then status and size.
++	 * Response byte 1 has no proven echo requirement; retain it in logs.
++	 */
++	if (z2->rx_buf[0] != APPLE_Z2_CMD_REPORT_INFO || z2->rx_buf[2] ||
++	    !apple_z2_z2_checksum_valid(z2->rx_buf, APPLE_Z2_CMD_SIZE))
++		return -EPROTO;
++	if (len < min_len || len > max_len)
++		return -EMSGSIZE;
++	wire_len = len <= 11 ? APPLE_Z2_CMD_SIZE : len + 5;
++	if (wire_len > z2->rx_buf_size)
++		return -EMSGSIZE;
++
++	/* deviceGetReport 0x5db1168 selects E6 for <= 11, otherwise E7. */
++	command = len <= 11 ? APPLE_Z2_CMD_CTRL_READ_SHORT :
++			      APPLE_Z2_CMD_CTRL_READ_LONG;
++	memset(z2->tx_buf, 0, APPLE_Z2_CMD_SIZE);
++	memset(z2->rx_buf, 0, APPLE_Z2_CMD_SIZE);
++	z2->tx_buf[0] = command;
++	z2->tx_buf[1] = report;
++	put_unaligned_le16(len, z2->tx_buf + 3);
++	error = apple_z2_z2_xfer_locked(z2, "j208-property-read");
++	if (error) {
++		dev_info(&z2->spidev->dev,
++			 "J208 property=%02x stage=body-request transport-error=%d\n",
++			 report, error);
++		return error;
++	}
++
++	/* Native stage 2: short TX E1 + checksum, RX command E6; long TX
++	 * A5 x 16 followed by zeroes, exact len + 5, RX command E7.
++	 */
++	if (len <= 11) {
++		error = apple_z2_z2_cmd_locked(z2, APPLE_Z2_CMD_LAST, 0,
++					       "j208-property-last");
++	} else {
++		memset(z2->rx_buf, 0, wire_len);
++		memset(z2->rx_buf, 0xa5, APPLE_Z2_CMD_SIZE);
++		xfer.tx_buf = z2->rx_buf;
++		xfer.rx_buf = z2->rx_buf;
++		xfer.len = wire_len;
++		apple_z2_apply_z2_delays(z2);
++		error = spi_sync_transfer(z2->spidev, &xfer, 1);
++		if (!error)
++			apple_z2_post_z2_xfer_delay(z2);
++	}
++	if (error) {
++		dev_info(&z2->spidev->dev,
++			 "J208 property=%02x stage=body transport-error=%d\n",
++			 report, error);
++		return error;
++	}
++	dev_info(&z2->spidev->dev,
++		 "J208 property=%02x stage=body command=%02x header1=%02x header2=%u length=%u wire-bytes=%u checksum=%u\n",
++		 report, z2->rx_buf[0], z2->rx_buf[1], z2->rx_buf[2], len,
++		 wire_len, apple_z2_z2_checksum_valid(z2->rx_buf, wire_len));
++	/* Native deviceGetReport validates command and checksum. Header bytes
++	 * 1/2 have no proven acceptance semantics and remain diagnostic only.
++	 */
++	if (z2->rx_buf[0] != command ||
++	    !apple_z2_z2_checksum_valid(z2->rx_buf, wire_len))
++		return -EPROTO;
++	*payload_len = len;
++	return 0;
++}
++
++static int apple_z2_j208_read_grid_properties_locked(struct apple_z2 *z2)
++{
++	/* _cacheDeviceProperties' individual fallback order starts D1,D3,D0.
++	 * Do not add its DB aggregate, A1, 7F, or any activation transaction.
++	 */
++	static const u8 reports[] = { 0xd1, 0xd3, 0xd0 };
++	/* v13 measured profile. The fallback below is qualified only for this
++	 * exact list; region ID 1 selects slot 1, not wire record number 1.
++	 */
++	static const u8 regions[] = {
++		6, 1,0,52,1,0,40,0, 12,0,2,1,0,40,92,
++		13,0,2,1,40,52,92, 8,0,52,1,48,2,0,
++		7,0,52,1,50,2,0, 9,0,33,1,52,1,0,
++	};
++	const u8 *data = z2->rx_buf + 3;
++	bool matches = true;
++	unsigned int i, record;
++	u16 len;
++	int error;
++
++	z2->grid_profile_valid = false;
++	z2->grid_fallback_valid = false;
++	apple_z2_post_z2_xfer_delay(z2);
++	for (i = 0; i < ARRAY_SIZE(reports); i++) {
++		error = apple_z2_j208_read_property_locked(z2, reports[i], &len);
++		if (error)
++			return error;
++		if (reports[i] == 0xd1) {
++			matches &= len == 1 && data[0] == 28;
++			dev_info(&z2->spidev->dev,
++				 "J208 D1 family-id=%u length=%u\n", data[0], len);
++		} else if (reports[i] == 0xd3) {
++			matches &= len == 12 && data[0] == 1 &&
++				   data[1] == 52 && data[2] == 53;
++			dev_info(&z2->spidev->dev,
++				 "J208 D3 endianness=%u sensor-rows=%u sensor-columns=%u length=%u\n",
++				 data[0], data[1], data[2], len);
++		} else {
++			/* Native region parser consumes count + seven-byte records
++			 * into 20 indexed slots. Require a complete bounded record
++			 * list here; no truncation, normalization or guessed units.
++			 */
++			if (data[0] > 20 || len != 1 + 7 * data[0]) {
++				dev_info(&z2->spidev->dev,
++					 "J208 D0 invalid-region-list count=%u length=%u\n",
++					 data[0], len);
++				return -EPROTO;
++			}
++			dev_info(&z2->spidev->dev,
++				 "J208 D0 region-count=%u length=%u\n", data[0], len);
++			matches &= len == sizeof(regions) &&
++				   !memcmp(data, regions, sizeof(regions));
++			for (record = 0; record < data[0]; record++) {
++				const u8 *r = data + 1 + 7 * record;
++
++				dev_info(&z2->spidev->dev,
++					 "J208 D0 record=%u index=%u field1=%u field2=%u field3=%u field4=%u field5=%u field6=%u\n",
++					 record, r[0], r[1], r[2], r[3], r[4], r[5], r[6]);
++			}
++		}
++	}
++	z2->grid_profile_valid = matches;
++	return 0;
++}
++
++static int apple_z2_j208_read_surface_locked(struct apple_z2 *z2)
++{
++	const unsigned int wire_len = APPLE_Z2_SURFACE_DESCRIPTOR_SIZE + 5;
++	struct spi_transfer xfer = { };
++	const u8 *descriptor = z2->rx_buf + 3;
++	u32 width, height;
++	s16 min_x, min_y, max_x, max_y;
++	u16 len;
++	u8 status;
++	int error;
++
++	z2->surface_descriptor_valid = false;
++	z2->grid_fallback_valid = false;
++	if (z2->rx_buf_size < wire_len)
++		return -EMSGSIZE;
++
++	/* Called after DeviceInfo and grid properties, before runtime IRQ
++	 * reads. Its EE + 2 ms wake is still current; no report-enable write.
++	 * Native 21H461 deviceGetReportInfo (0x5db097c) uses E3 twice.
++	 */
++	apple_z2_post_z2_xfer_delay(z2);
++	error = apple_z2_read_report_info_locked(z2, APPLE_Z2_REPORT_SURFACE,
++						 &status, &len, "j208-d9");
++	if (error)
++		return error;
++	if (status || len != APPLE_Z2_SURFACE_DESCRIPTOR_SIZE)
++		return -EPROTO;
+ 
++	/* Native deviceGetReport (0x5db113c): length > 11 selects E7.
++	 * The first 16-byte transaction queues the read; its RX is not the
++	 * result. Stage 2 clocks exactly len + 5 bytes, without alignment.
++	 */
++	memset(z2->tx_buf, 0, APPLE_Z2_CMD_SIZE);
++	memset(z2->rx_buf, 0, APPLE_Z2_CMD_SIZE);
++	z2->tx_buf[0] = APPLE_Z2_CMD_CTRL_READ_LONG;
++	z2->tx_buf[1] = APPLE_Z2_REPORT_SURFACE;
++	put_unaligned_le16(len, z2->tx_buf + 3);
++	error = apple_z2_z2_xfer_locked(z2, "j208-d9-read");
++	if (error) {
++		dev_info(&z2->spidev->dev,
++			 "J208 D9 stage=body-request transport-error=%d\n", error);
++		return error;
++	}
++
++	/* Native zeroes its 512-byte TX region, then fills only the first
++	 * 16 bytes with A5 (0x5db1308..0x5db1318). The five tail bytes stay
++	 * zero. Keep the existing heap-backed RX buffer for full-duplex PIO.
++	 */
++	memset(z2->rx_buf, 0, wire_len);
++	memset(z2->rx_buf, 0xa5, APPLE_Z2_CMD_SIZE);
++	xfer.tx_buf = z2->rx_buf;
++	xfer.rx_buf = z2->rx_buf;
++	xfer.len = wire_len;
++	apple_z2_apply_z2_delays(z2);
++	error = spi_sync_transfer(z2->spidev, &xfer, 1);
++	if (error) {
++		dev_info(&z2->spidev->dev,
++			 "J208 D9 stage=body transport-error=%d\n", error);
++		return error;
++	}
++	apple_z2_post_z2_xfer_delay(z2);
++
++	/* Header bytes only. header1/header2 retain the existing conservative
++	 * gates; native deviceGetReport validates command and checksum only.
++	 * length is the validated E3 metadata, not a field in this E7 reply.
++	 */
++	dev_info(&z2->spidev->dev,
++		 "J208 D9 stage=body command=%02x header1=%02x header2=%u length=%u wire-bytes=%u checksum=%u\n",
++		 z2->rx_buf[0], z2->rx_buf[1], z2->rx_buf[2], len, wire_len,
++		 apple_z2_z2_checksum_valid(z2->rx_buf, wire_len));
++	if (z2->rx_buf[0] != APPLE_Z2_CMD_CTRL_READ_LONG ||
++	    z2->rx_buf[1] != APPLE_Z2_REPORT_SURFACE || z2->rx_buf[2] ||
++	    !apple_z2_z2_checksum_valid(z2->rx_buf, wire_len))
++		return -EPROTO;
++
++	width = get_unaligned_le32(descriptor);
++	height = get_unaligned_le32(descriptor + 4);
++	min_x = (s16)get_unaligned_le16(descriptor + 8);
++	min_y = (s16)get_unaligned_le16(descriptor + 10);
++	max_x = (s16)get_unaligned_le16(descriptor + 12);
++	max_y = (s16)get_unaligned_le16(descriptor + 14);
++	/* Only this checksum-validated, fixed-size D9 surface descriptor is
++	 * public geometry. Do not log other report bodies or calibration data.
++	 * Retain the existing LE interpretation and all acceptance predicates.
++	 */
++	dev_info(&z2->spidev->dev,
++		 "J208 D9 stage=geometry raw=%02x%02x%02x%02x%02x%02x%02x%02x"
++		 "%02x%02x%02x%02x%02x%02x%02x%02x width=%u height=%u"
++		 " min-x=%d min-y=%d max-x=%d max-y=%d\n",
++		 descriptor[0], descriptor[1], descriptor[2], descriptor[3],
++		 descriptor[4], descriptor[5], descriptor[6], descriptor[7],
++		 descriptor[8], descriptor[9], descriptor[10], descriptor[11],
++		 descriptor[12], descriptor[13], descriptor[14], descriptor[15],
++		 width, height, min_x, min_y, max_x, max_y);
++	/* 21H461 native region selector + InitSurfaceGrid replay yields these
++	 * signed bounds for family 28 / region 1 (52 rows, 40 columns).
++	 * See family28-fallback: X end 19854 + margin 115, Y end 26228 + 116.
++	 * Native keeps its grid when all four D9 edges are zero. This bounded
++	 * RAM diagnostic also requires both dimensions zero, as observed.
++	 * Do not synthesize a D9 payload: its existing sysfs API stays ENODATA.
++	 */
++	if (!width && !height && !min_x && !min_y && !max_x && !max_y &&
++	    z2->grid_profile_valid) {
++		z2->sensor_min_x = -115;
++		z2->sensor_max_x = 19969;
++		z2->sensor_min_y = -116;
++		z2->sensor_max_y = 26344;
++		z2->grid_fallback_valid = true;
++		dev_info(&z2->spidev->dev,
++			 "J208 native-grid family28-region1-native-v1 x=-115..19969 y=-116..26344 raw-to-bound-ratio=10 (no input events)\n");
++		return 0;
++	}
++	if (!width || !height || max_x <= min_x || max_y <= min_y) {
++		dev_info(&z2->spidev->dev,
++			 "J208 D9 stage=geometry invalid-bounds-or-dimensions\n");
++		return -EPROTO;
++	}
++
++	z2->sensor_min_x = min_x;
++	z2->sensor_min_y = min_y;
++	z2->sensor_max_x = max_x;
++	z2->sensor_max_y = max_y;
++	memcpy(z2->diagnostic_surface, descriptor,
++	       APPLE_Z2_SURFACE_DESCRIPTOR_SIZE);
++	z2->surface_descriptor_valid = true;
++	dev_info(&z2->spidev->dev,
++		 "J208 D9 surface validated: width=%u height=%u bounds x=%d..%d y=%d..%d (no input events)\n",
++		 width, height, min_x, max_x, min_y, max_y);
+ 	return 0;
+ }
+ 
+@@ -1184,7 +1677,7 @@
+ 	if (!z2->display_sync1_gpio) {
+ 		z2->display_sync1_gpio =
+ 			devm_gpiod_get_optional(dev, "display-sync1",
+-						GPIOD_OUT_LOW);
++						apple_z2_is_j208(z2) ? GPIOD_IN : GPIOD_OUT_LOW);
+ 		if (IS_ERR(z2->display_sync1_gpio)) {
+ 			error = PTR_ERR(z2->display_sync1_gpio);
+ 			z2->display_sync1_gpio = NULL;
+@@ -1195,7 +1688,7 @@
+ 	if (!z2->display_sync_gpio) {
+ 		z2->display_sync_gpio =
+ 			devm_gpiod_get_optional(dev, "display-sync",
+-						GPIOD_OUT_LOW);
++						apple_z2_is_j208(z2) ? GPIOD_IN : GPIOD_OUT_LOW);
+ 		if (IS_ERR(z2->display_sync_gpio)) {
+ 			error = PTR_ERR(z2->display_sync_gpio);
+ 			z2->display_sync_gpio = NULL;
+@@ -1206,6 +1699,15 @@
+ 	if (!z2->display_sync_gpio || !z2->display_sync1_gpio)
+ 		return -ENODEV;
+ 
++	if (apple_z2_is_j208(z2) && !z2->display_eb_gpio) {
++		z2->display_eb_gpio = devm_gpiod_get(dev, "display-eb", GPIOD_IN);
++		if (IS_ERR(z2->display_eb_gpio)) {
++			error = PTR_ERR(z2->display_eb_gpio);
++			z2->display_eb_gpio = NULL;
++			return error;
++		}
++	}
++
+ 	return 0;
+ }
+ 
+@@ -1224,6 +1726,12 @@
+ 	if (error)
+ 		return error;
+ 
++	/* Native J208 power-off visits display_eb, sync1, sync in reverse order. */
++	if (apple_z2_is_j208(z2)) {
++		error = gpiod_direction_input(z2->display_eb_gpio);
++		if (error)
++			return error;
++	}
+ 	error = gpiod_direction_input(z2->display_sync1_gpio);
+ 	if (error)
+ 		return error;
+@@ -1245,6 +1753,10 @@
+ 	if (error)
+ 		return error;
+ 
++	if (apple_z2_is_j208(z2)) {
++		devm_gpiod_put(dev, z2->display_eb_gpio);
++		z2->display_eb_gpio = NULL;
++	}
+ 	devm_gpiod_put(dev, z2->display_sync1_gpio);
+ 	z2->display_sync1_gpio = NULL;
+ 	devm_gpiod_put(dev, z2->display_sync_gpio);
+@@ -1289,14 +1801,14 @@
+ {
+ 	int error;
+ 
+-	if (apple_z2_is_iphone7_plus(z2))
++	if (apple_z2_is_iphone7_plus(z2) || apple_z2_is_j208(z2))
+ 		gpiod_set_value_cansleep(z2->reset_gpio, 1);
+ 
+ 	if (z2->clk_enabled) {
+ 		clk_disable_unprepare(z2->clk);
+ 		z2->clk_enabled = false;
+ 	}
+-	if (apple_z2_is_j172(z2) || apple_z2_is_iphone7_plus(z2))
++	if (apple_z2_is_hbpp14(z2))
+ 		usleep_range(1000, 2000);
+ 
+ 	if (apple_z2_is_iphone7_plus(z2)) {
+@@ -1323,7 +1835,7 @@
+ 		return;
+ 	}
+ 
+-	if (apple_z2_is_j172(z2)) {
++	if (apple_z2_is_j172(z2) || apple_z2_is_j208(z2)) {
+ 		error = apple_z2_j172_sync_set_inactive(z2);
+ 		if (error)
+ 			dev_warn(&z2->spidev->dev,
+@@ -1334,6 +1846,15 @@
+ 		apple_z2_set_gpio(z2->display_sync_gpio, 0);
+ 	}
+ 	apple_z2_set_gpio(z2->power_ldo_gpio, 0);
++	if (apple_z2_is_j208(z2) && z2->analog_enabled) {
++		error = regulator_disable(z2->analog_supply);
++		if (error)
++			dev_warn(&z2->spidev->dev,
++				 "failed to disable J208 analog supply: %d\n", error);
++		else
++			z2->analog_enabled = false;
++		msleep(10);
++	}
+ 	apple_z2_set_gpio(z2->power_ana_gpio, 0);
+ 	z2->platform_powered = false;
+ }
+@@ -1381,6 +1902,36 @@
+ 					 APPLE_Z2_STATE_POWERED);
+ }
+ 
++static int apple_z2_j208_power_on(struct apple_z2 *z2)
++{
++	int error;
++
++	/* 21H461 AHTFunctionSequence: analog, LDO, three sync functions,
++	 * touch clock, then 15 ms. GPIO CS remains owned by the SPI controller.
++	 */
++	gpiod_set_value_cansleep(z2->reset_gpio, 1);
++	if (z2->analog_enabled)
++		return -EBUSY;
++	error = regulator_enable(z2->analog_supply);
++	if (error)
++		return error;
++	z2->analog_enabled = true;
++	apple_z2_set_gpio(z2->power_ldo_gpio, 1);
++	error = apple_z2_j172_sync_set_active(z2);
++	if (error)
++		goto power_off;
++	error = apple_z2_enable_clock(z2);
++	if (error)
++		goto power_off;
++	usleep_range(15000, 16000);
++	z2->platform_powered = true;
++	return apple_z2_advance_protocol(z2, APPLE_Z2_STATE_OFF,
++					 APPLE_Z2_STATE_POWERED);
++power_off:
++	apple_z2_platform_power_off(z2);
++	return error;
++}
++
+ static int apple_z2_iphone7_plus_power_on(struct apple_z2 *z2)
+ {
+ 	int error;
+@@ -1422,6 +1973,8 @@
+ 
+ 	if (apple_z2_is_j172(z2))
+ 		return apple_z2_j172_power_on(z2);
++	if (apple_z2_is_j208(z2))
++		return apple_z2_j208_power_on(z2);
+ 	if (apple_z2_is_iphone7_plus(z2))
+ 		return apple_z2_iphone7_plus_power_on(z2);
+ 
+@@ -1601,6 +2154,7 @@
+ 		.len = 2,
+ 		.bits_per_word = 8,
+ 	};
++	u16 expected_ack = 0;
+ 	bool ready;
+ 	int error;
+ 
+@@ -1609,14 +2163,17 @@
+ 	 * SmartIO may still DMA these transfers, but using 16-bit SPI words would
+ 	 * swap every byte pair a second time.
+ 	 */
+-	if (!init && !apple_z2_is_iphone7_plus(z2) &&
++	/* J208 inherits 8-bit words from its original ADT SPI reg config.
++	 * Native preconstructed HBPP14 packets are sent without another swap.
++	 */
++	if (!init && !apple_z2_is_iphone7_plus(z2) && !apple_z2_is_j208(z2) &&
+ 	    size >= z2->bpw16_min_len)
+ 		blob_xfer.bits_per_word = 16;
+ 
+ 	dev_dbg(&z2->spidev->dev, "firmware blob len=%u bpw=%u\n",
+ 		size, blob_xfer.bits_per_word);
+ 
+-	if ((apple_z2_is_j172(z2) || apple_z2_is_iphone7_plus(z2)) && init) {
++	if ((apple_z2_is_hbpp14(z2)) && init) {
+ 		if (size != 4 || data[0] != 0x1a || data[1] != 0xa1 ||
+ 		    data[2] != 0x18 || data[3] != 0xe1)
+ 			return dev_err_probe(&z2->spidev->dev, -EINVAL,
+@@ -1629,12 +2186,28 @@
+ 	z2->tx_buf[0] = 0x1a;
+ 	z2->tx_buf[1] = 0xa1;
+ 	apple_z2_avoid_short_dma(z2, &ack_xfer);
++	if (apple_z2_is_j208(z2) && !init) {
++		if (size >= 20 && get_unaligned_be32(data) == 0x18e13001) {
++			expected_ack = 0x4bc1;
++		} else if (size == 16 && get_unaligned_be16(data) == 0x1e33) {
++			/* Native skips validation for the last boot register write. */
++			expected_ack = defer_irq_wait ? 0 : 0x4ad1;
++		} else {
++			return dev_err_probe(&z2->spidev->dev, -EINVAL,
++					     "unsupported J208 HBPP packet\n");
++		}
++		ack_xfer.rx_buf = z2->rx_buf;
++	}
++	if (apple_z2_is_j208(z2))
++		dev_info(&z2->spidev->dev,
++			 "J208 HBPP TX bytes=%u bpw=%u requested-hz=%u init=%u\n",
++			 size, blob_xfer.bits_per_word, z2->spidev->max_speed_hz, init);
+ 	reinit_completion(&z2->boot_irq);
+ 	error = spi_sync_transfer(z2->spidev, &blob_xfer, 1);
+ 	if (error)
+ 		return error;
+ 
+-	if ((apple_z2_is_j172(z2) || apple_z2_is_iphone7_plus(z2)) && init) {
++	if ((apple_z2_is_hbpp14(z2)) && init) {
+ 		ready = z2->rx_buf[0] == 0x1f && z2->rx_buf[1] == 0x01;
+ 		if (!ready)
+ 			return dev_err_probe(&z2->spidev->dev, -EPROTO,
+@@ -1643,12 +2216,21 @@
+ 	}
+ 
+ 	if (!init || !z2->no_init_ack) {
++		if (apple_z2_is_j208(z2) && !init)
++			memset(z2->rx_buf, 0, ack_xfer.len);
+ 		error = spi_sync_transfer(z2->spidev, &ack_xfer, 1);
+ 		if (error)
+ 			return error;
++		if (expected_ack && get_unaligned_be16(z2->rx_buf) != expected_ack)
++			return dev_err_probe(&z2->spidev->dev, -EPROTO,
++				"J208 HBPP ACK mismatch bytes=%u expected=%04x got=%04x\n",
++				size, expected_ack, get_unaligned_be16(z2->rx_buf));
++		if (apple_z2_is_j208(z2) && !init)
++			dev_info(&z2->spidev->dev, "J208 HBPP bytes=%u ACK %s\n",
++				 size, expected_ack ? "accepted" : "read; final boot unchecked");
+ 		apple_z2_post_ack_delay(z2);
+ 	}
+-	if ((apple_z2_is_j172(z2) || apple_z2_is_iphone7_plus(z2)) && init) {
++	if ((apple_z2_is_hbpp14(z2)) && init) {
+ 		error = apple_z2_advance_protocol(z2, APPLE_Z2_STATE_BOOT_IRQ,
+ 						  APPLE_Z2_STATE_HBPP_READY);
+ 		if (error)
+@@ -1741,8 +2323,14 @@
+ {
+ 	if (!apple_z2_wait_firmware_irq(z2, timeout_ms))
+ 		return -ETIMEDOUT;
+-	if (!apple_z2_is_j172(z2) && !apple_z2_is_iphone7_plus(z2))
++	if (!apple_z2_is_hbpp14(z2))
+ 		return 0;
++
++	/* J208 ready-IRQ count is not yet measured. One edge followed by a
++	 * checksum-validated DeviceInfo is the bounded diagnostic hypothesis.
++	 */
++	if (apple_z2_is_j208(z2))
++		dev_info(&z2->spidev->dev, "J208 first firmware IRQ received\n");
+ 
+ 	if (apple_z2_is_j172(z2) &&
+ 	    !apple_z2_wait_firmware_irq(z2, timeout_ms))
+@@ -1779,7 +2367,7 @@
+ 	boot_timeout = apple_z2_fw_config_word(data, 9);
+ 	if ((valid & APPLE_Z2_FW_CONFIG_MIN_DMA) && min_dma) {
+ 		if (apple_z2_is_iphone7_plus(z2)) {
+-			if (min_dma > APPLE_Z2_RX_BUF_SIZE)
++			if (min_dma > z2->rx_buf_size)
+ 				return -EINVAL;
+ 			z2->dma_min_len = min_dma;
+ 		} else {
+@@ -1954,7 +2542,7 @@
+ 			error = apple_z2_wait_ready_irq(z2, timeout_ms);
+ 			if (error)
+ 				return error;
+-			if (apple_z2_is_j172(z2)) {
++			if (apple_z2_is_j172(z2) || apple_z2_is_j208(z2)) {
+ 				disable_irq(z2->spidev->irq);
+ 				error = apple_z2_read_device_info_locked(z2);
+ 				enable_irq(z2->spidev->irq);
+@@ -1967,6 +2555,26 @@
+ 		}
+ 
+ 		fw_idx = round_up(fw_idx, 4);
++	}
++
++	if (apple_z2_is_j208(z2)) {
++		/* Read properties, then qualify D9 or the measured native grid. */
++		mutex_lock(&z2->io_lock);
++		error = apple_z2_j208_read_grid_properties_locked(z2);
++		if (!error)
++			error = apple_z2_j208_read_surface_locked(z2);
++		mutex_unlock(&z2->io_lock);
++		if (error)
++			return error;
++		error = apple_z2_advance_protocol(z2, APPLE_Z2_STATE_DEVICE_INFO,
++						  APPLE_Z2_STATE_RUNTIME);
++		if (error)
++			return error;
++		mutex_lock(&z2->io_lock);
++		z2->booted = true;
++		error = apple_z2_read_packet(z2);
++		mutex_unlock(&z2->io_lock);
++		return error;
+ 	}
+ 
+ 	if (apple_z2_is_iphone7_plus(z2)) {
+@@ -2114,15 +2722,23 @@
+ 	if (error)
+ 		return error;
+ 
+-	if (apple_z2_is_j172(z2) || apple_z2_is_iphone7_plus(z2)) {
++	if (apple_z2_is_hbpp14(z2)) {
+ 		error = apple_z2_apply_initial_config(z2);
+ 		if (error)
+ 			goto err_stop;
+ 	}
+-	if (apple_z2_is_j172(z2)) {
++	if (apple_z2_is_j208(z2)) {
++		/* Native 21H461 configureSPI@0xfffffff005daa5f0 sends four zero
++		 * bytes on first configuration, before reset is deasserted.
++		 * IRQ is still disabled and reset asserted by platform_power_on.
++		 */
+ 		error = apple_z2_boot_preamble(z2, false);
+ 		if (error)
+ 			goto err_stop;
++	} else if (apple_z2_is_j172(z2)) {
++		error = apple_z2_boot_preamble(z2, false);
++		if (error)
++			goto err_stop;
+ 	} else if (apple_z2_is_iphone7_plus(z2)) {
+ 		/* iPhone 7 Plus performs a legacy reset and zero preamble first. */
+ 		error = apple_z2_pulse_reset(z2);
+@@ -2140,7 +2756,7 @@
+ 	reinit_completion(&z2->boot_irq);
+ 	enable_irq(z2->spidev->irq);
+ 	irq_enabled = true;
+-	if (apple_z2_is_j172(z2)) {
++	if (apple_z2_is_j172(z2) || apple_z2_is_j208(z2)) {
+ 		error = apple_z2_pulse_reset(z2);
+ 	} else if (apple_z2_is_iphone7_plus(z2)) {
+ 		gpiod_set_value_cansleep(z2->reset_gpio, 0);
+@@ -2158,7 +2774,7 @@
+ 		error = -ETIMEDOUT;
+ 		goto err_stop;
+ 	}
+-	if (apple_z2_is_j172(z2) || apple_z2_is_iphone7_plus(z2)) {
++	if (apple_z2_is_hbpp14(z2)) {
+ 		error = apple_z2_advance_protocol(z2,
+ 						  APPLE_Z2_STATE_SPI_CONFIGURED,
+ 						  APPLE_Z2_STATE_BOOT_IRQ);
+@@ -2171,7 +2787,7 @@
+ 			goto err_stop;
+ 	}
+ 
+-	if (apple_z2_is_j172(z2) || apple_z2_is_iphone7_plus(z2)) {
++	if (apple_z2_is_hbpp14(z2)) {
+ 		disable_irq(z2->spidev->irq);
+ 		z2->upload_irq_masked = true;
+ 	}
+@@ -2209,7 +2825,125 @@
+ static const struct apple_z2_chip_info apple_z2_j172_info = {
+ 	.name = "iPad7,12 Touchscreen",
+ 	.variant = APPLE_Z2_VARIANT_J172,
++};
++
++static const struct apple_z2_chip_info apple_z2_j208_info = {
++	.name = "iPad7,4 Touch Diagnostic",
++	.variant = APPLE_Z2_VARIANT_J208,
++};
++
++/* RAM-only evidence: reads copy captured bytes, never initiate SPI traffic.
++ * Includes the Gen2 transport header/checksum; keep captures private on host.
++ */
++static ssize_t apple_z2_diagnostic_frame_read(struct file *file,
++		struct kobject *kobj, const struct bin_attribute *attr,
++		char *buf, loff_t offset, size_t count)
++{
++	struct apple_z2 *z2 = dev_get_drvdata(kobj_to_dev(kobj));
++
++	if (offset < 0)
++		return -EINVAL;
++	mutex_lock(&z2->io_lock);
++	if (offset >= z2->diagnostic_frame_len)
++		count = 0;
++	else {
++		count = min_t(size_t, count, z2->diagnostic_frame_len - offset);
++		memcpy(buf, z2->diagnostic_frame + offset, count);
++	}
++	mutex_unlock(&z2->io_lock);
++	return count;
++}
++
++/* Public surface geometry only. Return one complete immutable snapshot;
++ * no query or other SPI operation is performed from this sysfs read.
++ */
++static ssize_t apple_z2_diagnostic_surface_read(struct file *file,
++		struct kobject *kobj, const struct bin_attribute *attr,
++		char *buf, loff_t offset, size_t count)
++{
++	struct apple_z2 *z2 = dev_get_drvdata(kobj_to_dev(kobj));
++	ssize_t result;
++
++	if (offset < 0)
++		return -EINVAL;
++	mutex_lock(&z2->io_lock);
++	if (!z2->surface_descriptor_valid)
++		result = -ENODATA;
++	else if (offset >= APPLE_Z2_SURFACE_DESCRIPTOR_SIZE)
++		result = 0;
++	else if (offset || count < APPLE_Z2_SURFACE_DESCRIPTOR_SIZE)
++		result = -EINVAL;
++	else {
++		memcpy(buf, z2->diagnostic_surface,
++		       APPLE_Z2_SURFACE_DESCRIPTOR_SIZE);
++		result = APPLE_Z2_SURFACE_DESCRIPTOR_SIZE;
++	}
++	mutex_unlock(&z2->io_lock);
++	return result;
++}
++
++/* An explicit computed-geometry API; never presented as raw D9 bytes. */
++static ssize_t diagnostic_geometry_show(struct device *dev,
++		struct device_attribute *attr, char *buf)
++{
++	struct apple_z2 *z2 = dev_get_drvdata(dev);
++	ssize_t len;
++
++	mutex_lock(&z2->io_lock);
++	if (!z2->grid_fallback_valid)
++		len = -ENODATA;
++	else
++		len = sysfs_emit(buf,
++			"source=family28-region1-native-v1 d9_all_zero=1 family=28 endian=1 rows=52 columns=53 region=1 min_x=%d max_x=%d min_y=%d max_y=%d raw_to_bound_ratio=10\n",
++			z2->sensor_min_x, z2->sensor_max_x,
++			z2->sensor_min_y, z2->sensor_max_y);
++	mutex_unlock(&z2->io_lock);
++	return len;
++}
++
++static ssize_t diagnostic_status_show(struct device *dev,
++		struct device_attribute *attr, char *buf)
++{
++	struct apple_z2 *z2 = dev_get_drvdata(dev);
++	ssize_t len;
++
++	mutex_lock(&z2->io_lock);
++	len = sysfs_emit(buf,
++		"frames=%llu last_bytes=%zu reads=%llu no_data=%llu invalid=%llu header_command=%02x packet_bytes=%zu transport_error=%d capacity=%zu empty=%llu raw_len=%u header_checksum=%d\n",
++		z2->diagnostic_frames, z2->diagnostic_frame_len,
++		z2->diagnostic_reads, z2->diagnostic_no_data,
++		z2->diagnostic_invalid, z2->diagnostic_command,
++		z2->diagnostic_packet_len, z2->diagnostic_error, z2->rx_buf_size,
++		z2->diagnostic_empty, z2->diagnostic_result_len,
++		z2->diagnostic_header_checksum);
++	mutex_unlock(&z2->io_lock);
++	return len;
++}
++
++static struct bin_attribute apple_z2_diagnostic_frame_attr = {
++	.attr = { .name = "diagnostic_frame", .mode = 0400 },
++	.size = APPLE_Z2_J208_RX_BUF_SIZE,
++	.read = apple_z2_diagnostic_frame_read,
+ };
++static struct bin_attribute apple_z2_diagnostic_surface_attr = {
++	.attr = { .name = "diagnostic_surface", .mode = 0400 },
++	.size = APPLE_Z2_SURFACE_DESCRIPTOR_SIZE,
++	.read = apple_z2_diagnostic_surface_read,
++};
++static struct device_attribute dev_attr_diagnostic_status =
++	__ATTR(diagnostic_status, 0400, diagnostic_status_show, NULL);
++static struct device_attribute dev_attr_diagnostic_geometry =
++	__ATTR(diagnostic_geometry, 0400, diagnostic_geometry_show, NULL);
++static struct attribute *apple_z2_diagnostic_attrs[] = {
++	&dev_attr_diagnostic_status.attr, &dev_attr_diagnostic_geometry.attr, NULL,
++};
++static const struct bin_attribute *apple_z2_diagnostic_bin_attrs[] = {
++	&apple_z2_diagnostic_frame_attr, &apple_z2_diagnostic_surface_attr, NULL,
++};
++static const struct attribute_group apple_z2_diagnostic_group = {
++	.attrs = apple_z2_diagnostic_attrs,
++	.bin_attrs = apple_z2_diagnostic_bin_attrs,
++};
+ 
+ static const struct apple_z2_chip_info apple_z2_d11_info = {
+ 	.name = "iPhone9,2 Touchscreen",
+@@ -2242,12 +2976,19 @@
+ 	z2->tx_buf = devm_kzalloc(dev, APPLE_Z2_CMD_SIZE, GFP_KERNEL);
+ 	if (!z2->tx_buf)
+ 		return -ENOMEM;
+-	z2->rx_buf = devm_kzalloc(dev, APPLE_Z2_RX_BUF_SIZE, GFP_KERNEL);
++	/* J208 DeviceInfo reports a 6490-byte maximum. Leave room for the
++	 * transport wrapper/alignment; other variants retain their 4000 limit.
++	 */
++	z2->rx_buf_size = info->variant == APPLE_Z2_VARIANT_J208 ?
++		APPLE_Z2_J208_RX_BUF_SIZE : APPLE_Z2_RX_BUF_SIZE;
++	z2->rx_buf = devm_kzalloc(dev, z2->rx_buf_size, GFP_KERNEL);
+ 	if (!z2->rx_buf)
+ 		return -ENOMEM;
+ 
+ 	z2->spidev = spi;
+ 	z2->variant = info->variant;
++	if (apple_z2_is_j208(z2) && !of_machine_is_compatible("apple,j208"))
++		return -ENODEV;
+ 	z2->boot_timeout_ms = 20;
+ 	if (apple_z2_is_iphone7_plus(z2)) {
+ 		z2->z2_inter_packet_delay_us = 1000;
+@@ -2281,8 +3022,15 @@
+ 					     "unable to get core supply\n");
+ 	}
+ 
+-	z2->power_ana_gpio =
+-		devm_gpiod_get_optional(dev, "power-ana", GPIOD_OUT_LOW);
++	if (apple_z2_is_j208(z2)) {
++		z2->analog_supply = devm_regulator_get(dev, "analog");
++		if (IS_ERR(z2->analog_supply))
++			return dev_err_probe(dev, PTR_ERR(z2->analog_supply),
++					     "unable to get J208 analog supply\n");
++	} else {
++		z2->power_ana_gpio =
++			devm_gpiod_get_optional(dev, "power-ana", GPIOD_OUT_LOW);
++	}
+ 	if (IS_ERR(z2->power_ana_gpio))
+ 		return dev_err_probe(dev, PTR_ERR(z2->power_ana_gpio),
+ 				     "unable to get analog power GPIO\n");
+@@ -2291,13 +3039,17 @@
+ 	if (IS_ERR(z2->power_ldo_gpio))
+ 		return dev_err_probe(dev, PTR_ERR(z2->power_ldo_gpio),
+ 				     "unable to get LDO power GPIO\n");
++	if (apple_z2_is_j208(z2) && !z2->power_ldo_gpio)
++		return dev_err_probe(dev, -ENODEV, "J208 requires LDO GPIO\n");
+ 	z2->display_sync_gpio =
+-		devm_gpiod_get_optional(dev, "display-sync", GPIOD_OUT_LOW);
++		devm_gpiod_get_optional(dev, "display-sync",
++					apple_z2_is_j208(z2) ? GPIOD_IN : GPIOD_OUT_LOW);
+ 	if (IS_ERR(z2->display_sync_gpio))
+ 		return dev_err_probe(dev, PTR_ERR(z2->display_sync_gpio),
+ 				     "unable to get display-sync GPIO\n");
+ 	z2->display_sync1_gpio =
+-		devm_gpiod_get_optional(dev, "display-sync1", GPIOD_OUT_LOW);
++		devm_gpiod_get_optional(dev, "display-sync1",
++					apple_z2_is_j208(z2) ? GPIOD_IN : GPIOD_OUT_LOW);
+ 	if (IS_ERR(z2->display_sync1_gpio))
+ 		return dev_err_probe(dev, PTR_ERR(z2->display_sync1_gpio),
+ 				     "unable to get display-sync1 GPIO\n");
+@@ -2307,6 +3059,14 @@
+ 		return dev_err_probe(dev, PTR_ERR(z2->clk),
+ 				     "unable to get clock\n");
+ 
++	if (apple_z2_is_j208(z2)) {
++		if (!z2->clk)
++			return dev_err_probe(dev, -ENODEV, "J208 requires touch clock\n");
++		error = apple_z2_j172_sync_claim_gpios(z2);
++		if (error)
++			return dev_err_probe(dev, error, "J208 requires three sync pins\n");
++	}
++
+ 	error = devm_request_threaded_irq(dev, spi->irq, NULL, apple_z2_irq,
+ 					  IRQF_ONESHOT | IRQF_NO_AUTOEN,
+ 					  "apple-z2-irq", z2);
+@@ -2342,6 +3102,18 @@
+ 		}
+ 	}
+ 
++	if (apple_z2_is_j208(z2)) {
++		z2->diagnostic_frame = devm_kzalloc(dev, z2->rx_buf_size, GFP_KERNEL);
++		if (!z2->diagnostic_frame)
++			return -ENOMEM;
++		error = devm_device_add_group(dev, &apple_z2_diagnostic_group);
++		if (error)
++			return error;
++		dev_info(dev, "J208 RAM diagnostic only; no input device registered\n");
++		usleep_range(5000, 10000);
++		return apple_z2_boot(z2);
++	}
++
+ 	z2->input_dev = devm_input_allocate_device(dev);
+ 	if (!z2->input_dev)
+ 		return -ENOMEM;
+@@ -2415,6 +3187,7 @@
+ 	{ .compatible = "apple,j293-touchbar", .data = &apple_z2_j293_info },
+ 	{ .compatible = "apple,j493-touchbar", .data = &apple_z2_j493_info },
+ 	{ .compatible = "apple,j172-touchscreen", .data = &apple_z2_j172_info },
++	{ .compatible = "apple,j208-touchscreen-diagnostic", .data = &apple_z2_j208_info },
+ 	{ .compatible = "apple,d11-touchscreen", .data = &apple_z2_d11_info },
+ 	{ .compatible = "apple,d111-touchscreen", .data = &apple_z2_d111_info },
+ 	{}
+@@ -2425,6 +3198,7 @@
+ 	{ .name = "j293-touchbar", .driver_data = (kernel_ulong_t)&apple_z2_j293_info },
+ 	{ .name = "j493-touchbar", .driver_data = (kernel_ulong_t)&apple_z2_j493_info },
+ 	{ .name = "j172-touchscreen", .driver_data = (kernel_ulong_t)&apple_z2_j172_info },
++	{ .name = "j208-touchscreen-diagnostic", .driver_data = (kernel_ulong_t)&apple_z2_j208_info },
+ 	{ .name = "d11-touchscreen", .driver_data = (kernel_ulong_t)&apple_z2_d11_info },
+ 	{ .name = "d111-touchscreen", .driver_data = (kernel_ulong_t)&apple_z2_d111_info },
+ 	{}

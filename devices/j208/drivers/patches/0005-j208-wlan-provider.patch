@@ -1,0 +1,10 @@
+--- a/drivers/soc/apple/apple-t8010-wlan.c
++++ b/drivers/soc/apple/apple-t8010-wlan.c
+@@ -83,6 +83,7 @@
+ 
+ static const struct of_device_id apple_wlan_provider_of_match[] = {
+ 	{ .compatible = "apple,t8010-wlan-uart-provider" },
++	{ .compatible = "apple,t8011-wlan-uart-provider" },
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(of, apple_wlan_provider_of_match);

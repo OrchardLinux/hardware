@@ -14,6 +14,8 @@ Currently: iPad 6 Wi-Fi (`iPad7,5`, J71b), experimental. Boot is tethered and GP
 
 The iPhone 6 (`iPhone7,2`, N61AP) has experimental tethered support. See the [bring-up record](docs/n61-bringup.md) for its tested features and remaining work.
 
+J208 (`iPad7,4`, iPad Pro 10.5) keeps the RAM-verified touch, Wi-Fi, backlight, battery and light-sensor sources in [devices/j208](devices/j208/README.md). They are not wired into the current kernel series, and installation is disabled.
+
 ## Install a system
 
 Follow the install instructions of a distribution, e.g. omarchy-a. Until the

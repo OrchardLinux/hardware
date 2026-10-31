@@ -1,0 +1,40 @@
+--- a/drivers/soc/apple/apple-sio-core.c
++++ b/drivers/soc/apple/apple-sio-core.c
+@@ -701,8 +701,9 @@
+ 				     "failed to load firmware %s\n",
+ 				     firmware_name);
+ 
+-	/* J71b diagnostics must use the exact privately extracted image. */
+-	if (of_machine_is_compatible("apple,j71b")) {
++	/* RAM diagnostics use the exact firmware extracted for this chip. */
++	if (of_machine_is_compatible("apple,j71b") ||
++	    of_machine_is_compatible("apple,j208")) {
+ 		u8 expected[SHA256_DIGEST_SIZE], actual[SHA256_DIGEST_SIZE];
+ 		u32 expected_size;
+ 
+@@ -714,7 +715,9 @@
+ 					      "apple,firmware-sha256") != sizeof(expected) ||
+ 		    of_property_read_u32(sio->dev->of_node, "apple,firmware-size",
+ 					 &expected_size) ||
+-		    firmware->size != expected_size || expected_size != 557152) {
++		    firmware->size != expected_size ||
++		    expected_size != (of_machine_is_compatible("apple,j208") ?
++				     557168 : 557152)) {
+ 			ret = -EINVAL;
+ 			goto out_release_firmware;
+ 		}
+@@ -984,6 +987,7 @@
+ 
+ static const struct of_device_id apple_sio_of_match[] = {
+ 	{ .compatible = "apple,t8010-sio" },
++	{ .compatible = "apple,t8011-sio" },
+ 	{}
+ };
+ MODULE_DEVICE_TABLE(of, apple_sio_of_match);
+@@ -999,5 +1003,6 @@
+ module_platform_driver(apple_sio_driver);
+ 
+ MODULE_FIRMWARE("apple/t8010-smartio.bin");
++MODULE_FIRMWARE("apple/t8011-smartio.bin");
+ MODULE_DESCRIPTION("Apple T8010 SmartIO coprocessor driver");
+ MODULE_LICENSE("Dual MIT/GPL");
