@@ -29,10 +29,10 @@ dtb = "s8003-j72t"     # arch/arm64/boot/dts/apple/<dtb>.dtb
 recipe = "firmware.json" # Relative to this device.toml; public recipe, not firmware bytes.
 
 [support]
-install = false # Until a J71t install test on this revision.
+install = true
 status = "experimental"
 caveats = [
-  "RAM boot (storage, PCIe, display, touch, ALS, Wi-Fi) tested on a J71t in OrchardLinux/hardware#28, before the move onto main; this revision and installation are not tested on a device yet.",
+  "RAM boot (storage, PCIe, display, touch, ALS, Wi-Fi) tested on a J71t in OrchardLinux/hardware#28, before the move onto main; installation is not tested on a device yet.",
   "Boot with Hoolock's prebuilt Pongo (orchard build --pongo FILE); Orchard's own Pongo does not boot on the A9 yet.",
   "Cellular has no Linux driver.",
   "Charging: Apple chargers and USB-C sources up to 2.4 A; computers per the host's own grant; other sources 500 mA.",

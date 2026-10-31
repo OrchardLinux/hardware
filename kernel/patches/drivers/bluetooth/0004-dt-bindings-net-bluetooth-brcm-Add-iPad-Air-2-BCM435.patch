@@ -1,0 +1,25 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <henrik@goat-code.com>
+Date: Fri, 30 Oct 2026 21:02:48 +0800
+Subject: [PATCH] dt-bindings: net: bluetooth: brcm: Add iPad Air 2 BCM4350C2
+
+Add the Bluetooth part of the iPad Air 2's BCM4350C2 combo chip.
+
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../devicetree/bindings/net/bluetooth/brcm,bluetooth.yaml        | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/Documentation/devicetree/bindings/net/bluetooth/brcm,bluetooth.yaml b/Documentation/devicetree/bindings/net/bluetooth/brcm,bluetooth.yaml
+index fa0716a..b815e36 100644
+--- a/Documentation/devicetree/bindings/net/bluetooth/brcm,bluetooth.yaml
++++ b/Documentation/devicetree/bindings/net/bluetooth/brcm,bluetooth.yaml
+@@ -31,6 +31,7 @@ properties:
+               - infineon,cyw43439-bt
+           - const: brcm,bcm4329-bt
+       - enum:
++          - apple,j81-bcm4350c2-bt
+           - brcm,bcm20702a1
+           - brcm,bcm4329-bt
+           - brcm,bcm4330-bt

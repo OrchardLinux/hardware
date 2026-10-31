@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Recipes need only Python 3.11+ and its standard library; Orchard passes its own.
+python=${ORCHARD_PYTHON:-python3}
 
 here=$(cd "$(dirname "$0")" && pwd)
 device=${1:-}
@@ -20,12 +22,12 @@ if [[ ! "$device" =~ ^[a-z0-9][a-z0-9_-]*$ || -z "$dest" || -e "$dest" ]]; then
 fi
 # One kernel per platform; a device only selects which DTB is also copied
 # to DIRECTORY/DEVICE.dtb. All platform DTBs land in DIRECTORY/dtbs/.
-read -r platform device_dtb < <(python3 "$here/series.py" --resolve "$device")
+read -r platform device_dtb < <("$python" "$here/series.py" --resolve "$device")
 config="$here/configs/$platform/config"
 patches=()
 while IFS= read -r patch; do
   patches+=("$patch")
-done < <(python3 "$here/series.py" "$device")
+done < <("$python" "$here/series.py" "$device")
 [[ -f "$config" ]] || { echo "Missing kernel config for platform $platform" >&2; exit 1; }
 command -v git >/dev/null || { echo 'Git is required' >&2; exit 1; }
 if [[ ${ORCHARD_BUILD_NATIVE:-0} != 1 ]]; then
@@ -41,6 +43,14 @@ commit=$(awk -F= '$1=="commit" {print $2}' "$here/upstream.lock")
 # last build, and a patch change recompiles only the files it touches.
 cache=${ORCHARD_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/orchard}
 work=${work:-"$cache/kernel-work/$platform-${commit:0:12}"}
+# Compiled objects keyed by preprocessed content, shared by every tree: a tree
+# that returns to a patch set built before compiles it from the cache.
+# ORCHARD_CCACHE=0 compiles without it.
+compiler_cache=()
+if [[ ${ORCHARD_CCACHE:-1} != 0 ]]; then
+  mkdir -p "$cache/ccache/kernel"
+  compiler_cache=(--bind "$cache/ccache/kernel:/compiler_cache:rw")
+fi
 source="$work/source"
 build_output="$work/output"
 applied="$work/applied-patches"
@@ -50,7 +60,7 @@ mkdir -p "$work"
 # holds the lock names the tree in ORCHARD_KERNEL_WORK_LOCKED.
 exec 9>>"$work/.lock"
 if [[ ${ORCHARD_KERNEL_WORK_LOCKED:-} != "$work" ]]; then
-  python3 -c '
+  "$python" -c '
 import fcntl, sys
 try:
     fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -61,9 +71,12 @@ except BlockingIOError:
 fi
 
 patch_list() {
-  for patch in "${patches[@]}"; do
-    printf '%s %s\n' "$(git hash-object "$patch")" "${patch#"$here"/}"
-  done
+  # One git process for the whole series; it prints the hashes in argument order.
+  local hash i=0
+  while IFS= read -r hash; do
+    printf '%s %s\n' "$hash" "${patches[i]#"$here"/}"
+    i=$((i + 1))
+  done < <(git hash-object "${patches[@]}")
 }
 
 # Content of the source tree, tracked and untracked, without touching its index.
@@ -84,9 +97,17 @@ desired_tree() {
   local index="$work/desired-index.$$" patch tree
   rm -f "$index"
   GIT_INDEX_FILE=$index git -C "$source" read-tree HEAD || return
-  for patch in "${patches[@]}"; do
-    GIT_INDEX_FILE=$index git -C "$source" apply --cached "$patch" || { rm -f "$index"; return 1; }
-  done
+  # One apply for the whole series writes the large index once, not per patch.
+  if ! GIT_INDEX_FILE=$index git -C "$source" apply --cached "${patches[@]}"; then
+    # Name the first patch that fails; one by one is slow, but only on failure.
+    GIT_INDEX_FILE=$index git -C "$source" read-tree HEAD || return
+    for patch in "${patches[@]}"; do
+      GIT_INDEX_FILE=$index git -C "$source" apply --cached "$patch" 2>/dev/null ||
+        { echo "First patch that does not apply: ${patch#"$here"/}" >&2; break; }
+    done
+    rm -f "$index"
+    return 1
+  fi
   tree=$(GIT_INDEX_FILE=$index git -C "$source" write-tree) || { rm -f "$index"; return 1; }
   rm -f "$index"
   printf '%s\n' "$tree"
@@ -142,21 +163,29 @@ fi
 mkdir -p "$build_output"
 cp "$config" "$build_output/.config"
 echo 'Preparing kernel build container...'
-python3 -m orchard_hardware.buildenv build --file "$here/Containerfile" \
+"$python" "$here/../src/orchard/buildenv.py" build --file "$here/Containerfile" \
   --image localhost/orchard-hardware-kernel-toolchain:bookworm --context "$here"
 echo 'Compiling kernel image, modules and device trees...'
 # shellcheck disable=SC2016 # Variables below belong to the recipe shell.
-python3 -m orchard_hardware.buildenv run \
+"$python" "$here/../src/orchard/buildenv.py" run \
   --bind "$source:/src:ro" --bind "$build_output:/out:rw" --bind "$here/configs:/config:ro" \
+  ${compiler_cache[@]+"${compiler_cache[@]}"} \
   --image localhost/orchard-hardware-kernel-toolchain:bookworm -- bash -euc '
     platform=$1
     export KBUILD_BUILD_USER=orchard KBUILD_BUILD_HOST=builder
     export KBUILD_BUILD_VERSION=1 KBUILD_BUILD_TIMESTAMP="2026-10-22T00:00:00Z"
+    if [[ -n ${ORCHARD_COMPILER_CACHE:-} ]]; then
+      # ccache answers as clang-19 from PATH, so the compiler command lines Kbuild
+      # records stay the same with and without it and switching rebuilds nothing.
+      mkdir -p "$ORCHARD_TMP/compiler-cache-bin"
+      ln -sf "$(command -v ccache)" "$ORCHARD_TMP/compiler-cache-bin/clang-19"
+      export PATH="$ORCHARD_TMP/compiler-cache-bin:$PATH" CCACHE_DIR=$ORCHARD_COMPILER_CACHE
+    fi
     make -C "$ORCHARD_SRC" O="$ORCHARD_OUT" LLVM=-19 ARCH=arm64 olddefconfig
     cmp "$ORCHARD_OUT/.config" "$ORCHARD_CONFIG/$platform/config"
-    make -C "$ORCHARD_SRC" O="$ORCHARD_OUT" -j"$2" LLVM=-19 ARCH=arm64 \
+    make -C "$ORCHARD_SRC" O="$ORCHARD_OUT" -j"${2:-$(nproc)}" LLVM=-19 ARCH=arm64 \
       LOCALVERSION="-orchard-$platform" DTC_FLAGS=-@ Image.gz modules dtbs
-  ' bash "$platform" "${ORCHARD_KERNEL_JOBS:-2}"
+  ' bash "$platform" "${ORCHARD_KERNEL_JOBS:-}"
 echo 'Staging kernel modules and device trees...'
 stage=$(mktemp -d "$work/stage.XXXXXX")
 trap 'rm -rf "$stage"' EXIT
@@ -167,7 +196,7 @@ if [[ -d "$here/modules/$platform" ]]; then
     --output "$stage/external"
   external=(--external "$stage/external")
 fi
-python3 "$here/stage-modules.py" --build "$build_output" \
+"$python" "$here/stage-modules.py" --build "$build_output" \
   ${external[@]+"${external[@]}"} --output "$stage/module-root"
 mkdir -p "$dest/dtbs"
 cp "$build_output/arch/arm64/boot/dts/apple/"*.dtb "$dest/dtbs/"

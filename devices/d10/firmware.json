@@ -9,14 +9,135 @@
     "sha256": "4d480918c4a3e6fa69177db706086d3bf00d6f83f311e55974fe54e90c170aab"
   },
   "inputs": {
+    "kristoff.trx": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4355__s-C0/kristoff.trx"
+      },
+      "device": "/usr/share/firmware/wifi/C-4355__s-C0/kristoff.trx",
+      "sha256": "91baca77deefdbc47886c973a3cfea6d93cfee179546ebc60c058451ab270bec"
+    },
+    "kristoff.clmb": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4355__s-C0/kristoff.clmb"
+      },
+      "device": "/usr/share/firmware/wifi/C-4355__s-C0/kristoff.clmb",
+      "sha256": "f0894c420d43b25c73c6678d87a8866b1a1432ced39f8ef3358f3e1ceb332834"
+    },
+    "kristoff.txcb": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4355__s-C0/kristoff.txcb"
+      },
+      "device": "/usr/share/firmware/wifi/C-4355__s-C0/kristoff.txcb",
+      "sha256": "5f983a65a8dec91bdcf2228e558266245e121d9b800ab85b984dfe4140d3d012"
+    },
+    "P-kristoff_M-PRNL_V-m__m-5.7.txt": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4355__s-C0/P-kristoff_M-PRNL_V-m__m-5.7.txt"
+      },
+      "device": "/usr/share/firmware/wifi/C-4355__s-C0/P-kristoff_M-PRNL_V-m__m-5.7.txt",
+      "sha256": "a1f8f027926fe6b05dc317a692912d1bd7af2cab80f4152f7afd8371820e3ced"
+    },
+    "P-kristoff_M-PRNL_V-u__m-5.7.txt": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4355__s-C0/P-kristoff_M-PRNL_V-u__m-5.7.txt"
+      },
+      "device": "/usr/share/firmware/wifi/C-4355__s-C0/P-kristoff_M-PRNL_V-u__m-5.7.txt",
+      "sha256": "a9d1927a5ed27f518d8dbb74569d426e7dc56107b6143d5c84d63a61802aca82"
+    },
+    "P-kristoff_M-PRNL_V-u__m-5.9.txt": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/wifi/C-4355__s-C0/P-kristoff_M-PRNL_V-u__m-5.9.txt"
+      },
+      "device": "/usr/share/firmware/wifi/C-4355__s-C0/P-kristoff_M-PRNL_V-u__m-5.9.txt",
+      "sha256": "a9d1927a5ed27f518d8dbb74569d426e7dc56107b6143d5c84d63a61802aca82"
+    },
+    "kernelcache": {
+      "ipsw": {
+        "kernelcache": true
+      },
+      "device": {
+        "kernelcache": "active"
+      }
+    },
     "BlueTool": {
       "ipsw": {
         "rootfs": "usr/sbin/BlueTool"
       },
-      "device": "/usr/sbin/BlueTool"
+      "device": "/usr/sbin/BlueTool",
+      "sha256": "78115abe9705d30596768231d2f1587bf68670f6a7a2d1db7d88620aa54cca8d"
     }
   },
   "outputs": [
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355-pcie.apple,kristoff.bin",
+      "sha256": "91baca77deefdbc47886c973a3cfea6d93cfee179546ebc60c058451ab270bec",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "kristoff.trx"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355-pcie.apple,kristoff.clm_blob",
+      "sha256": "f0894c420d43b25c73c6678d87a8866b1a1432ced39f8ef3358f3e1ceb332834",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "kristoff.clmb"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355-pcie.apple,kristoff.txcap_blob",
+      "sha256": "5f983a65a8dec91bdcf2228e558266245e121d9b800ab85b984dfe4140d3d012",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "kristoff.txcb"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355-pcie.apple,kristoff-PRNL-m-5.7.txt",
+      "sha256": "a1f8f027926fe6b05dc317a692912d1bd7af2cab80f4152f7afd8371820e3ced",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-kristoff_M-PRNL_V-m__m-5.7.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355-pcie.apple,kristoff-PRNL-u-5.7.txt",
+      "sha256": "a9d1927a5ed27f518d8dbb74569d426e7dc56107b6143d5c84d63a61802aca82",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-kristoff_M-PRNL_V-u__m-5.7.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/brcmfmac4355-pcie.apple,kristoff-PRNL-u-5.9.txt",
+      "sha256": "a9d1927a5ed27f518d8dbb74569d426e7dc56107b6143d5c84d63a61802aca82",
+      "steps": [
+        {
+          "step": "copy@1",
+          "input": "P-kristoff_M-PRNL_V-u__m-5.9.txt"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/apple/t8010-smartio.bin",
+      "sha256": "408adbb05e75469cbd9c4d94624fd116ae58be5f87cf40b5e495242a83140bcb",
+      "steps": [
+        {
+          "step": "smartio-from-kernelcache@1",
+          "input": "kernelcache"
+        }
+      ]
+    },
     {
       "destination": "lib/firmware/brcm/BCM.apple,d10-MUR.hcd",
       "sha256": "ef09263853f36bbdec6e221d2abc67a43efd42e101628dd008c96e64b9d54fc6",

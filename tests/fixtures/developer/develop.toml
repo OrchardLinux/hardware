@@ -1,0 +1,17 @@
+# Developer boot example only; fixture payloads cannot boot a device.
+schema = 1
+kind = "orchard.boot"
+device = "j71b"
+boot_method = "checkm8-pongo"
+min_orchard = "0.1.0"
+protocol = 1
+
+[boot]
+file = "fixtures/boot-stub.txt"
+bytes = 72
+sha256 = "804e3e911c74779e207d78bb5455a14389853686390360d2f051be096653dc93"
+
+[pongo]
+file = "fixtures/boot-stub.txt"
+bytes = 72
+sha256 = "804e3e911c74779e207d78bb5455a14389853686390360d2f051be096653dc93"

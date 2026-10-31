@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Recipes need only Python 3.11+ and its standard library; Orchard passes its own.
+python=${ORCHARD_PYTHON:-python3}
+here=$(cd "$(dirname "$0")" && pwd)
 
 source='' build='' modules='' output='' localversion=''
 while (($#)); do
@@ -31,12 +34,12 @@ for directory in "$modules"/*; do
 done
 [[ ${#groups[@]} -gt 0 ]] || { echo 'No external module groups' >&2; exit 1; }
 # shellcheck disable=SC2016 # Variables below belong to the recipe shell.
-python3 -m orchard_hardware.buildenv run \
+"$python" "$here/../src/orchard/buildenv.py" run \
   --bind "$source:/src:ro" --bind "$build:/out:rw" --bind "$output:/modules:rw" \
   --env "LOCALVERSION=$localversion" \
   --image localhost/orchard-hardware-kernel-toolchain:bookworm -- bash -euc '
     for group in "$ORCHARD_MODULES"/*; do
-      make -C "$ORCHARD_SRC" O="$ORCHARD_OUT" -j2 LLVM=-19 ARCH=arm64 \
+      make -C "$ORCHARD_SRC" O="$ORCHARD_OUT" -j"$(nproc)" LLVM=-19 ARCH=arm64 \
         LOCALVERSION="$LOCALVERSION" M="$group" modules
     done
   '

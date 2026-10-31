@@ -28,6 +28,9 @@ dtb = "t8010-d10"     # arch/arm64/boot/dts/apple/<dtb>.dtb
 
 [firmware]
 recipe = "firmware.json" # Relative to this device.toml; public recipe, not firmware bytes.
+# Wi-Fi files are for brcm,board-type "apple,kristoff": the wlan module-instance in
+# the IPSW's DeviceTree.d10ap. The DT doesn't describe Wi-Fi yet.
+# Touch, once the DT describes it: D10.mtprops profile "C1F5D,2", z2fw-from-mtprops@2.
 
 [support]
 install = true

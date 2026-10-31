@@ -1,0 +1,2 @@
+# Manifest development tooling only; not a new host CLI dependency decision.
+jsonschema==4.25.1

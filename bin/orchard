@@ -1,0 +1,74 @@
+#!/bin/sh
+# orchard on PATH: runs the orchard checkout the current directory belongs to.
+#
+# Walking up from the current directory, the first match wins:
+# - an orchard checkout (pyproject.toml of the project "orchard"): that checkout;
+# - an orchard.local.toml with orchard = "PATH": the checkout at PATH, relative
+#   to that file, e.g. your own clone or a worktree on a branch;
+# otherwise mainline: orchard's main branch, kept in the Orchard cache and
+# updated before use at most every ten minutes.
+#
+# `orchard python ARGS` runs Python in that checkout's environment, for a
+# distribution's own scripts; `orchard checkout` prints which checkout runs.
+set -eu
+
+cache=${ORCHARD_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/orchard}
+
+mainline() {
+    main=$cache/orchard-main
+    url=${ORCHARD_MAINLINE_URL:-https://github.com/OrchardLinux/orchard.git}
+    if [ ! -d "$main/.git" ]; then
+        mkdir -p "$cache"
+        git clone --quiet "$url" "$main" >&2
+    elif [ -z "$(find "$main/.git/FETCH_HEAD" -mmin -10 2>/dev/null)" ]; then
+        if ! git -C "$main" diff --quiet HEAD 2>/dev/null; then
+            echo "orchard: $main has local changes; not updating mainline" >&2
+        elif git -C "$main" fetch --quiet origin main 2>/dev/null; then
+            git -C "$main" checkout --quiet --detach FETCH_HEAD
+        else
+            echo 'orchard: could not update mainline; using the last fetched one' >&2
+        fi
+    fi
+    printf '%s\n' "$main"
+}
+
+checkout() {
+    dir=$(pwd -P)
+    while :; do
+        if [ -f "$dir/pyproject.toml" ] && grep -qx 'name = "orchard"' "$dir/pyproject.toml"; then
+            printf '%s\n' "$dir"
+            return
+        fi
+        if [ -f "$dir/orchard.local.toml" ]; then
+            path=$(sed -n 's/^orchard[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$dir/orchard.local.toml" | head -n 1)
+            if [ -n "$path" ]; then
+                case $path in
+                    /*) ;;
+                    "~/"*) path=$HOME/${path#"~/"} ;;
+                    *) path=$dir/$path ;;
+                esac
+                [ -f "$path/pyproject.toml" ] || {
+                    echo "orchard: $dir/orchard.local.toml names $path, which is not an orchard checkout" >&2
+                    exit 1
+                }
+                (cd "$path" && pwd -P)
+                return
+            fi
+        fi
+        [ "$dir" = / ] && break
+        dir=$(dirname "$dir")
+    done
+    mainline
+}
+
+command -v uv >/dev/null 2>&1 || {
+    echo 'orchard: install uv: https://docs.astral.sh/uv/getting-started/installation/' >&2
+    exit 1
+}
+root=$(checkout)
+export UV_PROJECT_ENVIRONMENT="$root/.venv"
+case ${1:-} in
+    checkout) printf '%s\n' "$root" ;;
+    python) shift; exec uv run --quiet --project "$root" python "$@" ;;
+    *) exec uv run --quiet --project "$root" orchard "$@" ;;
+esac

@@ -155,6 +155,19 @@
       },
       "device": "/usr/share/firmware/wifi/C-4350__s-C2/rieslingb.txcb",
       "sha256": "00d2b4fc7e294d33bd061c3e57a54d7ffdac41bec08274a5619cf7fee077eafc"
+    },
+    "J82.mtprops": {
+      "ipsw": {
+        "rootfs": "usr/share/firmware/multitouch/J82.mtprops"
+      },
+      "device": "/usr/share/firmware/multitouch/J82.mtprops",
+      "sha256": "457c7af556629df442414d47c36bddbf6607cb623d099afa260a06e4ca4165f1"
+    },
+    "BlueTool": {
+      "ipsw": {
+        "rootfs": "usr/sbin/BlueTool"
+      },
+      "device": "/usr/sbin/BlueTool"
     }
   },
   "outputs": [
@@ -365,6 +378,29 @@
         {
           "step": "copy@1",
           "input": "rieslingb.txcb"
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/apple/j82-fwstart.z2fw",
+      "sha256": "b9b4a072e9498bfac4e6dbb124fa5a758719ad0edfaf052855c955285369afaf",
+      "steps": [
+        {
+          "step": "z2fw-from-z2-packet@1",
+          "input": "J82.mtprops",
+          "profile": "C1F15,2",
+          "calibration_address": 268472320,
+          "calibration_size": 1024
+        }
+      ]
+    },
+    {
+      "destination": "lib/firmware/brcm/BCM.apple,j82.hcd",
+      "sha256": "4ef117a4833777ab334804a5f3279c6bfb762cfabdf475239148b88e5bc45cdf",
+      "steps": [
+        {
+          "step": "bluetool-hcd@1",
+          "input": "BlueTool"
         }
       ]
     }

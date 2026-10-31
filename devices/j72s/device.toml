@@ -27,6 +27,8 @@ dtb = "s8000-j72s"
 
 [firmware]
 recipe = "firmware.json"
+# Wi-Fi files are for brcm,board-type "apple,fearb" (the wlan module-instance in the
+# IPSW's DeviceTree.j72sap), the same as j72t's. They wait for PCIe on the S8000.
 
 [support]
 install = false

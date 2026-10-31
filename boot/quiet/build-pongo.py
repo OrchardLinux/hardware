@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a black-screen Pongo for installed-system discovery; no device access."""
+"""Build Orchard's one Pongo: black screen, used by every distro and launch; no device access."""
 import argparse
 from pathlib import Path
 import shutil
@@ -8,7 +8,9 @@ import sys
 
 HERE = Path(__file__).resolve().parent
 URL = 'https://github.com/checkra1n/PongoOS.git'
-COMMIT = 'bb492b004265ce91123caa23b8bc04b2eff6d2b7'
+# Must include ad8b2d1 ("Fix for Xcode 16.3: don't depend on section order"): with
+# Xcode 16.3+ older revisions copy only part of the image to SRAM and never reach USB.
+COMMIT = 'ad8b2d158588e929ae1ce7d9fd8d453720e1a8b6'
 NEWLIB = 'f9ea5054de8fb51dff6f6d3c2e7cdd4aa89744b8'
 
 

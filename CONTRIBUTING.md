@@ -7,12 +7,13 @@ that a reviewer can tell, for every line, why it is there and what it touches.
 ## What belongs here
 
 This repository holds device descriptions, kernel patches and configuration,
-m1n1 patches, firmware recipes and the boot and recovery initramfs. Host-side
-work (booting, installing, the host link) belongs in
-[cli](https://github.com/OrchardLinux/cli). Desktops and distribution profiles
-belong in [omarchy-a](https://github.com/OrchardLinux/omarchy-a). Work that
-spans repositories is one PR per repository; say in each which ones it needs
-and in which order they merge.
+m1n1 patches, firmware recipes, the boot and recovery initramfs, and the
+`orchard` tool on the host (booting, installing, the host link, firmware
+conversion) in `src/orchard`. A device change and the converter steps or host
+support it needs go into one PR here. Desktops and distribution profiles
+belong in [omarchy-a](https://github.com/OrchardLinux/omarchy-a); work that
+also needs a distro change is one PR per repository, and each says which one
+it needs and in which order they merge.
 
 ## One topic per pull request
 
@@ -22,8 +23,8 @@ it solves:
 - **A device:** its descriptor, firmware recipe, device tree, the driver
   changes it needs, the config options it needs and its documentation.
 - **A boot or runtime path,** such as a new root filesystem source.
-- **Shared build tooling:** `kernel/build`, `boot/m1n1/build`, packaging. These
-  change every device's build.
+- **Shared build tooling:** `kernel/build`, `boot/m1n1/build`, `src/orchard/build.py`.
+  These change every device's build.
 - **CI.**
 
 A device PR can depend on a tooling PR; say so and link it. Within a PR, split

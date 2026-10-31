@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Recipes need only Python 3.11+ and its standard library; Orchard passes its own.
+python=${ORCHARD_PYTHON:-python3}
 
 here=$(cd "$(dirname "$0")" && pwd)
 device=${1:-}
 [[ $# -gt 0 ]] && shift
 output=
-extra_patch='' include_header='' extra_cflags='' work_override=''
+extra_patch='' include_header='' extra_cflags='' work_override='' cargo_override=''
 resume=false
 while (( $# )); do
   case "$1" in
     --output) [[ $# -ge 2 ]] || { echo 'Missing --output value' >&2; exit 2; }; output=$2; shift 2 ;;
     --resume) resume=true; shift ;;
     --work-dir) work_override=$2; shift 2 ;;
+    --cargo-dir) cargo_override=$2; shift 2 ;;
     --extra-patch) extra_patch=$2; shift 2 ;;
     --include-header) include_header=$2; shift 2 ;;
     --extra-cflags) extra_cflags=$2; shift 2 ;;
@@ -19,7 +22,7 @@ while (( $# )); do
   esac
 done
 if [[ ! "$device" =~ ^[a-z0-9][a-z0-9_-]*$ || -z "$output" ]]; then
-  echo 'Usage: ./boot/m1n1/build DEVICE --output FILE [--resume]' >&2
+  echo 'Usage: ./boot/m1n1/build DEVICE --output FILE [--resume] [--work-dir DIR] [--cargo-dir DIR]' >&2
   exit 2
 fi
 [[ ! -e "$output" && ! -L "$output" ]] || { echo "Output exists: $output" >&2; exit 1; }
@@ -76,11 +79,13 @@ if [[ -n "$include_header" ]]; then
   [[ -f "$include_header" ]] || { echo 'Missing include header' >&2; exit 1; }
   cp "$include_header" "$source/src/${include_header##*/}"
 fi
-python3 -m orchard_hardware.buildenv build --file "$here/Containerfile" \
+"$python" "$here/../../src/orchard/buildenv.py" build --file "$here/Containerfile" \
   --image localhost/orchard-hardware-m1n1:bookworm --context "$here"
-mkdir -p "$work/cargo"
-python3 -m orchard_hardware.buildenv run --network \
-  --bind "$source:/src:rw" --bind "$work/cargo:/cache:rw" --env CARGO_HOME=/cache \
+# Crates are the same for every patch set, so callers may share one Cargo home.
+cargo=${cargo_override:-"$work/cargo"}
+mkdir -p "$cargo"
+"$python" "$here/../../src/orchard/buildenv.py" run --network \
+  --bind "$source:/src:rw" --bind "$cargo:/cache:rw" --env CARGO_HOME=/cache \
   --cwd /src --image localhost/orchard-hardware-m1n1:bookworm -- make -j2 USE_CLANG=1 ARCH=aarch64-linux-gnu \
     TOOLCHAIN=/usr/lib/llvm-19/bin/ LLDDIR=/usr/lib/llvm-19/bin/ CHAINLOADING=1 \
     EXTRA_CFLAGS="$extra_cflags"

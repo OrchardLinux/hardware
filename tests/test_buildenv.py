@@ -5,7 +5,8 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
-from orchard_hardware import buildenv
+import sys
+from orchard import buildenv  # noqa: E402
 
 
 class BuildEnvironment(unittest.TestCase):

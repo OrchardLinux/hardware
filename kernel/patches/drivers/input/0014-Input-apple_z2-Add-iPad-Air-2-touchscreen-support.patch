@@ -1,0 +1,154 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <henrik@goat-code.com>
+Date: Fri, 30 Oct 2026 20:24:01 +0800
+Subject: [PATCH] Input: apple_z2: Add iPad Air 2 touchscreen support
+
+The iPad Air 2's touchscreen is an N1 like the iPad 5's: iOS drives
+both with AppleMultitouchN1SPI, and its personality C1F15,2 ("J82",
+iPadOS 15.8) differs from the iPad 5's C1F15,1 only in fll-mval. The
+touch-size-id, parser type and options are the same, so the descriptor
+values are too. Add it as match data of the iPad 5's N1 runtime.
+
+iOS leaves the Air 2's display-sync pin an input (GPIO function code 2,
+mask 0x270 value 0x210) where the iPad 5 routes it to the controller
+(code 3, route 2). Make the display-sync pin states optional: a board
+without them keeps the pin as it is.
+
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/input/touchscreen/apple_z2.c | 82 ++++++++++++++++++++++++----
+ 1 file changed, 71 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/input/touchscreen/apple_z2.c b/drivers/input/touchscreen/apple_z2.c
+index c0f0003..19d9f36 100644
+--- a/drivers/input/touchscreen/apple_z2.c
++++ b/drivers/input/touchscreen/apple_z2.c
+@@ -2230,8 +2230,9 @@ static void apple_z2_platform_power_off(struct apple_z2 *z2)
+ 
+ 	if (apple_z2_is_j71t(z2)) {
+ 		gpiod_set_value_cansleep(z2->reset_gpio, 1);
+-		error = pinctrl_select_state(z2->sync_pinctrl,
+-					     z2->sync_inactive);
++		error = z2->sync_active ?
++			pinctrl_select_state(z2->sync_pinctrl,
++					     z2->sync_inactive) : 0;
+ 		if (error)
+ 			dev_warn(&z2->spidev->dev,
+ 				 "failed to stop display sync: %d\n", error);
+@@ -2409,9 +2410,12 @@ static int apple_z2_j71t_power_on(struct apple_z2 *z2)
+ 		goto err_power_off;
+ 	usleep_range(10000, 11000);
+ 
+-	error = pinctrl_select_state(z2->sync_pinctrl, z2->sync_active);
+-	if (error)
+-		goto err_power_off;
++	if (z2->sync_active) {
++		error = pinctrl_select_state(z2->sync_pinctrl,
++					     z2->sync_active);
++		if (error)
++			goto err_power_off;
++	}
+ 
+ 	error = apple_z2_hbpp_nop(z2);
+ 	if (error)
+@@ -3983,6 +3987,51 @@ static const struct apple_z2_chip_info apple_z2_j71t_info = {
+ 	.n1 = &apple_z2_j71t_n1,
+ };
+ 
++/*
++ * iPad Air 2 (J81, J82) N1, personality C1F15,2 (iOS AppleMultitouchN1SPI,
++ * "AppleMultitouchSPI - J82" in iPadOS 15.8). It overrides the same two N1
++ * defaults as C1F15,1, fll-mval with its own value, and shares C1F15,1's
++ * touch-size-id (3), parser-type (1) and parser-options (0x10), so the
++ * descriptor values are the iPad 5's.
++ */
++static const struct apple_z2_hbpp_reg apple_z2_j81_calib_regs[] = {
++	{ 0x10003060, 6068 },	/* fll-mval */
++	{ 0x1000305c, 0x20 },
++	{ 0x10003058, 6 },
++	{ APPLE_Z2_N1_CONST_CAL_REG, 3 },
++	{ 0x10003518, 1 },	/* clk32-clock-enable */
++};
++
++static const struct apple_z2_n1_info apple_z2_j81_n1 = {
++	.calib_regs = apple_z2_j81_calib_regs,
++	.num_calib_regs = ARRAY_SIZE(apple_z2_j81_calib_regs),
++	.execute_addr = 0x10003400,
++	.execute_arg = 0x100,
++	.cal_size = 0x400,
++	.cal_chunk_size = 0x3f0,
++	.control_delay_us = 25,
++	.get_delay_us = 2000,
++	.wake_holdoff_ms = 100,
++	.get_attempts = 5,
++	.device_info_attempts = 4,
++	.device_info_retry_us = 3000,
++	.interface = 1,
++	.family = 21,
++	.rows = 40,
++	.columns = 30,
++	.surface_width = 14745,
++	.surface_height = 19657,
++};
++
++/* The iPad 5's N1 runtime, SPI timing and power sequence. */
++static const struct apple_z2_chip_info apple_z2_j81_info = {
++	.name = "iPad5,3 Touchscreen",
++	.variant = APPLE_Z2_VARIANT_J71T,
++	.cs_setup_us = 10,
++	.cs_hold_us = 10,
++	.n1 = &apple_z2_j81_n1,
++};
++
+ static const struct apple_z2_chip_info apple_z2_j172_info = {
+ 	.name = "iPad7,12 Touchscreen",
+ 	.variant = APPLE_Z2_VARIANT_J172,
+@@ -4091,16 +4140,25 @@ static int apple_z2_probe(struct spi_device *spi)
+ 		if (IS_ERR(z2->sync_pinctrl))
+ 			return dev_err_probe(dev, PTR_ERR(z2->sync_pinctrl),
+ 					     "unable to get display-sync pins\n");
++		/*
++		 * Where iOS leaves display sync an input instead of routing it
++		 * to the controller (J81), the board describes no states.
++		 */
+ 		z2->sync_active = pinctrl_lookup_state(z2->sync_pinctrl,
+ 						       "display-sync-active");
+-		if (IS_ERR(z2->sync_active))
++		if (PTR_ERR_OR_ZERO(z2->sync_active) == -ENODEV) {
++			z2->sync_active = NULL;
++		} else if (IS_ERR(z2->sync_active)) {
+ 			return dev_err_probe(dev, PTR_ERR(z2->sync_active),
+ 					     "missing display-sync-active state\n");
+-		z2->sync_inactive = pinctrl_lookup_state(z2->sync_pinctrl,
+-							 "display-sync-inactive");
+-		if (IS_ERR(z2->sync_inactive))
+-			return dev_err_probe(dev, PTR_ERR(z2->sync_inactive),
+-					     "missing display-sync-inactive state\n");
++		} else {
++			z2->sync_inactive =
++				pinctrl_lookup_state(z2->sync_pinctrl,
++						     "display-sync-inactive");
++			if (IS_ERR(z2->sync_inactive))
++				return dev_err_probe(dev, PTR_ERR(z2->sync_inactive),
++						     "missing display-sync-inactive state\n");
++		}
+ 	}
+ 
+ 	z2->power_ana_gpio =
+@@ -4283,6 +4341,7 @@ static const struct of_device_id apple_z2_of_match[] = {
+ 	{ .compatible = "apple,j493-touchbar", .data = &apple_z2_j493_info },
+ 	{ .compatible = "apple,j71b-touchscreen", .data = &apple_z2_j71b_info },
+ 	{ .compatible = "apple,j71t-touchscreen", .data = &apple_z2_j71t_info },
++	{ .compatible = "apple,j81-touchscreen", .data = &apple_z2_j81_info },
+ 	{ .compatible = "apple,j172-touchscreen", .data = &apple_z2_j172_info },
+ 	{ .compatible = "apple,d11-touchscreen", .data = &apple_z2_d11_info },
+ 	{ .compatible = "apple,d111-touchscreen", .data = &apple_z2_d111_info },
+@@ -4296,6 +4355,7 @@ static struct spi_device_id apple_z2_of_id[] = {
+ 	{ .name = "j493-touchbar", .driver_data = (kernel_ulong_t)&apple_z2_j493_info },
+ 	{ .name = "j71b-touchscreen", .driver_data = (kernel_ulong_t)&apple_z2_j71b_info },
+ 	{ .name = "j71t-touchscreen", .driver_data = (kernel_ulong_t)&apple_z2_j71t_info },
++	{ .name = "j81-touchscreen", .driver_data = (kernel_ulong_t)&apple_z2_j81_info },
+ 	{ .name = "j172-touchscreen", .driver_data = (kernel_ulong_t)&apple_z2_j172_info },
+ 	{ .name = "d11-touchscreen", .driver_data = (kernel_ulong_t)&apple_z2_d11_info },
+ 	{ .name = "d111-touchscreen", .driver_data = (kernel_ulong_t)&apple_z2_d111_info },

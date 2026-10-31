@@ -4,7 +4,11 @@ import argparse
 from pathlib import Path
 import shutil
 import subprocess
-from orchard_hardware import buildenv
+import sys
+
+# Recipes use buildenv.py by path, without installing the orchard package.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src/orchard'))
+import buildenv  # noqa: E402
 
 
 def main():

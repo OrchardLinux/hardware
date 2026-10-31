@@ -1,0 +1,1 @@
+Manifest fixture only. This is not executable and cannot boot a device.

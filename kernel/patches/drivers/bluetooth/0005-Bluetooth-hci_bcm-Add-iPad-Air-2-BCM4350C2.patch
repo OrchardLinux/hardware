@@ -1,0 +1,30 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <henrik@goat-code.com>
+Date: Fri, 30 Oct 2026 21:02:48 +0800
+Subject: [PATCH] Bluetooth: hci_bcm: Add iPad Air 2 BCM4350C2
+
+Give the iPad Air 2's BCM4350C2 the Apple board sequence of the iPad 5
+and iPad 7: BT_WAKE before BT_REG_ON is cycled, the operational baud
+rate set before the patchram, and the LE quirks. That sequence is
+validated on those boards, not yet on the Air 2.
+
+Signed-off-by: Henrik Klee <henrik@goat-code.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/bluetooth/hci_bcm.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/drivers/bluetooth/hci_bcm.c b/drivers/bluetooth/hci_bcm.c
+index d1634b2..3ce92a8 100644
+--- a/drivers/bluetooth/hci_bcm.c
++++ b/drivers/bluetooth/hci_bcm.c
+@@ -1688,6 +1688,9 @@ static const struct of_device_id bcm_bluetooth_of_match[] = {
+ 	/* The iPad 5 BCM4355C0 needs the same sequence as the iPad 7 C1. */
+ 	{ .compatible = "apple,j71t-bcm4355c0-bt",
+ 	  .data = &bcm4355_j172_device_data },
++	/* The iPad Air 2 BCM4350C2 takes the same Apple board sequence. */
++	{ .compatible = "apple,j81-bcm4350c2-bt",
++	  .data = &bcm4355_j172_device_data },
+ 	{ .compatible = "apple,j71b-bcm4355c1-bt",
+ 	  .data = &bcm4355_j71b_device_data },
+ 	{ .compatible = "apple,j172-bcm4355c1-bt",
