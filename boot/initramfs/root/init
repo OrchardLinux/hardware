@@ -78,6 +78,10 @@ splash() {
     w=$1 h=$2 size=$(cat "$fb/virtual_size") stride=$(cat "$fb/stride")
     W=${size%,*} H=${size#*,}
     [ "$w" -le "$W" ] && [ "$h" -le "$H" ] || { say "${w}x$h does not fit ${W}x$H"; return 0; }
+    # /dev/fb0 is simpledrm's shadow buffer, shown only once something sets a
+    # mode on it; fbcon would, but it stays off the screen. Writing the current
+    # mode to sysfs activates it, then the rows reach the screen.
+    head -1 "$fb/modes" > "$fb/mode" 2>/dev/null || say "could not activate the framebuffer"
     left=$(((W - w) / 2)) top=$(((H - h) / 2)) row=$((w * 4)) y=0
     while [ "$y" -lt "$h" ]; do
         dd if="$s" of=/dev/fb0 bs="$row" count=1 iflag=skip_bytes oflag=seek_bytes conv=notrunc \
