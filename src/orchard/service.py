@@ -98,7 +98,7 @@ def check_started(connection, user, ready, progress, seconds=180):
     """
     from . import computer_key
     progress.step('Waiting until it is up')
-    system = computer_key.ssh_argv(user)
+    system = computer_key.ssh_argv(user, forget=True)
     command = 'test -e ' + shlex.quote(ready) if ready else 'true'
     recovery = True
     deadline = time.monotonic() + seconds
@@ -116,7 +116,7 @@ def check_started(connection, user, ready, progress, seconds=180):
                     time.sleep(1)
                     continue
                 recovery = False
-                system = computer_key.ssh_argv(user)  # the system's own host key, learned afresh
+                system = computer_key.ssh_argv(user, forget=True)  # the system's own host key, learned afresh
             result = subprocess.run(system + [command], stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
             if result.returncode == 0:
                 return None
@@ -187,6 +187,8 @@ def install(manifest=None, *, input_fn=input, secrets_fn=ask_secrets, progress=N
             from . import computer_key
             account = {**account, 'ssh_keys': computer_key.public_keys()
                        if answer.lower() in ('', 'y', 'yes') else []}
+            if account['ssh_keys']:
+                computer_key.remember_user(account['user'])
         progress.section('Installing ' + name)
         progress.step('Preparing the installation')
         with tempfile.TemporaryDirectory(prefix='installation-', dir=private) as directory:
