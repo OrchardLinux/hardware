@@ -1,0 +1,9 @@
+# Standalone CLI test fixture, not a distro publication.
+schema = 2
+kind = "orchard.index"
+distro = "other-fixture-linux"
+
+[release]
+file = "release.toml"
+bytes = 1088
+sha256 = "af47d2c4781eb0dd38c050bbaf034d6cfb5e3048349ac220d038b3ce81b5e57d"

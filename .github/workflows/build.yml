@@ -1,4 +1,4 @@
-name: Build hardware
+name: Build orchard
 on:
   pull_request:
   push:
@@ -10,58 +10,14 @@ on:
       reuse_run_id:
         description: Exact prior run supplying unchanged tools and Pongo artifacts
         required: false
-      reuse_package_run_id:
-        description: Exact prior run supplying the unchanged hardware wheel (sdist is refreshed)
-        required: false
 permissions:
   contents: read
   actions: read
 concurrency:
-  group: hardware-${{ github.workflow }}-${{ github.ref }}
+  group: orchard-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref_type != 'tag' }}
 jobs:
-  package:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.14'
-      - name: Check release version
-        if: github.ref_type == 'tag'
-        env:
-          TAG: ${{ github.ref_name }}
-        run: python -c 'import os, tomllib; assert os.environ["TAG"] == "v" + tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]'
-      - name: Reuse the unchanged hardware wheel
-        if: inputs.reuse_package_run_id != ''
-        uses: actions/download-artifact@v4
-        with:
-          name: hardware-packages
-          path: out/reused
-          run-id: ${{ inputs.reuse_package_run_id }}
-          github-token: ${{ github.token }}
-      - name: Build the distribution once for all jobs
-        env:
-          REUSE_PACKAGE_RUN_ID: ${{ inputs.reuse_package_run_id }}
-        run: |
-          args=()
-          if [[ -n "$REUSE_PACKAGE_RUN_ID" ]]; then
-            args+=(--sdist)
-            mkdir -p dist
-            cp out/reused/*.whl dist/
-          fi
-          python -m pip install build
-          python -m build "${args[@]}"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: hardware-packages
-          path: dist/*
-          if-no-files-found: error
-          retention-days: 2
   test:
-    needs: package
     runs-on: ubuntu-24.04
     strategy:
       matrix:
@@ -73,16 +29,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - uses: actions/download-artifact@v4
-        with:
-          name: hardware-packages
-          path: out/packages
-      - run: python -m pip install out/packages/*.whl && python -m pip check
-      - name: Test the installed package and built kernel resources
-        run: |
-          wheels=(out/packages/*.whl)
-          [[ ${#wheels[@]} -eq 1 && -f "${wheels[0]}" ]]
-          ORCHARD_HARDWARE_WHEEL="${wheels[0]}" python -m unittest discover -s tests -v
+      - name: Check release version
+        if: github.ref_type == 'tag'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: python -c 'import os, tomllib; assert os.environ["TAG"] == "v" + tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]'
+      # orchard runs from its checkout: the hardware data and recipes are files beside src/.
+      # jsonschema validates manifests in tests and release CI; the core needs none (tests/test_core.py).
+      - run: python -m pip install -e '.[validate]' && python -m pip check
+      - run: python -m unittest discover -s tests -v
   native-smoke:
     needs: test
     runs-on: ubuntu-24.04-arm
@@ -96,17 +51,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.14'
-      - uses: actions/download-artifact@v4
-        with:
-          name: hardware-packages
-          path: out/packages
-      - run: python -m pip install out/packages/*.whl
       - name: Compile and execute through the native recipe runner
         run: |
           mkdir -p out/native-source out/native-output
           printf 'int main(void) { return 0; }\n' > out/native-source/test.c
           # shellcheck disable=SC2016
-          python -m orchard_hardware.buildenv run --image unused-native \
+          python src/orchard/buildenv.py run --image unused-native \
             --bind "$PWD/out/native-source:/src:ro" --bind "$PWD/out/native-output:/out:rw" --cwd /src -- \
             bash -euc 'cc "$ORCHARD_SRC/test.c" -o "$ORCHARD_OUT/test"; "$ORCHARD_OUT/test"'
           test -s out/native-output/test
@@ -116,41 +66,39 @@ jobs:
     runs-on: ubuntu-24.04-arm
     container: debian:bookworm
     timeout-minutes: 360
+    strategy:
+      matrix:
+        # Every platform with a kernel series; distribution releases cover all of them.
+        platform: [apple-16k, apple-4k]
     defaults:
       run:
         shell: bash
     env:
       ORCHARD_BUILD_NATIVE: '1'
       ORCHARD_BUILD_ENV_ID: debian-bookworm-arm64-llvm19
+      PLATFORM: ${{ matrix.platform }}
     steps:
-      - run: apt-get update && apt-get install -y git ca-certificates python3 python3-venv
+      - run: apt-get update && apt-get install -y git ca-certificates python3
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@v4
-        with:
-          name: hardware-packages
-          path: out/packages
-      - name: Install kernel toolchain and the existing wheel
-        run: |
-          bash kernel/install-toolchain
-          python3 -m venv .venv
-          .venv/bin/python -m pip install out/packages/*.whl
-          echo "ORCHARD_PYTHON=$GITHUB_WORKSPACE/.venv/bin/python" >> "$GITHUB_ENV"
+      # Recipes need only Debian's python3 and its standard library.
+      - name: Install the kernel toolchain
+        run: bash kernel/install-toolchain
       - name: Build the platform kernel, modules and all device trees once
         run: |
-          bash kernel/build apple-16k --work-dir "$PWD/out/kernel-work" --output "$PWD/out/components/kernel"
+          bash kernel/build "$PLATFORM" --work-dir "$PWD/out/kernel-work" --output "$PWD/out/components/kernel"
           dpkg-query -W > out/components/kernel-toolchain-packages.lock
       - name: Archive components and corresponding kernel source
         run: |
-          tar -C out -czf out/kernel-components.tar.gz components
-          tar -C out/kernel-work/source --exclude=.git -czf out/kernel-source.tar.gz .
+          tar -C out -czf "out/kernel-components-$PLATFORM.tar.gz" components
+          tar -C out/kernel-work/source --exclude=.git -czf "out/kernel-source-$PLATFORM.tar.gz" .
       - uses: actions/upload-artifact@v4
         with:
-          name: hardware-kernel
+          name: orchard-kernel-${{ matrix.platform }}
           path: |
-            out/kernel-components.tar.gz
-            out/kernel-source.tar.gz
+            out/kernel-components-${{ matrix.platform }}.tar.gz
+            out/kernel-source-${{ matrix.platform }}.tar.gz
           compression-level: 0
           if-no-files-found: error
           retention-days: 2
@@ -172,29 +120,21 @@ jobs:
         if: inputs.reuse_run_id != ''
         uses: actions/download-artifact@v4
         with:
-          name: hardware-tools
+          name: orchard-tools
           path: out
           run-id: ${{ inputs.reuse_run_id }}
           github-token: ${{ github.token }}
-      - run: apt-get update && apt-get install -y git ca-certificates python3 python3-venv
+      - run: apt-get update && apt-get install -y git ca-certificates python3
         if: inputs.reuse_run_id == ''
       - uses: actions/checkout@v4
         if: inputs.reuse_run_id == ''
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@v4
-        if: inputs.reuse_run_id == ''
-        with:
-          name: hardware-packages
-          path: out/packages
-      - name: Install the combined toolchain once and reuse the wheel
+      - name: Install the combined toolchain once
         if: inputs.reuse_run_id == ''
         run: |
           bash ci/install-toolchains recovery m1n1
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          python3 -m venv .venv
-          .venv/bin/python -m pip install out/packages/*.whl
-          echo "ORCHARD_PYTHON=$GITHUB_WORKSPACE/.venv/bin/python" >> "$GITHUB_ENV"
       - name: Build static recovery tools
         if: inputs.reuse_run_id == ''
         run: |
@@ -211,7 +151,7 @@ jobs:
           tar -C out -czf out/tool-components.tar.gz components
       - uses: actions/upload-artifact@v4
         with:
-          name: hardware-tools
+          name: orchard-tools
           path: out/tool-components.tar.gz
           compression-level: 0
           if-no-files-found: error
@@ -226,7 +166,7 @@ jobs:
         if: inputs.reuse_run_id != ''
         uses: actions/download-artifact@v4
         with:
-          name: hardware-pongo
+          name: orchard-pongo
           path: out
           run-id: ${{ inputs.reuse_run_id }}
           github-token: ${{ github.token }}
@@ -266,7 +206,7 @@ jobs:
           printf 'Quiet Pongo exact-input cache hit: %s\n' "${CACHE_HIT:-false}" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
-          name: hardware-pongo
+          name: orchard-pongo
           path: |
             out/quiet-pongo.tar.gz
             out/pongo-source.tar.gz
@@ -290,19 +230,24 @@ jobs:
           python-version: '3.14'
       - uses: actions/download-artifact@v4
         with:
-          pattern: hardware-*
+          pattern: orchard-*
           path: out/downloads
           merge-multiple: true
       - name: Assemble public component bundle without rebuilding
         run: |
           mkdir -p out/publication
-          tar -xzf out/downloads/kernel-components.tar.gz -C out
           tar -xzf out/downloads/tool-components.tar.gz -C out
           tar -xzf out/downloads/quiet-pongo.tar.gz -C out/components/quiet
-          # The platform bundle carries the kernel, modules, every DTB and the shared
-          # loader; devices/<device>/device.toml names the DTB a device uses.
-          python ci/package_components.py --platform apple-16k --directory out/components \
-            --output out/publication/apple-16k-components.tar.gz
+          # One bundle per platform carries its kernel, modules and every DTB, and the
+          # shared tools and loaders; devices/<device>/device.toml names a device's DTB.
+          for platform in apple-16k apple-4k; do
+            mkdir -p "out/platforms/$platform"
+            tar -xzf "out/downloads/kernel-components-$platform.tar.gz" -C "out/platforms/$platform"
+            cp -R out/components/boot out/components/quiet out/components/*.lock "out/platforms/$platform/components/"
+            python ci/package_components.py --platform "$platform" --directory "out/platforms/$platform/components" \
+              --output "out/publication/$platform-components.tar.gz"
+          done
+          tar -xzf out/downloads/kernel-components-apple-16k.tar.gz -C out
           # Compatibility: the shared launcher still reads the J71b bundle layout.
           bundle=out/bundles/j71b/components
           mkdir -p "$bundle/kernel"
@@ -313,14 +258,17 @@ jobs:
           cp "out/components/kernel/dtbs/$dtb.dtb" "$bundle/kernel/j71b.dtb"
           python ci/package_components.py --device j71b --directory "$bundle" \
             --output out/publication/j71b-components.tar.gz
-          cp out/downloads/*.whl out/downloads/*.tar.gz out/publication/
+          cp out/downloads/*.tar.gz out/publication/
           # orchard launch starts any device with only Pongo and the storage-capable
-          # m1n1 (orchard_hardware.loader): add the ones built above to the wheel.
-          python ci/add_loaders.py out/publication/*.whl \
-            out/components/quiet/m1n1.bin out/components/quiet/pongo.bin
-          rm out/publication/kernel-components.tar.gz out/publication/tool-components.tar.gz out/publication/quiet-pongo.tar.gz
-          git archive --format=tar.gz -o out/publication/hardware-source.tar.gz HEAD
-          (cd out/publication && sha256sum ./*.whl ./*.tar.gz > SHA256SUMS)
+          # m1n1 (orchard.hardware.loader); they are release assets of their own.
+          cp out/components/quiet/m1n1.bin out/components/quiet/pongo.bin out/publication/
+          # orchard update fetches the core with every device and both loaders.
+          python -m pip install -e .
+          python -m orchard.installer core out/publication/orchard-core.pyz \
+            --pongo out/components/quiet/pongo.bin --m1n1 out/components/quiet/m1n1.bin
+          rm out/publication/kernel-components-*.tar.gz out/publication/tool-components.tar.gz out/publication/quiet-pongo.tar.gz
+          git archive --format=tar.gz -o out/publication/orchard-source.tar.gz HEAD
+          (cd out/publication && sha256sum ./*.tar.gz ./*.bin ./*.pyz > SHA256SUMS)
       - name: Attest public build
         if: toJSON(github.event.repository.private) == 'false'
         id: attest
@@ -331,10 +279,10 @@ jobs:
         if: toJSON(github.event.repository.private) == 'false'
         env:
           BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
-        run: cp "$BUNDLE_PATH" "out/publication/hardware-build.sigstore.jsonl"
+        run: cp "$BUNDLE_PATH" "out/publication/orchard-build.sigstore.jsonl"
       - uses: actions/upload-artifact@v4
         with:
-          name: hardware-release-assets
+          name: orchard-release-assets
           path: out/publication/*
           compression-level: 0
           if-no-files-found: error
@@ -348,7 +296,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: hardware-release-assets
+          name: orchard-release-assets
           path: assets
       - name: Create draft release
         if: github.ref_type == 'tag'

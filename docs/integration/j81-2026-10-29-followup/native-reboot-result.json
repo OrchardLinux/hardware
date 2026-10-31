@@ -1,0 +1,16 @@
+{
+  "passed": true,
+  "new_kernel_boot": true,
+  "root_device": "/dev/asp0n1p2",
+  "filesystem": "ext4",
+  "global_pid1": "systemd",
+  "root_identity_guard_passed": true,
+  "persistent_boot_count": 2,
+  "exact_owner_marker_survived": true,
+  "desktop_screenshot_received": true,
+  "owner_ssh_hostkey_unchanged": true,
+  "failed_system_units": 0,
+  "wifi_dns_https_passed": true,
+  "p2_write_fence_and_nine_aux_ro_passed": true,
+  "native_boot_image": "image-native-bootstrap/out-9f83bcb8356f"
+}

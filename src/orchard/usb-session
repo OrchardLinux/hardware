@@ -1,0 +1,57 @@
+#!/bin/busybox sh
+# USB session for RAM payloads, added by `orchard build`: NCM networking and
+# ACM serial on one gadget, and Dropbear on the USB address for the build host's
+# key (/etc/orchard/authorized_keys). The host pins this boot's host key over
+# USB serial, which `orchard shell` reads from /run/orchard. Call it from /init
+# after /proc, /sys, /dev, /dev/pts and /run are mounted; serial needs a shell
+# on /dev/ttyGS0 afterwards.
+set -eu
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+name=$(cat /etc/hostname)
+grep -q ' /sys/kernel/config ' /proc/mounts ||
+    mount -t configfs -o nosuid,nodev,noexec configfs /sys/kernel/config
+g=/sys/kernel/config/usb_gadget/$name
+mkdir "$g"
+echo 0x05ac > "$g/idVendor"
+# Prototype PID, not an allocation. Distinct from recovery and discovery.
+echo 0x4144 > "$g/idProduct"
+mkdir -p "$g/strings/0x409" "$g/configs/c.1/strings/0x409"
+echo "Orchard $name" > "$g/strings/0x409/product"
+echo "BOOT:$(cat /proc/sys/kernel/random/boot_id)" > "$g/strings/0x409/serialnumber"
+echo 'USB network and serial' > "$g/configs/c.1/strings/0x409/configuration"
+# Descriptor only: not charging capability or PMIC policy.
+echo 100 > "$g/configs/c.1/MaxPower"
+mkdir "$g/functions/ncm.usb0" "$g/functions/acm.usb0"
+ln -s "$g/functions/ncm.usb0" "$g/configs/c.1/ncm.usb0"
+ln -s "$g/functions/acm.usb0" "$g/configs/c.1/acm.usb0"
+set -- /sys/class/udc/*
+[ "$#" -eq 1 ] && [ -e "$1" ]
+printf '%s\n' "${1##*/}" > "$g/UDC"
+
+ifconfig usb0 172.16.42.1 netmask 255.255.255.252 up
+mkdir -p /run/orchard
+cat > /run/orchard/udhcpd.conf <<'EOF'
+start 172.16.42.2
+end 172.16.42.2
+interface usb0
+lease_file /run/orchard/udhcpd.leases
+option subnet 255.255.255.252
+EOF
+udhcpd /run/orchard/udhcpd.conf
+
+# Dropbear looks root up in /etc/passwd; minimal images have none.
+[ -e /etc/passwd ] || echo 'root:x:0:0:root:/root:/bin/sh' > /etc/passwd
+[ -e /etc/group ] || echo 'root:x:0:' > /etc/group
+[ -e /etc/profile ] || echo 'export PATH=/bin:/sbin:/usr/bin:/usr/sbin' > /etc/profile
+[ -s /etc/orchard/authorized_keys ] || { echo 'usb-session: no authorized key, SSH not started'; exit 0; }
+umask 077
+mkdir -p /root/.ssh
+cp /etc/orchard/authorized_keys /root/.ssh/authorized_keys
+key=/run/orchard/ssh_host_ed25519_key
+dropbearkey -t ed25519 -f "$key" >/dev/null 2>&1
+dropbearkey -y -f "$key" | awk '$1 == "ssh-ed25519" {print $1, $2}' > "$key.pub"
+# Key-only root login on the USB address; a 4 MiB window for fast transfers.
+# Its log goes to a file, not the console: every SSH command would print there.
+dropbear -E -s -g -j -k -W 4194304 -P /run/orchard/dropbear.pid -r "$key" -p 172.16.42.1:22 \
+    2>>/run/orchard/ssh.log
+echo "$name: USB SSH on 172.16.42.1; host key $(cut -d' ' -f2 "$key.pub")"

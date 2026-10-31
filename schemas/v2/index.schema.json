@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Orchard index manifest v2",
+  "description": "A distro's entry point: the pinned install manifest of its current release.",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": 2
+    },
+    "kind": {
+      "const": "orchard.index"
+    },
+    "distro": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "release": {
+      "$ref": "#/$defs/receipt"
+    }
+  },
+  "required": [
+    "schema",
+    "kind",
+    "distro",
+    "release"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "receipt": {
+      "type": "object",
+      "properties": {
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^https://[^\\s]+$"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "bytes",
+        "sha256"
+      ],
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "file"
+          ],
+          "not": {
+            "required": [
+              "url"
+            ]
+          }
+        },
+        {
+          "required": [
+            "url"
+          ],
+          "not": {
+            "required": [
+              "file"
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

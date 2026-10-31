@@ -15,7 +15,7 @@ supported hardware before announcing a release.
 `build-pongo.py` builds the only Pongo Orchard ships. Distro releases, `orchard
 launch` and local builds all use it; distros don't build their own. Distro
 branding is drawn by m1n1, after Pongo. The hardware release carries it as
-`quiet/pongo.bin` in the component bundles and in the wheel's `loaders/`, and
+`quiet/pongo.bin` in the component bundles and as a release asset of its own, and
 publishes its source as `pongo-source.tar.gz`.
 
 The Pongo revision must include upstream `ad8b2d1` ("Fix for Xcode 16.3: don't

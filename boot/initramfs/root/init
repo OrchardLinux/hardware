@@ -1,0 +1,123 @@
+#!/bin/busybox sh
+# orchard's initrd for installed systems: load storage, mount the root that
+# root=PARTUUID= names, start its init. The same for every distribution and
+# init system; only BusyBox and the platform's storage modules are inside.
+export PATH=/bin
+/bin/busybox --install -s /bin
+mount -t proc -o nodev,noexec,nosuid proc /proc
+mount -t sysfs -o nodev,noexec,nosuid sysfs /sys
+mount -t devtmpfs -o mode=0755,nosuid dev /dev
+exec </dev/console >/dev/console 2>&1
+
+stop() {
+    echo "orchard initrd: $1"
+    echo 'Starting a shell on the console; the system did not start.'
+    exec sh
+}
+
+root= mode=rw flags= fstype= init=/sbin/init
+for argument in $(cat /proc/cmdline); do
+    case "$argument" in
+    root=PARTUUID=*) root=$(echo "${argument#root=PARTUUID=}" | tr A-F a-f) ;;
+    rootfstype=*) fstype=${argument#rootfstype=} ;;
+    rootflags=*) flags=${argument#rootflags=} ;;
+    ro | rw) mode=$argument ;;
+    init=*) init=${argument#init=} ;;
+    esac
+done
+[ -n "$root" ] || stop 'the boot entry names no root=PARTUUID='
+
+for module in $(cat /etc/orchard/modules); do
+    modprobe "$module" || stop "could not load $module"
+done
+
+# gpt_partuuid DISK SECTOR_SIZE NUMBER: the unique GUID of GPT entry NUMBER,
+# read from the disk itself: the kernel's uevent does not report PARTUUID.
+gpt_partuuid() {
+    set -- $(od -An -tx1 -v -j "$2" -N 92 "$1") "$1" "$2" "$3"
+    [ "$1$2$3$4$5$6$7$8" = 4546492050415254 ] || return 1
+    lba=$((0x${80}${79}${78}${77}${76}${75}${74}${73}))
+    size=$((0x${88}${87}${86}${85}))
+    disk=${93} sector=${94} number=${95}
+    set -- $(od -An -tx1 -v -j $((lba * sector + (number - 1) * size + 16)) -N 16 "$disk")
+    [ "$*" != '00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00' ] || return 1
+    echo "$4$3$2$1-$6$5-$8$7-$9${10}-${11}${12}${13}${14}${15}${16}"
+}
+
+device=
+seconds=0
+while [ -z "$device" ]; do
+    for number in /sys/class/block/*/partition; do
+        [ -e "$number" ] || continue
+        part=${number%/partition}
+        disk=$(basename "$(dirname "$(readlink -f "$part")")")
+        sector=$(cat "/sys/class/block/$disk/queue/logical_block_size")
+        if [ "$(gpt_partuuid "/dev/$disk" "$sector" "$(cat "$number")")" = "$root" ]; then
+            device=/dev/${part##*/}
+            break
+        fi
+    done
+    [ -n "$device" ] && break
+    seconds=$((seconds + 1))
+    [ "$seconds" -le 30 ] || stop "no partition $root after 30 s"
+    sleep 1
+done
+
+mkdir -p /newroot
+mount ${fstype:+-t "$fstype"} -o "$mode${flags:+,$flags}" "$device" /newroot || stop "could not mount $device"
+[ -x "/newroot$init" ] || [ -L "/newroot$init" ] || stop "the root has no $init"
+# The system's boot splash (docs/boot-contract.md), on the framebuffer m1n1
+# left black, before the system starts; it stays until the system takes over.
+splash() {
+    s=/newroot/usr/share/orchard/splash fb=/sys/class/graphics/fb0
+    say() { echo "orchard initrd: splash: $*" > /dev/kmsg; }
+    [ -f "$s" ] || { say "none in the system"; return 0; }
+    [ -c /dev/fb0 ] && [ -r "$fb/stride" ] || { say "no framebuffer"; return 0; }
+    [ "$(cat "$fb/bits_per_pixel")" = 32 ] && [ "$(head -c 4 "$s")" = OSPL ] || { say "unsupported format"; return 0; }
+    set -- $(od -An -tu4 -j4 -N8 "$s")
+    w=$1 h=$2 size=$(cat "$fb/virtual_size") stride=$(cat "$fb/stride")
+    W=${size%,*} H=${size#*,}
+    [ "$w" -le "$W" ] && [ "$h" -le "$H" ] || { say "${w}x$h does not fit ${W}x$H"; return 0; }
+    # /dev/fb0 is simpledrm's shadow buffer, shown only once something sets a
+    # mode on it; fbcon would, but it stays off the screen. Writing the current
+    # mode to sysfs activates it, then the rows reach the screen.
+    head -1 "$fb/modes" > "$fb/mode" 2>/dev/null || say "could not activate the framebuffer"
+    left=$(((W - w) / 2)) top=$(((H - h) / 2)) row=$((w * 4)) y=0
+    while [ "$y" -lt "$h" ]; do
+        dd if="$s" of=/dev/fb0 bs="$row" count=1 iflag=skip_bytes oflag=seek_bytes conv=notrunc \
+            skip=$((12 + y * row)) seek=$(((top + y) * stride + left * 4)) 2>/dev/null ||
+            { say "write failed at row $y"; return 0; }
+        y=$((y + 1))
+    done
+    say "${w}x$h at $left,$top on ${W}x$H"
+}
+splash
+
+# USB for the host: network (usb0) and a serial console (ttyGS0), named after
+# the system, so `orchard devices` sees it. What runs on them is the system's.
+usb_gadget() {
+    g=/sys/kernel/config/usb_gadget/orchard-system
+    mkdir -p /sys/kernel/config && mount -t configfs -o nodev,noexec,nosuid configfs /sys/kernel/config 2>/dev/null
+    [ ! -e "$g" ] || return 0
+    name=$(sed -n 's/^NAME=//p' /newroot/etc/os-release /newroot/usr/lib/os-release 2>/dev/null | head -1 | tr -d "\"'")
+    board=$(tr '\000' '\n' < /proc/device-tree/compatible | head -1)
+    mkdir "$g" &&
+    echo 0x05ac > "$g/idVendor" &&
+    echo 0x4145 > "$g/idProduct" &&
+    mkdir -p "$g/strings/0x409" "$g/configs/c.1/strings/0x409" &&
+    echo 'Orchard Linux' > "$g/strings/0x409/manufacturer" &&
+    echo "${name:-Linux}" > "$g/strings/0x409/product" &&
+    echo "BOOT:$(cat /proc/sys/kernel/random/boot_id) BOARD:${board#apple,}" > "$g/strings/0x409/serialnumber" &&
+    echo 'USB network and serial' > "$g/configs/c.1/strings/0x409/configuration" &&
+    echo 500 > "$g/configs/c.1/MaxPower" &&
+    mkdir "$g/functions/ncm.usb0" "$g/functions/acm.usb0" &&
+    ln -s "$g/functions/ncm.usb0" "$g/configs/c.1/ncm.usb0" &&
+    ln -s "$g/functions/acm.usb0" "$g/configs/c.1/acm.usb0" &&
+    basename "$(ls -d /sys/class/udc/* | head -1)" > "$g/UDC"
+}
+usb_gadget || echo 'orchard initrd: no USB gadget; continuing without USB'
+
+for name in dev proc sys; do
+    mount --move "/$name" "/newroot/$name"
+done
+exec switch_root /newroot "$init"

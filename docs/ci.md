@@ -1,10 +1,10 @@
 # GitHub builds
 
-`.github/workflows/build.yml` tests the installed wheel on Python 3.11 and 3.14 and runs a native ARM64 compile/execute smoke test for pull requests and `main`. Tags matching `v*` and manual dispatches additionally build:
+`.github/workflows/build.yml` tests the checkout on Python 3.11 and 3.14 and runs a native ARM64 compile/execute smoke test for pull requests and `main`. Tags matching `v*` and manual dispatches additionally build:
 
-- Linux ARM64: kernel, modules, DTB, static recovery tools and quiet m1n1.
+- Linux ARM64: per platform (one job each) the kernel, modules and every DTB; static recovery tools and quiet m1n1.
 - macOS: quiet Pongo with the pinned newlib revision.
-- Assembly: wheel/sdist, `j71b-components.tar.gz`, source archives and `SHA256SUMS`.
+- Assembly: one `PLATFORM-components.tar.gz` per platform, `j71b-components.tar.gz` (for the released 0.1.10 tools), the loaders `m1n1.bin` and `pongo.bin`, `orchard-core.pyz` (for `orchard update`), source archives and `SHA256SUMS`.
 
 The standard GitHub job image is Debian Bookworm, matching the local toolchain base. There is no nested Podman invocation. Native jobs set `ORCHARD_BUILD_NATIVE=1` and `ORCHARD_BUILD_ENV_ID`, run the same `install-toolchain` files used by the Containerfiles, and execute the same compiler recipes. Shared `ORCHARD_*` recipe variables select native filesystem paths in CI and mounted paths locally. Native execution is not a security sandbox: it does not enforce read-only inputs or isolate networking. Native mode is only for trusted, disposable Linux ARM64 workers. Local builds continue to use Podman by default.
 
@@ -12,7 +12,7 @@ GitHub must offer the `ubuntu-24.04-arm` runner for the repository. Kernel build
 
 ## Build efficiency and runner costs
 
-The distribution is built once per run and the identical wheel is installed by both test versions, the native smoke test and the compiler jobs. No job rebuilds a dependency from this checkout. Kernel and tools/loader are separate jobs, so **rerun failed jobs**, not the entire workflow, when an unchanged run can be recovered. Final assembly consumes their artifacts without recompiling. The combined tools installer takes the union of the local recipes' package lists and runs one APT transaction.
+There is no package to build: the tests install the checkout, and the recipe jobs run the recipes from the checkout with Debian's `python3`. No job rebuilds another job's output. Kernel and tools/loader are separate jobs, so **rerun failed jobs**, not the entire workflow, when an unchanged run can be recovered. Final assembly consumes their artifacts without recompiling. The combined tools installer takes the union of the local recipes' package lists and runs one APT transaction.
 
 Pongo/newlib compile once on macOS. An exact-input cache includes its source pins/build script, patch, runner OS/architecture, Xcode, SDK and compiler fingerprint; unchanged Apple inputs reuse the binary **and corresponding source archive**. No broad fallback cache is used, and the kernel's compiler cache starts empty in every run. Compiler jobs only run for tags/manual dispatch; documentation-only pushes do not start CI.
 
@@ -35,14 +35,14 @@ Cross-repository inputs must be published public releases, not drafts. The defau
 
 ## Artifact attestations
 
-Public tag and manual builds attest every final asset, including the checksum manifest, with GitHub build provenance. The hardware bundle is retained as `hardware-build.sigstore.jsonl` alongside workflow artifacts and draft/attached release assets.
+Public tag and manual builds attest every final asset, including the checksum manifest, with GitHub build provenance. The hardware bundle is retained as `orchard-build.sigstore.jsonl` alongside workflow artifacts and draft/attached release assets.
 
 Attestation and bundle-copy steps require repository visibility to be explicitly public. Private (or unknown-visibility) builds skip both steps; no signing token is requested and no attestation is sent to Sigstore. This follows the same public/private policy as Resize APFS. Signing permissions are scoped to the final assembly job, not tests or release-upload jobs. A public signing failure prevents the release upload.
 
 The bundle is created **after** signing the checksum manifest, so it is deliberately not listed inside that manifest. Verify an asset against this repository's attestation API with:
 
 ```sh
-gh attestation verify j71b-components.tar.gz --repo OrchardLinux/hardware
+gh attestation verify j71b-components.tar.gz --repo OrchardLinux/orchard
 ```
 
 Use the expected repository identity, not just a matching hash. Attestation identifies the workflow/commit and bytes; it does not establish reproducibility or physical-device qualification. See [GitHub's attestation documentation](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations).

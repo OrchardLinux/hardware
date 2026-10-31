@@ -70,4 +70,4 @@ def initialize():
 
 if __name__ == '__main__':
     record = initialize()
-    print(f'ECID:{record["ecid"]:016x} BOOT:{record["boot_id"]}')
+    print(f'ECID:{record["ecid"]:016x} BOOT:{record["boot_id"]} BOARD:{record["profile"]}')

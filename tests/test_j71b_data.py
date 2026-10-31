@@ -46,7 +46,7 @@ class J71bData(unittest.TestCase):
         self.assertEqual(self.device['device']['apple_products'], [self.recipe['device']])
         self.assertEqual(self.device['device']['dt_compatible'], ['apple,j71b'])
         self.assertEqual(self.device['match']['dfu'], {'chip': 0x8010, 'board': 0x18})
-        self.assertEqual(self.device['match']['linux']['product'], 'J71b Recovery')
+        self.assertIs(self.device['match']['linux']['recovery'], True)
 
     def test_ipsw_is_pinned(self):
         ipsw = self.recipe['ipsw']

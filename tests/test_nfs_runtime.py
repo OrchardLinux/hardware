@@ -11,9 +11,9 @@ import sys
 import tempfile
 import unittest
 
-from orchard_hardware.boot.initramfs.nfs import stage
+from orchard.image import nfs as stage
 
-HERE = Path(stage.__file__).resolve().parent
+HERE = stage.HERE
 
 
 def elf(machine=183, interpreter=False):
@@ -90,7 +90,7 @@ class NFSStaging(unittest.TestCase):
                                  server='10.61.0.1', address='10.61.0.2/30',
                                  export='/n61-root', port=32061)
             self.assertEqual((output / 'rootfs/etc/orchard/nfs-root.json').read_bytes(), blob)
-            self.assertEqual((output / 'orchard.toml').read_text(), 'device = "j71b"\n')
+            self.assertEqual((output / 'orchard.local.toml').read_text(), 'device = "j71b"\n')
             self.assertFalse((output / 'rootfs/bin/busybox').exists())
             self.assertEqual(result['network']['NFS_IDENTITY_SHA256'], hashlib.sha256(blob).hexdigest())
             self.assertEqual(result['network']['NFS_HANDOFF'], 'manual')

@@ -1,0 +1,60 @@
+# iPhone X (GSM) — D221: hardware identity, boot assets and firmware recipe.
+schema = 1
+kind = "hardware.device"
+
+[device]
+profile = "d221"
+name = "iPhone X (GSM)"
+apple_products = ["iPhone10,6"]
+dt_compatible = ["apple,d221"]
+
+# BDID: read from the unit's DFU serial string (CPID:8015 BDID:0E), cross-checked
+# against the d221ap identity in the 20H392 BuildManifest.plist.
+# 0x0e is also the d111 (A10) board, so chip and board are matched together.
+[match.dfu]
+chip = 0x8015
+board = 0x0e
+
+# Orchard Recovery runs here (USB "Orchard Recovery", serial BOARD:<profile>).
+[match.linux]
+recovery = true
+
+[boot]
+methods = ["checkm8-pongo"]
+# Not published yet: no d221 launcher release exists. Mirrors the j71b URL pattern.
+
+[kernel]
+platform = "apple-16k" # kernel/series/apple-16k, kernel/configs/apple-16k
+dtb = "t8015-d221"     # arch/arm64/boot/dts/apple/<dtb>.dtb
+
+[firmware]
+recipe = "firmware.json" # Relative to this device.toml; public recipe, not firmware bytes.
+
+[support]
+install = false
+status = "experimental"
+caveats = [
+  "A Linux RAM boot reaches a USB serial shell, but no installer or launcher release exists yet (install is off).",
+  "Touch, storage and charging are untested; the touch controller is not the Z2 the iPad/iPhone 7 use (ADT: hid-transport,k1).",
+  "The mainline t8015-x device tree describes the SoC alone; Wi-Fi, Bluetooth and backlight nodes are not in it yet.",
+]
+wifi = false # The t8015-x DT has no Wi-Fi node; the recipe ships the BCM4357 firmware only.
+usb_serial = false # No Orchard recovery has been booted on this board yet.
+usb_network = false
+
+# States: working, partial, untested, missing, none (features.toml).
+[features]
+display = "partial"
+touch = "missing"
+wifi = "missing"
+bluetooth = "missing"
+storage = "untested"
+battery = "untested"
+charging = "missing"
+backlight = "untested"
+buttons = "untested"
+audio = "missing"
+camera = "missing"
+cellular = "missing"
+suspend = "missing"
+gpu = "missing"

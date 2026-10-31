@@ -1,0 +1,15 @@
+# payload.toml: how `orchard build` turns this directory into a RAM payload.
+#
+# A payload is `init` (the first program the kernel runs) plus the files under
+# `rootfs/`. `orchard build` makes one for every board of a platform; `orchard
+# run` builds what is missing and boots the attached board. This file describes
+# the payload only, never which board it is for.
+
+# Stage the kernel's modules (not loaded): the checks load drivers for what
+# they find.
+modules = true
+
+# Add the booted board's firmware (Wi-Fi, Bluetooth, touch). `orchard run`
+# reads it from Apple's restore image once, keeps it in Orchard's private
+# cache, and adds it as its own layer; it never lands in this directory.
+firmware = true
