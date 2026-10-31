@@ -1,0 +1,42 @@
+#!/bin/bash
+# Build against the same kernel snapshot captured from the Podman Linux VM.
+set -euo pipefail
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+ROOT=$(CDPATH= cd -- "$HERE/.." && pwd)
+WORK="$ROOT/out/simulator/kernel-build"
+OUT="$ROOT/out/simulator/vm"
+KVER=$(<"$OUT/kernel-version")
+MACHINE_KVER=$(podman machine ssh uname -r)
+[[ $KVER == "$MACHINE_KVER" ]] || { echo "Podman kernel changed ($MACHINE_KVER); need headers for VM kernel $KVER" >&2; exit 1; }
+[[ $KVER =~ ^[0-9A-Za-z._-]+$ ]] || exit 1
+[[ ! -e $WORK ]] || { echo "Refusing to remove existing build directory: $WORK" >&2; exit 1; }
+mkdir -p "$WORK"
+trap 'rm -rf "$WORK"' EXIT
+URL=$(podman machine ssh "dnf -q repoquery kernel-devel-$KVER --location" | grep '^https://' | head -1)
+[[ $URL == https://* ]] || { echo 'No matching signed Fedora kernel-devel package found' >&2; exit 1; }
+curl -fL --retry 2 --silent --show-error "$URL" -o "$WORK/kernel-devel.rpm"
+# Fedora CoreOS's RPM keyring verifies the package before extraction.
+SIGNATURE=$(podman machine ssh "rpm -Kv '$WORK/kernel-devel.rpm'")
+grep -q 'signature.*: OK' <<< "$SIGNATURE" || { echo 'Kernel-devel signature verification failed' >&2; exit 1; }
+podman machine ssh "cd '$WORK' && rpm2cpio kernel-devel.rpm | cpio -idum --quiet"
+podman machine ssh "mkdir -p '$WORK/fedora-lib'; cp -L /lib64/libc.so.6 '$WORK/fedora-lib/'; cp -L /lib/ld-linux-aarch64.so.1 '$WORK/fedora-lib/ld.so'"
+KDIR="$WORK/usr/src/kernels/$KVER"
+mv "$KDIR/scripts/mod/modpost" "$KDIR/scripts/mod/modpost.bin"
+cat > "$KDIR/scripts/mod/modpost" <<EOF
+#!/bin/sh
+exec /work/out/simulator/kernel-build/fedora-lib/ld.so --library-path /work/out/simulator/kernel-build/fedora-lib /work/out/simulator/kernel-build/usr/src/kernels/$KVER/scripts/mod/modpost.bin "\$@"
+EOF
+cat > "$WORK/gcc-compat" <<'EOF'
+#!/bin/bash
+args=()
+for x in "$@"; do [[ $x == -fmin-function-alignment=* ]] || args+=("$x"); done
+exec /usr/bin/gcc "${args[@]}"
+EOF
+chmod +x "$KDIR/scripts/mod/modpost" "$WORK/gcc-compat"
+podman run --rm -v "$ROOT:/work" localhost/orchard-hardware-kernel-toolchain:bookworm bash -c '
+  set -e
+  cp -r /work/simulator/vm-support /tmp/module
+  make -C "/work/out/simulator/kernel-build/usr/src/kernels/'"$KVER"'" M=/tmp/module CC=/work/out/simulator/kernel-build/gcc-compat modules
+  cp /tmp/module/orchard-vm-backlight.ko /work/out/simulator/vm/orchard-vm-backlight.ko
+'
+echo "VM backlight module built for $KVER"
