@@ -30,6 +30,15 @@ it solves:
 A device PR can depend on a tooling PR; say so and link it. Within a PR, split
 commits by logical part. They don't need to be smaller than that.
 
+## How pull requests land
+
+We usually rework a pull request to fit the kernel structure and orchard's
+layout before merging it: drivers in the kernel rather than in userspace,
+patches in upstream style, device data in the device layer. The rework goes
+onto your PR branch, your commits keep your authorship, and the PR is merged
+on GitHub, so it shows as your contribution. If you'd rather we didn't touch
+your branch, say so in the PR and we'll review it with you instead.
+
 ## Where kernel patches go
 
 Patches are applied in the layer order of `kernel/series/<platform>`; within a
