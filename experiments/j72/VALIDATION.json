@@ -1,0 +1,34 @@
+{
+  "status": "SOURCE RELEASE VALIDATED; no hardware contacted during publication checks",
+  "measured_kernel": "7.0.12-j72spi2 #33",
+  "offline_tests": {
+    "contact_decoder": "bounded malformed and synthetic cases passed; private capture excluded",
+    "HDQ_encode_decode": 512,
+    "HDQ_callback_chunk_noise_cases": 71,
+    "HDQ_write_pairs": 65536,
+    "HDQ_allowed_volatile_ID_pairs": 2,
+    "charger_policy_cases": 15,
+    "battery_guard_cases": 10,
+    "private_include_tests": 4,
+    "instrumentation": "-Wall -Wextra -Werror -fsanitize=undefined,bounds"
+  },
+  "kernel_compile": {
+    "architecture": "arm64",
+    "extra_warnings": "W=1",
+    "status": "PASS",
+    "modules": [
+      "SPI",
+      "touch",
+      "HDQ/UART frontend",
+      "read-only PMIC observer",
+      "425mA bounded worker"
+    ],
+    "note": "Used the exact kernel vmlinux.symvers stop-bit export absent from copied Module.symvers. No Image rebuilt or module loaded."
+  },
+  "patch_checks": [
+    "SPI exact-base apply roundtrip",
+    "serdev/build/capacity reverse dry-run against measured kernel source"
+  ],
+  "privacy": "Firmware/calibration/.inc/ko/images/raw logs omitted; code source and synthetic tests only",
+  "upstream_status": "Development source release; PR43 draft; native Orchard7.3 integration and exact revision device test remain."
+}

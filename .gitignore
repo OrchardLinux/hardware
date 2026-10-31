@@ -12,3 +12,15 @@ out/
 /loaders/
 orchard.local.toml
 uv.lock
+
+# Private J72 inputs and local build products must never be committed.
+/experiments/j72/**/*.inc
+/experiments/j72/**/*.ko
+/experiments/j72/**/*.o
+/experiments/j72/**/*.mod
+/experiments/j72/**/*.mod.c
+/experiments/j72/**/*.cmd
+/experiments/j72/**/Module.symvers
+/experiments/j72/**/modules.order
+/experiments/j72/**/private/
+/experiments/j72/**/build/

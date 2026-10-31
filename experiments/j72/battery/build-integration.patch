@@ -1,0 +1,31 @@
+--- a/drivers/power/supply/Kconfig
++++ b/drivers/power/supply/Kconfig
+@@ -322,6 +322,18 @@
+ 	help
+ 	  Say Y here to enable support for batteries with BQ27xxx chips
+ 	  connected over an HDQ bus.
++
++config BATTERY_BQ27XXX_HDQ_UART
++	tristate "BQ27xxx HDQ-over-UART support"
++	depends on BATTERY_BQ27XXX
++	depends on SERIAL_DEV_BUS
++	help
++	  Say Y here to enable support for batteries with BQ27xxx chips
++	  whose HDQ single-wire bus is bit-banged over a UART pin instead
++	  of a real HDQ/1-Wire master (docs/plans/2026-09-08-j81-bluetooth-
++	  battery-adt.md, research/j81-battery-hdq.md). Do not confuse this
++	  with BATTERY_BQ27XXX_HDQ, which is a different transport (a real
++	  Linux 1-Wire master).
+ 
+ config BATTERY_BQ27XXX_DT_UPDATES_NVM
+ 	bool "BQ27xxx support for update of NVM/flash data memory"
+--- a/drivers/power/supply/Makefile
++++ b/drivers/power/supply/Makefile
+@@ -51,6 +51,7 @@
+ obj-$(CONFIG_BATTERY_BQ27XXX)	+= bq27xxx_battery.o
+ obj-$(CONFIG_BATTERY_BQ27XXX_I2C) += bq27xxx_battery_i2c.o
+ obj-$(CONFIG_BATTERY_BQ27XXX_HDQ) += bq27xxx_battery_hdq.o
++obj-$(CONFIG_BATTERY_BQ27XXX_HDQ_UART) += bq27xxx_battery_hdq_uart.o
+ obj-$(CONFIG_BATTERY_DA9030)	+= da9030_battery.o
+ obj-$(CONFIG_BATTERY_DA9052)	+= da9052-battery.o
+ obj-$(CONFIG_CHARGER_DA9150)	+= da9150-charger.o

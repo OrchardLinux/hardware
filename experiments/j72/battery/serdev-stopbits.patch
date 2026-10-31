@@ -1,0 +1,107 @@
+--- a/include/linux/serdev.h
++++ b/include/linux/serdev.h
+@@ -80,6 +80,19 @@
+ };
+ 
+ /*
++ * BAT-1 (docs/plans/2026-09-08-j81-bluetooth-battery-adt.md,
++ * research/j81-battery-hdq.md): TI HDQ-over-UART needs 2 stop bits: the
++ * underlying tty layer already honors CSTOPB, but no serdev client API
++ * exposes it. A 2019 upstream proposal for this exact gap
++ * (https://marc.info/?l=linux-serial&m=155651925923098) was not merged
++ * for lack of an in-tree user; this is that user.
++ */
++enum serdev_stopbits {
++	SERDEV_STOPBITS_ONE,
++	SERDEV_STOPBITS_TWO,
++};
++
++/*
+  * serdev controller structures
+  */
+ struct serdev_controller_ops {
+@@ -89,6 +102,7 @@
+ 	void (*close)(struct serdev_controller *);
+ 	void (*set_flow_control)(struct serdev_controller *, bool);
+ 	int (*set_parity)(struct serdev_controller *, enum serdev_parity);
++	int (*set_stopbits)(struct serdev_controller *, enum serdev_stopbits);
+ 	unsigned int (*set_baudrate)(struct serdev_controller *, unsigned int);
+ 	void (*wait_until_sent)(struct serdev_controller *, long);
+ 	int (*get_tiocm)(struct serdev_controller *);
+@@ -204,6 +218,7 @@
+ int devm_serdev_device_open(struct device *, struct serdev_device *);
+ unsigned int serdev_device_set_baudrate(struct serdev_device *, unsigned int);
+ void serdev_device_set_flow_control(struct serdev_device *, bool);
++int serdev_device_set_stopbits(struct serdev_device *, enum serdev_stopbits);
+ int serdev_device_write_buf(struct serdev_device *, const u8 *, size_t);
+ void serdev_device_wait_until_sent(struct serdev_device *, long);
+ int serdev_device_get_tiocm(struct serdev_device *);
+@@ -246,6 +261,10 @@
+ 	return 0;
+ }
+ static inline void serdev_device_set_flow_control(struct serdev_device *sdev, bool enable) {}
++static inline int serdev_device_set_stopbits(struct serdev_device *sdev, enum serdev_stopbits stopbits)
++{
++	return -EOPNOTSUPP;
++}
+ static inline int serdev_device_write_buf(struct serdev_device *serdev,
+ 					  const u8 *buf,
+ 					  size_t count)
+--- a/drivers/tty/serdev/core.c
++++ b/drivers/tty/serdev/core.c
+@@ -350,6 +350,18 @@
+ }
+ EXPORT_SYMBOL_GPL(serdev_device_set_parity);
+ 
++int serdev_device_set_stopbits(struct serdev_device *serdev,
++			       enum serdev_stopbits stopbits)
++{
++	struct serdev_controller *ctrl = serdev->ctrl;
++
++	if (!ctrl || !ctrl->ops->set_stopbits)
++		return -EOPNOTSUPP;
++
++	return ctrl->ops->set_stopbits(ctrl, stopbits);
++}
++EXPORT_SYMBOL_GPL(serdev_device_set_stopbits);
++
+ void serdev_device_wait_until_sent(struct serdev_device *serdev, long timeout)
+ {
+ 	struct serdev_controller *ctrl = serdev->ctrl;
+--- a/drivers/tty/serdev/serdev-ttyport.c
++++ b/drivers/tty/serdev/serdev-ttyport.c
+@@ -207,6 +207,26 @@
+ 	return 0;
+ }
+ 
++static int ttyport_set_stopbits(struct serdev_controller *ctrl,
++				enum serdev_stopbits stopbits)
++{
++	struct serport *serport = serdev_controller_get_drvdata(ctrl);
++	struct tty_struct *tty = serport->tty;
++	struct ktermios ktermios = tty->termios;
++
++	if (stopbits == SERDEV_STOPBITS_TWO)
++		ktermios.c_cflag |= CSTOPB;
++	else
++		ktermios.c_cflag &= ~CSTOPB;
++
++	tty_set_termios(tty, &ktermios);
++
++	if ((tty->termios.c_cflag & CSTOPB) != (ktermios.c_cflag & CSTOPB))
++		return -EINVAL;
++
++	return 0;
++}
++
+ static void ttyport_wait_until_sent(struct serdev_controller *ctrl, long timeout)
+ {
+ 	struct serport *serport = serdev_controller_get_drvdata(ctrl);
+@@ -255,6 +275,7 @@
+ 	.close = ttyport_close,
+ 	.set_flow_control = ttyport_set_flow_control,
+ 	.set_parity = ttyport_set_parity,
++	.set_stopbits = ttyport_set_stopbits,
+ 	.set_baudrate = ttyport_set_baudrate,
+ 	.wait_until_sent = ttyport_wait_until_sent,
+ 	.get_tiocm = ttyport_get_tiocm,

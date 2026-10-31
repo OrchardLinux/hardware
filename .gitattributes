@@ -1,0 +1,2 @@
+# Unified-diff context contains significant prefix whitespace.
+experiments/j72/**/*.patch -whitespace

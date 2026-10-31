@@ -1,0 +1,244 @@
+--- a/drivers/spi/spi-apple.c
++++ b/drivers/spi/spi-apple.c
+@@ -9,6 +9,7 @@
+ #include <linux/bitfield.h>
+ #include <linux/bits.h>
+ #include <linux/clk.h>
++#include <linux/delay.h>
+ #include <linux/interrupt.h>
+ #include <linux/io.h>
+ #include <linux/module.h>
+@@ -39,7 +40,7 @@
+ #define APPLE_S5L_SPI_CFG_IE_WR_COLLISION	BIT(10)
+ #define APPLE_S5L_SPI_CFG_IE_HUNG		BIT(11)
+ #define APPLE_S5L_SPI_CFG_IE_RXL_TIMEOUT	BIT(12)
+-#define APPLE_S5L_SPI_CFG_MSB_FIRST	BIT(13)
++#define APPLE_S5L_SPI_CFG_LSB_FIRST	BIT(13)
+ #define APPLE_SPI_CFG_LSB_FIRST		BIT(13)
+ #define APPLE_S5L_SPI_CFG_CLOCK_SELECT	BIT(14)
+ #define APPLE_SPI_CFG_WORD_SIZE		GENMASK(16, 15)
+@@ -242,15 +243,11 @@
+ 		   (device->mode & SPI_CPOL ? APPLE_SPI_CFG_CPOL : 0));
+ 
+ 	if (spi->type == APPLE_SPI_TYPE_S5L)
+-		cfg |= (device->mode & SPI_LSB_FIRST ? 0 : APPLE_S5L_SPI_CFG_MSB_FIRST);
++		cfg |= (device->mode & SPI_LSB_FIRST ? APPLE_S5L_SPI_CFG_LSB_FIRST : 0);
+ 	else
+ 		cfg |= (device->mode & SPI_LSB_FIRST ? APPLE_SPI_CFG_LSB_FIRST : 0);
+ 
+-	/*
+-	 * Update core config. This works because APPLE_SPI_CFG_LSB_FIRST and
+-	 * APPLE_S5L_SPI_CFG_MSB_FIRST is the same bit but with reversed
+-	 * meaning.
+-	 */
++	/* J72 GPIO pad sampling confirms bit13 selects physical LSB-first. */
+ 	reg_mask(spi, APPLE_SPI_CFG,
+ 		 APPLE_SPI_CFG_CPHA | APPLE_SPI_CFG_CPOL | APPLE_SPI_CFG_LSB_FIRST, cfg);
+ 
+@@ -461,7 +458,7 @@
+ }
+ 
+ static void apple_spi_tx(struct apple_spi *spi, const void **tx_ptr, u32 *left,
+-			 unsigned int bytes_per_word)
++			 unsigned int bytes_per_word, u32 limit)
+ {
+ 	u32 inuse, words, wrote;
+ 
+@@ -472,7 +469,7 @@
+ 		inuse = FIELD_GET(APPLE_S5L_SPI_STATUS_TXFIFO, reg_read(spi, APPLE_SPI_STATUS));
+ 	else
+ 		inuse = FIELD_GET(APPLE_SPI_FIFOSTAT_LEVEL_TX, reg_read(spi, APPLE_SPI_FIFOSTAT));
+-	words = wrote = min_t(u32, *left, APPLE_SPI_FIFO_DEPTH - inuse);
++	words = wrote = min3(*left, APPLE_SPI_FIFO_DEPTH - inuse, limit);
+ 
+ 	if (!words)
+ 		return;
+@@ -513,7 +510,7 @@
+ {
+ 	u32 words, read;
+ 
+-	if (!*rx_ptr)
++	if (!*rx_ptr && (!*left || spi->type != APPLE_SPI_TYPE_S5L))
+ 		return;
+ 
+ 	if (spi->type == APPLE_SPI_TYPE_S5L)
+@@ -521,10 +518,20 @@
+ 					 reg_read(spi, APPLE_SPI_STATUS));
+ 	else
+ 		words = read = FIELD_GET(APPLE_SPI_FIFOSTAT_LEVEL_RX, reg_read(spi, APPLE_SPI_FIFOSTAT));
+-	WARN_ON(words > *left);
+-
+ 	if (!words)
+ 		return;
++
++	/* AppleSamsungSPI counts and drains incoming bytes during TX-only
++	 * PIO too. Otherwise a long transfer can fill the S5L RX FIFO.
++	 */
++	if (!*rx_ptr) {
++		read = min_t(u32, words, *left);
++		*left -= read;
++		while (read--)
++			reg_read(spi, APPLE_SPI_RXDATA);
++		return;
++	}
++	WARN_ON(words > *left);
+ 
+ 	*left -= min_t(u32, *left, words);
+ 
+@@ -566,6 +573,8 @@
+ 	void *rx_ptr = t->rx_buf;
+ 	unsigned int bytes_per_word;
+ 	u32 words, remaining_tx, remaining_rx;
++	bool s5l_tx_only;
++	bool s5l_explicit_tx;
+ 	u32 xfer_flags = 0;
+ 	u32 fifo_flags, out_status;
+ 	int retries = 100;
+@@ -580,7 +589,12 @@
+ 
+ 	words = t->len / bytes_per_word;
+ 	remaining_tx = tx_ptr ? words : 0;
+-	remaining_rx = rx_ptr ? words : 0;
++	s5l_tx_only = spi->type == APPLE_SPI_TYPE_S5L && tx_ptr && !rx_ptr;
++	s5l_explicit_tx = spi->type == APPLE_SPI_TYPE_S5L && tx_ptr;
++	remaining_rx = (rx_ptr || s5l_tx_only) ? words : 0;
++	/* Keep the full TX-only receive count, as the matching J72 iOS PIO
++	 * path does. Drain received data even when the caller discards it.
++	 */
+ 
+ 	/* Reset FIFOs */
+ 	reg_write(spi, APPLE_SPI_CTRL, APPLE_SPI_CTRL_RX_RESET | APPLE_SPI_CTRL_TX_RESET);
+@@ -597,11 +611,13 @@
+ 		 * through to the unconditional TXRXTHRESH wait just below,
+ 		 * which supersedes whatever was set above.
+ 		 */
+-		if (rx_ptr) {
+-			if (poll)
+-				xfer_flags |= APPLE_SPI_STATUS_RXCOMPLETE;
+-			reg_mask(spi, APPLE_SPI_CFG, APPLE_S5L_SPI_CFG_AUTO_TX, APPLE_S5L_SPI_CFG_AUTO_TX);
+-		}
++		if (rx_ptr && poll)
++			xfer_flags |= APPLE_SPI_STATUS_RXCOMPLETE;
++		/* AUTO_TX generates receive clocks without consuming queued TX.
++		 * Explicit transfers must be driven by post-RUN TXDATA writes.
++		 */
++		reg_mask(spi, APPLE_SPI_CFG, APPLE_S5L_SPI_CFG_AUTO_TX,
++			 rx_ptr && !tx_ptr ? APPLE_S5L_SPI_CFG_AUTO_TX : 0);
+ 
+ 		if (tx_ptr || !poll)
+ 			xfer_flags = APPLE_SPI_STATUS_TXRXTHRESH;
+@@ -621,14 +637,54 @@
+ 	reg_write(spi, APPLE_SPI_TXCNT, remaining_tx);
+ 	reg_write(spi, APPLE_SPI_RXCNT, remaining_rx);
+ 
+-	/* Prime transmit FIFO */
+-	apple_spi_tx(spi, &tx_ptr, &remaining_tx, bytes_per_word);
+-
+-	/* Start transfer */
++	/* Pre-RUN TXDATA writes do not decrement J72 hardware counts. Start first for every explicit
++	 * S5L transfer, including short wake and readiness commands.
++	 */
++	if (!s5l_explicit_tx)
++		apple_spi_tx(spi, &tx_ptr, &remaining_tx, bytes_per_word, APPLE_SPI_FIFO_DEPTH);
++	if (s5l_explicit_tx && t->len <= 16)
++		dev_info(&ctlr->dev, "S5L explicit start: len=%u cfg=0x%x txcnt=%u rxcnt=%u\n",
++			 t->len, reg_read(spi, APPLE_SPI_CFG),
++			 reg_read(spi, APPLE_SPI_TXCNT), reg_read(spi, APPLE_SPI_RXCNT));
++
+ 	reg_write(spi, APPLE_SPI_CTRL, APPLE_SPI_CTRL_RUN);
+ 
+ 	/* TX again since a few words get popped off immediately */
+-	apple_spi_tx(spi, &tx_ptr, &remaining_tx, bytes_per_word);
++	apple_spi_tx(spi, &tx_ptr, &remaining_tx, bytes_per_word,
++		      s5l_explicit_tx ? APPLE_SPI_FIFO_DEPTH - (remaining_rx - remaining_tx) : APPLE_SPI_FIFO_DEPTH);
++
++	/*
++	 * S5L, transfers longer than the 16-word FIFO: serve the FIFOs by polling their levels instead of waiting for TXRXTHRESH events. On the J81 the
++	 * threshold status never reports a draining transmit FIFO: the old loop ended after the first event with almost everything unsent ("transfer completed
++	 * with N words left to transmit", success returned), and waiting for further events hung until the 200 ms timeout (HUNG status, FIFO stuck full), so no
++	 * transfer above 32 bytes ever completed (research/2026-10-11-touch-upload-hardware-result.md). Levels in STATUS are reliable; the loop below keeps both
++	 * FIFOs serviced, bounded by the expected wire time plus the usual timeout.
++	 */
++	if (spi->type == APPLE_SPI_TYPE_S5L &&
++	    (s5l_explicit_tx || remaining_tx > APPLE_SPI_FIFO_DEPTH || remaining_rx > APPLE_SPI_FIFO_DEPTH)) {
++		u64 word_ns = spi_delay_to_ns(&t->word_delay, t);
++		u64 wire_us = (u64)t->len * (t->bits_per_word * 1000000ULL / t->speed_hz + word_ns / 1000 + 1);
++		unsigned long end = jiffies + usecs_to_jiffies(wire_us) + msecs_to_jiffies(APPLE_SPI_TIMEOUT_MS);
++
++		while (remaining_tx || remaining_rx) {
++			apple_spi_rx(spi, &rx_ptr, &remaining_rx, bytes_per_word);
++			/* The S5L receive FIFO has 16 slots. Do not queue more TX
++			 * words than can be received without an RX FIFO overflow.
++			 */
++			apple_spi_tx(spi, &tx_ptr, &remaining_tx, bytes_per_word,
++				      s5l_explicit_tx ? APPLE_SPI_FIFO_DEPTH - (remaining_rx - remaining_tx) : APPLE_SPI_FIFO_DEPTH);
++			if (time_after(jiffies, end)) {
++				ret = -ETIMEDOUT;
++				dev_err(&ctlr->dev, "polled transfer timed out (remaining %d tx, %d rx), status=0x%x\n",
++					remaining_tx, remaining_rx, reg_read(spi, APPLE_SPI_STATUS));
++				dev_err(&ctlr->dev, "S5L timeout counters: txcnt=%u rxcnt=%u\n",
++					reg_read(spi, APPLE_SPI_TXCNT), reg_read(spi, APPLE_SPI_RXCNT));
++				goto err;
++			}
++			cpu_relax();
++		}
++		xfer_flags = 0;
++	}
+ 
+ 	while (xfer_flags) {
+ 		fifo_flags = 0;
+@@ -659,8 +715,53 @@
+ 			xfer_flags &= ~out_status;
+ 
+ 		/* Transmit and receive everything we can */
+-		apple_spi_tx(spi, &tx_ptr, &remaining_tx, bytes_per_word);
++		apple_spi_tx(spi, &tx_ptr, &remaining_tx, bytes_per_word, APPLE_SPI_FIFO_DEPTH);
+ 		apple_spi_rx(spi, &rx_ptr, &remaining_rx, bytes_per_word);
++	}
++
++	if (spi->type == APPLE_SPI_TYPE_S5L) {
++		unsigned long end = jiffies + msecs_to_jiffies(APPLE_SPI_TIMEOUT_MS);
++		u64 word_ns = spi_delay_to_ns(&t->word_delay, t);
++		u32 final_status;
++
++		/* Everything is queued: let the FIFO run empty and collect the receive side before the transfer is stopped below. */
++		while ((remaining_rx || FIELD_GET(APPLE_S5L_SPI_STATUS_TXFIFO, reg_read(spi, APPLE_SPI_STATUS))) &&
++		       !time_after(jiffies, end)) {
++			apple_spi_rx(spi, &rx_ptr, &remaining_rx, bytes_per_word);
++			cpu_relax();
++		}
++		final_status = reg_read(spi, APPLE_SPI_STATUS);
++		if (remaining_rx || FIELD_GET(APPLE_S5L_SPI_STATUS_TXFIFO, final_status)) {
++			dev_err(&ctlr->dev,
++				"S5L final FIFO drain timed out (remaining %u rx), status=0x%x\n",
++				remaining_rx, final_status);
++			ret = -ETIMEDOUT;
++			goto err;
++		}
++		/* The last word is still shifting out of the shift register. */
++		udelay(DIV_ROUND_UP(t->bits_per_word * 1000000UL, t->speed_hz) + DIV_ROUND_UP_ULL(word_ns, 1000) + 2);
++		if (t->tx_buf && t->len >= 256) {
++			u32 before_status = reg_read(spi, APPLE_SPI_STATUS);
++			u32 before_txcnt = reg_read(spi, APPLE_SPI_TXCNT);
++			u32 before_rxcnt = reg_read(spi, APPLE_SPI_RXCNT);
++			unsigned long deadline = jiffies + msecs_to_jiffies(20);
++
++			/* On J72, zero prefill reported TXCOMPLETE after the full
++			 * packet, while one-word prefill did not. Keep RUN active for
++			 * at most 20 ms and observe the hardware counts before CS drops.
++			 */
++			while (!(reg_read(spi, APPLE_SPI_STATUS) &
++				 APPLE_S5L_SPI_STATUS_TXCOMPLETE) &&
++				 time_before(jiffies, deadline))
++				udelay(10);
++			dev_info(&ctlr->dev,
++				 "S5L TX completion: len=%u before=0x%x txcnt=%u rxcnt=%u after=0x%x txcnt=%u rxcnt=%u\n",
++				 t->len, before_status, before_txcnt, before_rxcnt,
++				 reg_read(spi, APPLE_SPI_STATUS),
++				 reg_read(spi, APPLE_SPI_TXCNT),
++				 reg_read(spi, APPLE_SPI_RXCNT));
++
++		}
+ 	}
+ 
+ 	/*
