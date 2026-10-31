@@ -1,0 +1,21 @@
+{
+  "kind": "orchard.ram-build",
+  "device": "j81",
+  "kernel_release": "7.3.0-rc1-orchard-j81-storage-ro-v2mod",
+  "artifact_dir": "image-native-bootstrap/out-9f83bcb8356f",
+  "hardware_tested": true,
+  "kernel_loader_dtb_bootargs_unchanged": true,
+  "storage_driver_auto_loaded": true,
+  "storage_writes_enabled_by_boot": true,
+  "root_mode": "native-internal-ext4",
+  "native_tools_included": true,
+  "only_changed_preexisting_archive_member": "init",
+  "native_root_handoff_device_tested": true,
+  "init_sha256": "3903fce390428f44ad871709bcb066d7cf37036aa2b475dcadd1d9a7a8f64db0",
+  "native_root_handoff_sha256": "f24f277c9374b084c4ba2fabb0f7b97b71853517325f151d59bfa64be2fd13ec",
+  "files": {
+    "linux.bin": "f65fa69d0c1938ecae545d7621a0994dfce04dc99259ad142460dbfff63a8f36",
+    "pongo.bin": "1e5543fd8e6dbd84c334b87d71aa473f4d347c2ba8a5e863b6e10f18461c7575"
+  },
+  "hardware_qualification_report": "native-reboot-result.json"
+}

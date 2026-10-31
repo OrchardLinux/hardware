@@ -49,14 +49,15 @@ def layout(partitions, free):
 
 
 class InstallFlow(unittest.TestCase):
-    def run_install(self, disk, answers, outcome='ok'):
+    def run_install(self, disk, answers, outcome='ok', account=True, ready=None):
         work = tempfile.TemporaryDirectory()
         self.addCleanup(work.cleanup)
         root = Path(work.name)
         store = root / 'device'
         store.mkdir()
-        image, mixin = root / 'rootfs', root / 'mixin.tar.gz'
+        image, mixin, layer = root / 'rootfs', root / 'mixin.tar.gz', root / 'platform.tar.gz'
         image.write_bytes(b'root-stream')
+        layer.write_bytes(b'platform-layer')
         mixin.write_bytes(b'firmware-bundle')
         adapter = Mock(NAME='Supported tablet', PROFILE='device', INSTALL=True, STATUS='supported',
                        CAVEATS=[], FEATURES={}, REBOOT_MESSAGE='reboot', DEVICETREE='t8010-j171.dtb')
@@ -68,42 +69,75 @@ class InstallFlow(unittest.TestCase):
         def connect(device):
             yield Connection([sys.executable, str(fake), str(store), json.dumps(disk), outcome], SCOPE, lambda: None)
         adapter.connect = connect
-        record = {'release': '1.0', 'name': 'Omarchy', 'assets': {'root': {
-            'bytes': 11, 'sha256': 'a' * 64, 'expanded_bytes': 2 * GIB, 'compression': 'zstd'}}}
+        record = {'release': '1.0', 'name': 'Omarchy', 'ready': ready, 'account': {
+            'user': 'tablet', 'password': True, 'pin': True, 'passwordless_sudo': False} if account else None, 'assets': {'root': {
+            'bytes': 11, 'sha256': 'a' * 64, 'expanded_bytes': 2 * GIB, 'compression': 'zstd'}, 'layer': {
+            'bytes': 14, 'sha256': 'c' * 64, 'expanded_bytes': 100 << 20, 'compression': 'gzip'}}}
         status = self.status = Mock()
         status.call.return_value = {'release': '1.0'}
         replies, prompts = iter(answers), []
         with patch('orchard.service.choose', return_value=(adapter, {'mode': 'linux', 'ecid': 1, 'resumed': True})), \
-             patch('orchard.service.resolve', return_value=(record, {'root': image})), \
+             patch('orchard.service.select_manifest', return_value=({'name': 'Omarchy'}, None)), \
+             patch('orchard.service.resolve', return_value=(record, {'root': image, 'layer': layer})), \
              patch('orchard.service.Client', return_value=status), \
+             patch('orchard.computer_key.public_keys', return_value=['ssh-ed25519 ' + 'A' * 68]), \
+             patch('orchard.service.check_started', return_value=None) as check, \
              patch('orchard.state.cache_root', return_value=root / 'cache'):
             output = io.StringIO()
             result = install(input_fn=lambda text: prompts.append(text) or next(replies),
-                             secrets_fn=lambda: {'password': 'long enough', 'pin': '424242'},
+                             secrets_fn=lambda account: {'password': 'long enough', 'pin': '424242'},
                              progress=Progress(output))
+        self.check = check
         return result, store, prompts, output.getvalue()
 
     def test_free_space_install_uploads_script_plan_secrets_and_streams_the_root(self):
         disk = layout([{'number': 1, 'start': 6, 'blocks': 3 * GIB // 4096, 'type': APFS,
                         'partuuid': '00000000-0000-4000-8000-000000000001'}],
                       [{'start': 3 * GIB // 4096 + 6, 'blocks': 20 * GIB // 4096}])
-        result, store, prompts, output = self.run_install(disk, ['', ''])
-        self.assertEqual(prompts, ['Install Linux on Supported tablet? [Y/n] ', 'Choose [1]: '])
+        result, store, prompts, output = self.run_install(disk, ['', '', ''])
+        self.assertEqual(prompts, ['Continue? [Y/n] ', 'Choose [1]: ', 'Allow SSH logins from this computer? [Y/n] '])
         self.assertIn('free space, 20.0 GiB', output)
         self.assertEqual((store / 'install_device.py').read_bytes(), install_remote.SCRIPT.read_bytes())
         self.assertEqual((store / 'root-stream').read_bytes(), b'root-stream')
         self.assertEqual((store / 'firmware.tar.gz').read_bytes(), b'firmware-bundle')
         self.assertEqual(json.loads((store / 'secrets.json').read_text()), {'password': 'long enough', 'pin': '424242'})
         plan = json.loads((store / 'plan.json').read_text())
-        self.assertTrue(plan['account'])
+        self.assertEqual(plan['account']['user'], 'tablet')
         self.assertNotIn('424242', json.dumps(plan))
-        self.assertEqual(plan['entry'], {'id': 'omarchy', 'title': 'Omarchy', 'options': 'rootwait',
+        self.assertEqual(plan['entry'], {'id': 'omarchy', 'title': 'Omarchy', 'options': 'rootwait fbcon=map:9 vt.global_cursor_default=0',
                                          'devicetree': 't8010-j171.dtb'})
         self.assertEqual(plan['firmware'], {'path': '/run/orchard/firmware.tar.gz', 'bytes': 15, 'sha256': 'b' * 64})
+        self.assertEqual((store / 'platform.tar.gz').read_bytes(), b'platform-layer')
+        self.assertEqual(plan['layer'], {'path': '/run/orchard/platform.tar.gz', 'bytes': 14, 'sha256': 'c' * 64,
+                                         'expanded_bytes': 100 << 20})
         self.assertEqual(result['root'], plan['root']['partuuid'])
         self.assertIn('orchard launch', output)
         self.assertTrue(result['started'])
-        self.assertEqual(self.status.call.call_args.args, ('start', {'root': plan['root']['partuuid'], 'boot': plan['boot']['partuuid']}))
+        self.assertEqual(self.status.call.call_args.args, ('start', {'root': plan['root']['partuuid'],
+                                                                     'boot': plan['boot']['partuuid']}))
+        self.assertEqual(plan['account']['ssh_keys'], ['ssh-ed25519 ' + 'A' * 68])
+
+    def test_the_started_system_is_checked_over_its_own_ssh(self):
+        disk = layout([], [{'start': 256, 'blocks': 20 * GIB // 4096}])
+        result, store, prompts, output = self.run_install(disk, ['', '', ''], ready='/run/orchard-ready')
+        self.assertEqual(self.check.call_args.args[1:3], ('tablet', '/run/orchard-ready'))
+        self.assertTrue(result['ready'])
+        self.assertIn('Omarchy is ready.', output)
+        self.assertIn('ssh tablet@172.16.42.1', output)
+
+    def test_declining_ssh_imports_no_key_and_checks_nothing(self):
+        disk = layout([], [{'start': 256, 'blocks': 20 * GIB // 4096}])
+        result, store, prompts, output = self.run_install(disk, ['', '', 'n'])
+        self.assertEqual(json.loads((store / 'plan.json').read_text())['account']['ssh_keys'], [])
+        self.check.assert_not_called()
+        self.assertIn('Omarchy is starting.', output)
+
+    def test_a_release_without_an_account_asks_for_no_secrets(self):
+        disk = layout([], [{'start': 256, 'blocks': 20 * GIB // 4096}])
+        result, store, prompts, output = self.run_install(disk, ['', ''], account=False)
+        self.assertIsNone(json.loads((store / 'plan.json').read_text())['account'])
+        self.assertFalse((store / 'secrets.json').exists())
+        self.assertTrue(result['installed'])
 
     def test_replacing_a_partition_must_be_typed_out(self):
         disk = layout([{'number': 1, 'start': 6, 'blocks': 3 * GIB // 4096, 'type': APFS,
@@ -112,15 +146,15 @@ class InstallFlow(unittest.TestCase):
                         'partuuid': '00000000-0000-4000-8000-000000000002', 'fs': 'ext4', 'label': 'OrchardLinux'}], [])
         with self.assertRaisesRegex(ValueError, 'Not confirmed'):
             self.run_install(disk, ['', '1', 'yes'])
-        result, store, prompts, output = self.run_install(disk, ['', '1', 'erase 2'])
-        self.assertEqual(prompts[-1], 'Type "erase 2" to confirm: ')
+        result, store, prompts, output = self.run_install(disk, ['', '1', 'erase 2', ''])
+        self.assertEqual(prompts[-2], 'Type "erase 2" to confirm: ')
         self.assertIn('previous Orchard installer', output)
         self.assertEqual(json.loads((store / 'plan.json').read_text())['remove']['number'], 2)
 
     def test_device_error_is_reported_with_its_detail(self):
         disk = layout([], [{'start': 256, 'blocks': 20 * GIB // 4096}])
         with self.assertRaisesRegex(install_remote.RemoteError, 'table changed'):
-            self.run_install(disk, ['', ''], outcome='error')
+            self.run_install(disk, ['', '', ''], outcome='error')
 
     def test_no_target_never_suggests_resizing(self):
         disk = layout([{'number': 1, 'start': 6, 'blocks': 30 * GIB // 4096, 'type': APFS,

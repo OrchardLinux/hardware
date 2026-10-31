@@ -12,7 +12,6 @@ rootfs/
 
 ```sh
 cd examples/charger-001
-orchard build --device j71b
 orchard run
 ```
 
@@ -53,19 +52,13 @@ base, reusing local incremental compiler output where available. Experiment-only
 edits just repack the payload. The first build after this cache-format change
 populates the shared base/SDK; prior outputs and compiler state are not deleted.
 
-Modules are now explicitly opt-in for manual driver investigation:
-
-```sh
-orchard build --modules
-```
-
-This includes matching modules but does not load them. The observation script
-itself does not require staging modules. The original already-built payload still
-contains them and remains usable.
+Modules are opt-in for manual driver investigation: add `modules = true` to a
+`payload.toml` beside `init`. That includes matching modules but does not load
+them. The observation script itself does not require them.
 
 Optional `--kernel-dir DIR --busybox FILE --loader FILE --pongo FILE` reuses local
-components; `--cache DIR` overrides the cache. `run` uses the last successful build,
-not a hidden rebuild. Rebuild after changing kernel inputs.
+components; `--cache DIR` overrides the cache. `run` builds what is missing first;
+`run --no-build` boots the last build as it is.
 
 ## Safety and status
 

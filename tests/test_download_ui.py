@@ -44,11 +44,13 @@ class DownloadUI(unittest.TestCase):
         for name in ('Omarchy A', 'Recovery', 'iPadOS firmware'):
             task = progress.task(name)
             task.transfer(0, 100000000)
-            task.transfer(100000000, 100000000)
         text = terminal.getvalue()
         self.assertIn('\033[', text)
         rows = [line.split('\033[2K')[-1] for line in text.splitlines() if '\033[2K' in line]
         self.assertEqual(len({row.index('%') for row in rows}), 1)
+        task.transfer(100000000, 100000000)
+        self.assertTrue(terminal.getvalue().rstrip().endswith('95 MiB'))
+        self.assertNotIn('—', terminal.getvalue())
         self.assertNotIn('Assembled', text)
         self.assertNotIn('0.0/0.0', text)
 
@@ -62,16 +64,16 @@ class DownloadUI(unittest.TestCase):
             self.assertEqual(Path(progress.log_path).stat().st_mode & 0o777, 0o600)
 
     def test_release_assets_start_concurrently(self):
-        barrier = threading.Barrier(3)
-        document = {'protocol': 1, 'version': '1', 'name': 'Test Linux',
-                    'pongo': {}, 'boot': {}, 'root': {}}
+        barrier = threading.Barrier(4)
+        document = {'kind': 'orchard.install', 'protocol': 1, 'version': '1', 'name': 'Test Linux',
+                    'pongo': {}, 'root': {}, 'platforms': {'apple-16k': {'boards': ['j71b'], 'boot': {}, 'layer': {}}}}
         def materialize(*args, **kwargs):
             barrier.wait(timeout=2)
             return Path('verified')
         with patch.object(releases, 'select_manifest', return_value=(document, None)), \
              patch.object(releases, 'materialize', side_effect=materialize):
             _, paths = releases.resolve('test', 'j71b')
-        self.assertEqual(set(paths), {'pongo', 'recovery', 'root'})
+        self.assertEqual(set(paths), {'pongo', 'recovery', 'root', 'layer'})
 
     def test_resume_is_verified_before_cache_promotion(self):
         data = b'full verified content'

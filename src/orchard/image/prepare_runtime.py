@@ -137,9 +137,9 @@ def main():
         path.write_bytes(data)
         path.chmod(mode)
     # The release this recovery belongs to; `orchard-device status` reports it.
+    # Root images carry no kernel: the release's platform layer of the same
+    # kernel bundle does, so the recovery and an installed root match.
     spec = json.loads(args.root_receipt.read_text())
-    if spec['kernel_release'] != kernel_release:
-        raise ValueError('Root/recovery kernel releases differ')
     (root / 'etc/orchard/release.json').write_text(json.dumps(
         {'protocol': 1, 'release': spec['release'], 'kernel_release': kernel_release}))
     for source, name in (('init', 'init'), ('usb-gadget', 'sbin/recovery-usb'),

@@ -1,16 +1,19 @@
 # Example only: fixture payloads are NOT bootable/installable.
-schema = 1
+schema = 2
 kind = "orchard.install"
-distro = "other-fixture-linux"
+distro = "fixture-linux"
 name = "Minimal Linux"
 version = "example-1"
-device = "j71b"
 boot_method = "checkm8-pongo"
 min_orchard = "0.1.0"
 protocol = 1
 
+[orchard]
+commit = "0000000000000000000000000000000000000000"
+modified = false
+
 [install]
-default_root = "/second"
+default_root = "/first"
 
 [root]
 file = "fixtures/root.tar.gz"
@@ -20,12 +23,24 @@ compression = "gzip"
 expanded_bytes = 59
 members = 1
 
-[boot]
-file = "fixtures/boot-stub.txt"
-bytes = 72
-sha256 = "804e3e911c74779e207d78bb5455a14389853686390360d2f051be096653dc93"
-
 [pongo]
 file = "fixtures/boot-stub.txt"
 bytes = 72
 sha256 = "804e3e911c74779e207d78bb5455a14389853686390360d2f051be096653dc93"
+
+[platforms.apple-16k]
+boards = ["j71b"]
+
+[platforms.apple-16k.boot]
+file = "fixtures/boot-stub.txt"
+bytes = 72
+sha256 = "804e3e911c74779e207d78bb5455a14389853686390360d2f051be096653dc93"
+
+[platforms.apple-16k.layer]
+file = "fixtures/platform.tar.gz"
+bytes = 189
+sha256 = "a3670210d82e3a267614a6d627eee329803e2f38130e64e53e31b14d471c715e"
+compression = "gzip"
+expanded_bytes = 41
+members = 2
+kernel_release = "0.0.0-fixture"

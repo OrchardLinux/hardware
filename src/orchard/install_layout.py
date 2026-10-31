@@ -22,7 +22,7 @@ MIB = 1 << 20
 GIB = 1 << 30
 BOOT_BYTES = 1 * GIB
 MIN_ROOT_BYTES = 8 * GIB
-PLAN_VERSION = 1
+PLAN_VERSION = 2
 
 
 class LayoutError(ValueError):
@@ -86,9 +86,13 @@ def options(layout) -> List[Option]:
     return sorted(result, key=lambda o: o.start)
 
 
-def plan(layout, option: Option, image: Dict, entry: Dict, firmware: Optional[Dict] = None,
-         account: bool = False) -> Dict:
-    """The plan `install_device.py run` executes for one chosen option."""
+def plan(layout, option: Option, image: Dict, entry: Dict, layer: Dict, firmware: Optional[Dict] = None,
+         account: Optional[Dict] = None) -> Dict:
+    """The plan `install_device.py run` executes for one chosen option.
+
+    IMAGE is the distro's root image, LAYER orchard's platform layer (kernel,
+    DTBs, modules) that goes into the root after it.
+    """
     block = layout['disk']['sector']
     align = MIB // block
     boot = boot_partition(layout)
@@ -105,7 +109,7 @@ def plan(layout, option: Option, image: Dict, entry: Dict, firmware: Optional[Di
     root_blocks = _align_down(end, align) - start
     if root_blocks * block < MIN_ROOT_BYTES:
         raise LayoutError('Target is too small for a root partition')
-    if root_blocks * block < image['expanded_bytes'] * 1.25:
+    if root_blocks * block < (image['expanded_bytes'] + layer['expanded_bytes']) * 1.25:
         raise LayoutError('Target is too small for this system image')
     remove = None
     if option.partition is not None:
@@ -123,7 +127,8 @@ def plan(layout, option: Option, image: Dict, entry: Dict, firmware: Optional[Di
         'root': {'start': start, 'blocks': root_blocks, 'partuuid': str(uuid.uuid4()),
                  'fs_uuid': str(uuid.uuid4()), 'fs': 'ext4', 'label': entry['id'][:16]},
         'image': image,
+        'layer': layer,
         'entry': entry,
         'firmware': firmware,
-        'account': account,     # secrets travel separately, never in the plan
+        'account': account,     # the release's install.account; secrets travel separately
     }

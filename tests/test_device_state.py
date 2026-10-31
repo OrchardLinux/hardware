@@ -83,25 +83,25 @@ class DeviceIsolation(unittest.TestCase):
 
     def test_macos_usb_descriptor_identifies_device_and_boot(self):
         raw = plistlib.dumps([{'IOObjectClass':'IOUSBHostDevice','idVendor':0x05ac,'idProduct':0x4142,
-                               'locationID':123,'USB Serial Number':f'ECID:0000000000000002 BOOT:{BOOT_B}',
-                               'USB Product Name':'J71b Recovery','IORegistryEntryChildren':[
+                               'locationID':123,'USB Serial Number':f'ECID:0000000000000002 BOOT:{BOOT_B} BOARD:j71b',
+                               'USB Product Name':'Orchard Recovery','IORegistryEntryChildren':[
                                    {'IOObjectClass':'IOSerialBSDClient','IOCalloutDevice':'/dev/cu.device'}]}])
         with patch.object(usb.sys,'platform','darwin'), patch.object(usb.subprocess,'run',return_value=
                 subprocess.CompletedProcess([],0,raw,b'')):
             rows = usb.devices()
-        self.assertEqual((rows[0]['ecid'],rows[0]['boot_id']),(2,BOOT_B))
+        self.assertEqual((rows[0]['ecid'],rows[0]['boot_id'],rows[0]['profile']),(2,BOOT_B,'j71b'))
         self.assertEqual(rows[0]['serial_port'],'/dev/cu.device')
 
     def test_linux_usb_descriptor_identifies_device_and_boot_without_serial_commands(self):
         node = self.root/'1-2'
         node.mkdir()
-        for name,value in {'idVendor':'05ac','idProduct':'4142','product':'J71b Recovery',
-                           'serial':f'ECID:0000000000000002 BOOT:{BOOT_B}'}.items():
+        for name,value in {'idVendor':'05ac','idProduct':'4142','product':'Orchard Recovery',
+                           'serial':f'ECID:0000000000000002 BOOT:{BOOT_B} BOARD:j71b'}.items():
             (node/name).write_text(value)
         (node/'iface/tty/ttyACM0').mkdir(parents=True)
         rows = linux_usb.devices(self.root)
         self.assertEqual(len(rows),1)
-        self.assertEqual((rows[0]['ecid'],rows[0]['boot_id']),(2,BOOT_B))
+        self.assertEqual((rows[0]['ecid'],rows[0]['boot_id'],rows[0]['profile']),(2,BOOT_B,'j71b'))
 
     def test_linux_ram_payload_is_available_to_ram_session_tools(self):
         node = self.root/'1-2'

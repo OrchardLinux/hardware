@@ -9,7 +9,8 @@ from .linux_usb import devices as linux_devices, m1n1_ports as linux_m1n1_ports
 from orchard.state import EndpointUnavailable
 
 # 0x4144: a RAM payload's USB session (orchard/usb-session).
-MODES = {0x1227: 'dfu', 0x4141: 'pongo', 0x4142: 'linux', 0x4144: 'ram'}
+# 0x4142: Orchard Recovery; 0x4145: an installed system (orchard's initrd).
+MODES = {0x1227: 'dfu', 0x4141: 'pongo', 0x4142: 'linux', 0x4144: 'ram', 0x4145: 'system'}
 
 
 class DeviceError(ValueError):
@@ -35,6 +36,7 @@ def devices():
             continue
         serial = node.get('USB Serial Number') or ''
         boot = re.search(r'\bBOOT:([0-9a-fA-F-]{36})\b', serial)
+        profile = re.search(r'\bBOARD:([a-z0-9]+)\b', serial)
         fields = [re.search(r'\b' + label + r':([0-9a-fA-F]+)\b', serial)
                   for label in ('ECID', 'CPID', 'BDID')]
         descendants = list(node.get('IORegistryEntryChildren', []))
@@ -53,6 +55,7 @@ def devices():
                       'boot_id': str(uuid.UUID(boot.group(1))) if boot else None,
                       'chip': int(fields[1].group(1), 16) if fields[1] else None,
                       'board': int(fields[2].group(1), 16) if fields[2] else None,
+                      'profile': profile.group(1) if profile else None,
                       'product': node.get('USB Product Name'),
                       'serial_port': ports[0] if ports else None})
     return found
@@ -89,17 +92,21 @@ def m1n1_ports():
     return found
 
 def sole_target():
-    targets = [item for item in devices() if item['mode'] in ('dfu', 'pongo', 'linux')]
+    found = devices()
+    targets = [item for item in found if item['mode'] in ('dfu', 'pongo', 'linux')]
     if not targets:
+        if any(item['mode'] == 'system' for item in found):
+            raise EndpointUnavailable('The device is running its installed system; put it in DFU mode first')
         raise EndpointUnavailable('Selected USB target is not connected')
     if len(targets) != 1:
         raise ValueError('Connect exactly one target in DFU, Pongo or Linux; device selection is not supported')
     return targets[0]
 
 
-def recovery(product):
+def recovery(product, profile=None):
     device = sole_target()
-    if device['mode'] != 'linux' or device.get('product') != product or not device.get('serial_port'):
+    if (device['mode'] != 'linux' or device.get('product') != product or not device.get('serial_port')
+            or (profile is not None and device.get('profile') != profile)):
         raise ValueError('Expected one recovery USB serial endpoint')
     if not device.get('ecid') or not device.get('boot_id'):
         raise ValueError('Recovery lacks device/boot identity; load the current recovery from DFU')

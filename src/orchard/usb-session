@@ -51,5 +51,7 @@ key=/run/orchard/ssh_host_ed25519_key
 dropbearkey -t ed25519 -f "$key" >/dev/null 2>&1
 dropbearkey -y -f "$key" | awk '$1 == "ssh-ed25519" {print $1, $2}' > "$key.pub"
 # Key-only root login on the USB address; a 4 MiB window for fast transfers.
-dropbear -E -s -g -j -k -W 4194304 -P /run/orchard/dropbear.pid -r "$key" -p 172.16.42.1:22
+# Its log goes to a file, not the console: every SSH command would print there.
+dropbear -E -s -g -j -k -W 4194304 -P /run/orchard/dropbear.pid -r "$key" -p 172.16.42.1:22 \
+    2>>/run/orchard/ssh.log
 echo "$name: USB SSH on 172.16.42.1; host key $(cut -d' ' -f2 "$key.pub")"

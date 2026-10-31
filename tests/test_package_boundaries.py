@@ -64,7 +64,7 @@ sys.argv=['orchard','resolve',MANIFEST,'--profile','j71b'];main()
                   'ecid':1, 'boot_id':'11111111-1111-4111-8111-111111111111'}
         with patch.object(usb, 'devices', return_value=[device]):
             self.assertEqual(usb.recovery('Another Recovery'), device)
-            with self.assertRaises(ValueError):usb.recovery('J71b Recovery')
+            with self.assertRaises(ValueError):usb.recovery('Orchard Recovery')
         with patch.object(usb, 'devices', return_value=[device,{**device,'location':'other'}]):
             with self.assertRaises(ValueError):usb.recovery('Another Recovery')
 

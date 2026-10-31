@@ -1,9 +1,9 @@
 # Standalone CLI test fixture, not a distro publication.
-schema = 1
+schema = 2
 kind = "orchard.index"
 distro = "other-fixture-linux"
 
-[devices.j71b.checkm8-pongo]
-file = "j71b-checkm8-pongo.toml"
-bytes = 726
-sha256 = "c31abef48074d7d14d0e913f04d3dfc2ef280a0e09520cad8920572fc4307de5"
+[release]
+file = "release.toml"
+bytes = 1088
+sha256 = "af47d2c4781eb0dd38c050bbaf034d6cfb5e3048349ac220d038b3ce81b5e57d"

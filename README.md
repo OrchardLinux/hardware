@@ -8,6 +8,21 @@ installation, launch). Distributions such as
 [omarchy-a](https://github.com/OrchardLinux/omarchy-a) and
 [minimal-linux](https://github.com/OrchardLinux/minimal-linux) build on it.
 
+## Start
+
+```sh
+git clone https://github.com/OrchardLinux/orchard && cd orchard
+./setup
+orchard run examples/minimal-boot
+```
+
+`./setup` shows what this computer needs to build and boot (uv, Podman, libusb,
+palera1n, the `orchard` command), asks, and sets it up; rerun it until it says
+Ready. `orchard doctor` shows the same without changing anything. Put the device
+in DFU mode before `orchard run`: it builds what is missing for the attached
+board, then boots it. The first build compiles Linux, which takes a while; later
+ones reuse it.
+
 ## Supported hardware
 
 Currently: iPad 6 Wi-Fi (`iPad7,5`, J71b), experimental. Boot is tethered and GPU acceleration is not available.
@@ -16,9 +31,19 @@ The iPhone 6 (`iPhone7,2`, N61AP) has experimental tethered support. See the [br
 
 ## Install a system
 
-Follow the install instructions of a distribution, e.g. omarchy-a. Until the
-installer that ships with each distribution release exists, published systems
-install with the released Orchard 0.1.10 ([OrchardLinux/cli releases](https://github.com/OrchardLinux/cli/releases)).
+Follow the install instructions of a distribution, e.g. omarchy-a. Every release
+of a distribution carries its installer:
+
+```sh
+curl -fsSL https://github.com/OrchardLinux/omarchy-a/releases/latest/download/install.sh | sh
+```
+
+It needs no Python, uv or checkout: `install.sh` downloads a pinned standalone
+Python and the release's `orchard-install.pyz`, checks both, and installs. It
+leaves the user's `orchard` on PATH (`install`, `launch`, `devices`, `update`),
+which a later installer replaces only with a newer one. Releases built before
+orchard 0.2 install with the released Orchard 0.1.10
+([OrchardLinux/cli releases](https://github.com/OrchardLinux/cli/releases)).
 
 To start an installed system again, connect the device in DFU mode and run
 `orchard launch`. The host sends only Pongo and m1n1; m1n1 reads the boot entries
@@ -28,31 +53,25 @@ one without asking). Any computer with Orchard can launch any installed system.
 ## Develop
 
 `orchard` runs from a checkout of this repository: its hardware data and recipes
-are the files beside `src/`. Put the launcher on your PATH once (it needs
-[uv](https://docs.astral.sh/uv/)):
-
-```sh
-ln -sf "$PWD/bin/orchard" ~/.local/bin/orchard
-```
-
-It runs the checkout the current directory belongs to:
+are the files beside `src/`. The `orchard` command `./setup` puts on your PATH
+links to the launcher of orchard's `main` in `~/.cache/orchard/orchard-main`, so it
+does not depend on any clone. It runs the checkout the current directory belongs to:
 
 - inside an orchard checkout, that checkout, e.g. a worktree on your branch;
 - elsewhere, the checkout named by the nearest `orchard.local.toml`
   (`orchard = "../orchard-gpu"`), e.g. in a distribution you work on;
-- otherwise orchard's `main` branch, kept in `~/.cache/orchard/orchard-main` and
-  updated before use.
+- otherwise orchard's `main`, updated before use.
 
-`orchard.local.toml` belongs to one checkout and is never committed. It can also
-choose your board (`device = "j71b"`); `~/.config/orchard/config.toml` does that
-for all your checkouts. Nothing in a repository names a board.
+A payload is built for every board of one platform (`out/apple-16k/`, `out/apple-4k/`).
+`orchard run` takes the platform from the attached board; `orchard build` from
+`--device BOARD`, `--platform`, a `device` in the checkout's `orchard.local.toml`
+(never committed) or the attached board. Nothing in a repository names a board.
 
 Bring up a device or try a driver in a worktree of its own:
 
 ```sh
 git worktree add ../orchard-gpu -b gpu-a10
 cd ../orchard-gpu/examples/minimal-boot
-orchard build --device j71b
 orchard run
 ```
 
@@ -61,6 +80,11 @@ The [examples](examples/) are starting points: `minimal-boot` (a serial shell),
 offers). `orchard python ARGS` runs Python in the checkout's environment, e.g. a
 distribution's own scripts or `orchard python -m unittest discover -s tests`. See
 [BUILD.md](BUILD.md) for building components directly.
+
+A distribution checkout has a `distro.toml` naming its build entry. There
+`orchard build` builds a whole release into `out/releases/dev-DATE-TIME`,
+`orchard run` boots its recovery on the attached device without installing, and
+`orchard install` installs the last build ([tooling](docs/tooling.md)).
 
 - [Kernel producers](kernel/README.md)
 - [Device bring-up](docs/device-bring-up.md)

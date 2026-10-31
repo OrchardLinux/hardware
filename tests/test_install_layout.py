@@ -5,6 +5,8 @@ from orchard import install_layout as L
 
 APFS = '7c3457ef-0000-11aa-aa11-00306543ecac'
 IMAGE = {'bytes': 1_079_804_265, 'sha256': 'a' * 64, 'expanded_bytes': 2_745_833_606, 'compression': 'zstd'}
+LAYER = {'path': '/run/orchard/platform.tar.gz', 'bytes': 60_000_000, 'sha256': 'c' * 64,
+         'expanded_bytes': 150_000_000}
 ENTRY = {'id': 'omarchy', 'title': 'Omarchy', 'version': '7.3.0-rc1-orchard-apple-16k'}
 
 
@@ -28,7 +30,7 @@ class InstallLayout(unittest.TestCase):
         (option,) = L.options(disk)
         self.assertEqual(option.kind, 'free')
         self.assertTrue(option.creates_boot)
-        plan = L.plan(disk, option, IMAGE, ENTRY)
+        plan = L.plan(disk, option, IMAGE, ENTRY, LAYER)
         self.assertIsNone(plan['remove'])
         self.assertTrue(plan['boot']['create'])
         self.assertEqual(plan['boot']['start'] % 256, 0)          # 1 MiB aligned
@@ -42,7 +44,7 @@ class InstallLayout(unittest.TestCase):
         options = L.options(disk)
         self.assertEqual([o.kind for o in options], ['replace'])
         self.assertIn('erases it', options[0].description)
-        plan = L.plan(disk, options[0], IMAGE, ENTRY)
+        plan = L.plan(disk, options[0], IMAGE, ENTRY, LAYER)
         self.assertEqual(plan['remove']['number'], 3)
         self.assertTrue(plan['boot']['create'])
         self.assertGreaterEqual(plan['boot']['start'], old['start'])
@@ -54,7 +56,7 @@ class InstallLayout(unittest.TestCase):
         (option,) = L.options(disk)
         self.assertEqual(option.partition['number'], 4)
         self.assertFalse(option.creates_boot)
-        plan = L.plan(disk, option, IMAGE, ENTRY)
+        plan = L.plan(disk, option, IMAGE, ENTRY, LAYER)
         self.assertEqual(plan['boot'], {'create': False, 'partuuid': boot['partuuid'], 'number': 2})
         self.assertEqual(plan['remove']['partuuid'], root['partuuid'])
 
@@ -70,11 +72,22 @@ class InstallLayout(unittest.TestCase):
         with self.assertRaisesRegex(L.LayoutError, 'more than one XBOOTLDR'):
             L.options(disk)
 
+    def test_the_plan_carries_the_platform_layer(self):
+        disk = layout([APFS_PART], [(14648443, END - 14648443 + 1)])
+        (option,) = L.options(disk)
+        plan = L.plan(disk, option, IMAGE, ENTRY, LAYER)
+        self.assertEqual((plan['version'], plan['layer']), (2, LAYER))
+
     def test_image_must_fit_with_headroom(self):
         disk = layout([APFS_PART], [(14648443, (L.BOOT_BYTES + L.MIN_ROOT_BYTES) // 4096 + 512)])
         (option,) = L.options(disk)
         with self.assertRaisesRegex(L.LayoutError, 'too small for this system image'):
-            L.plan(disk, option, {**IMAGE, 'expanded_bytes': 7 * L.GIB}, ENTRY)
+            L.plan(disk, option, {**IMAGE, 'expanded_bytes': 7 * L.GIB}, ENTRY, LAYER)
+        # The layer counts too: image and layer together must fit.
+        fits = (option.blocks * 4096 - L.BOOT_BYTES) / 1.25 - 2 * L.MIB
+        L.plan(disk, option, {**IMAGE, 'expanded_bytes': int(fits)}, ENTRY, {**LAYER, 'expanded_bytes': 1})
+        with self.assertRaisesRegex(L.LayoutError, 'too small for this system image'):
+            L.plan(disk, option, {**IMAGE, 'expanded_bytes': int(fits)}, ENTRY, {**LAYER, 'expanded_bytes': 4 * L.MIB})
 
 
 if __name__ == '__main__':

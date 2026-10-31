@@ -15,9 +15,9 @@ dt_compatible = ["apple,j81"]
 chip = 0x7001
 board = 0x06
 
-# USB product of the Orchard recovery system ("<Board> Recovery").
+# Orchard Recovery runs here (USB "Orchard Recovery", serial BOARD:<profile>).
 [match.linux]
-product = "J81 Recovery"
+recovery = true
 
 [boot]
 methods = ["checkm8-pongo"]

@@ -30,10 +30,13 @@ def check_busybox(path):
 
 
 def assemble_ram(hardware, output, *, kernel, busybox, loader, pongo, init,
-                 files=None, hostname='orchard-ram', device, modules=False,
+                 files=None, hostname='orchard-ram', platform, boards, modules=False,
                  bootargs='console=tty0 loglevel=7 rdinit=/init', sources=()):
-    """Pack a caller-owned /init and arbitrary files. No firmware or modules are
-    activated here. Files map relative RAM-root destinations to local files.
+    """Pack a caller-owned /init and arbitrary files for every board of PLATFORM.
+
+    BOARDS maps each board to its DTB name; m1n1 picks the booted board's DTB.
+    No firmware or modules are activated here. Files map relative RAM-root
+    destinations to local files.
     """
     hardware, output = Path(hardware).resolve(), Path(output).resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -77,14 +80,19 @@ def assemble_ram(hardware, output, *, kernel, busybox, loader, pongo, init,
                 '--output', work / 'initramfs.cpio.gz')
         profile = work / 'boot.json'
         profile.write_text(json.dumps({'bootargs': 'chosen.bootargs=' + bootargs + '\n'}))
-        command(sys.executable, '-m', 'orchard.image.assemble', '--manifest', profile,
-                '--loader', loader, '--dtb', kernel / (device + '.dtb'), '--kernel', kernel / 'Image.gz',
-                '--initramfs', work / 'initramfs.cpio.gz', '--output', work / 'linux.bin')
+        dtbs = [kernel / 'dtbs' / (dtb + '.dtb') for dtb in boards.values()]
+        for path in dtbs:
+            if not path.is_file():
+                raise ValueError(f'Kernel bundle lacks {path.name}')
+        assemble(profile, loader, dtbs, kernel / 'Image.gz', work / 'initramfs.cpio.gz', work / 'linux.bin')
         if (work / 'linux.bin').stat().st_size > 128 * 1024 * 1024:
             raise ValueError('Payload exceeds the Pongo uploader limit (128 MiB)')
         shutil.copyfile(pongo, work / 'pongo.bin')
-        receipt = {'kind': 'orchard.ram-build', 'device': device, 'kernel_release': release,
-                   'hardware_tested': False,
+        receipt = {'kind': 'orchard.ram-build', 'platform': platform, 'boards': sorted(boards),
+                   'kernel_release': release, 'hardware_tested': False,
+                   # What `orchard run` needs to add a board's firmware layer.
+                   'assembly': {'loader': str(loader), 'kernel': str(kernel / 'Image.gz'),
+                                'dtbs': [str(path) for path in dtbs], 'bootargs': bootargs},
                    'files': {name: digest(work / name) for name in ('linux.bin', 'pongo.bin')},
                    'sources': {str(p.resolve()): digest(p) for p in inputs}}
         for name in ('linux.bin', 'linux.bin.json', 'pongo.bin', 'initramfs.cpio.gz'):
@@ -94,30 +102,72 @@ def assemble_ram(hardware, output, *, kernel, busybox, loader, pongo, init,
     return output
 
 
+def assemble(profile, loader, dtbs, kernel, initramfs, output):
+    command(sys.executable, '-m', 'orchard.image.assemble', '--manifest', profile, '--loader', loader,
+            *(argument for dtb in dtbs for argument in ('--dtb', dtb)), '--kernel', kernel,
+            '--initramfs', initramfs, '--output', output)
+
+
 # Where the hardware's static tools go in a RAM image; others land in usr/bin.
 TOOL_DESTINATIONS = {'dropbear': 'usr/sbin', 'wpa_supplicant': 'usr/sbin', 'iw': 'usr/sbin'}
 
 
-def build_directory(directory, *, hardware=None, cache=None, kernel=None,
-                    busybox=None, loader=None, pongo=None, modules=False, device=None,
-                    firmware=False):
-    """Build any DIRECTORY/init plus optional DIRECTORY/rootfs/; no layout convention.
+def boards_by_platform(hardware):
+    """{platform: {board: dtb}} for every board the hardware describes."""
+    from . import kernel as kernels
+    result = {}
+    for descriptor in sorted(Path(hardware, 'devices').glob('*/device.toml')):
+        try:
+            platform, dtb = kernels.layout(hardware, descriptor.parent.name)
+        except ValueError:
+            continue
+        result.setdefault(platform, {})[descriptor.parent.name] = dtb
+    return result
 
-    Unless payload.toml says transport = false, the payload also gets the USB
-    session helper (network, SSH; see ram_session) for its /init to start.
+
+def resolve_platform(directory, hardware, *, platform=None, device=None):
+    """--platform, else the platform of --device, orchard.local.toml or the attached board."""
+    known = boards_by_platform(hardware)
+    if platform is not None:
+        if platform not in known:
+            raise ValueError(f'Unknown platform {platform}; known: {", ".join(sorted(known))}')
+        return platform
+    board = build.resolve_device(directory, device)
+    if board is None:
+        from .devices import attached_board
+        board = attached_board()
+    for name, boards in known.items():
+        if board in boards:
+            return name
+    listing = '; '.join(f'{name}: {", ".join(boards)}' for name, boards in sorted(known.items()))
+    if board is not None:
+        raise ValueError(f'No hardware support describes {board}. Platforms and their boards: {listing}')
+    raise ValueError('Which platform? Pass --device BOARD or --platform PLATFORM, set device in '
+                     f'orchard.local.toml, or connect the device. Platforms and their boards: {listing}')
+
+
+def build_directory(directory, *, hardware=None, cache=None, kernel=None,
+                    busybox=None, loader=None, pongo=None, platform=None, device=None):
+    """Build DIRECTORY/init plus optional DIRECTORY/rootfs/ for every board of one platform.
+
+    The payload goes to DIRECTORY/out/PLATFORM/. Unless payload.toml says
+    transport = false it also gets the USB session helper (network, SSH; see
+    ram_session) for its /init to start. Firmware is never part of it: `orchard
+    run` adds the booted board's (with_firmware).
     """
     directory = Path(directory).expanduser().resolve()
     settings = build.payload_settings(directory)
-    device = build.resolve_device(directory, device)
-    if device is None:
-        raise ValueError(build.NO_DEVICE)
     if hardware is None:
         from .hardware import ROOT
         hardware = ROOT
     else:
         hardware = Path(hardware).expanduser().resolve()
+    platform = resolve_platform(directory, hardware, platform=platform, device=device)
+    boards = boards_by_platform(hardware)[platform]
+    # Components are per platform; any of its boards selects them.
+    representative = sorted(boards)[0]
     cache = Path(cache).expanduser().resolve() if cache is not None else build.cache_root()
-    output = directory / 'out'
+    output = directory / 'out' / platform
     output.mkdir(parents=True, exist_ok=True)
     (output / 'build.json').unlink(missing_ok=True)
     init = directory / 'init'
@@ -132,41 +182,89 @@ def build_directory(directory, *, hardware=None, cache=None, kernel=None,
             raise ValueError(f'Symlinks in rootfs are not supported yet: {path}')
         if path.is_file():
             files[str(path.relative_to(overlay))] = path
-    tools = build.prepare_tools(hardware, cache, device=device)
+    tools = build.prepare_tools(hardware, cache, device=representative)
     for tool in sorted(tools.iterdir()):
         if tool.name != 'busybox' and tool.is_file():
             files.setdefault(TOOL_DESTINATIONS.get(tool.name, 'usr/bin') + '/' + tool.name, tool)
-    if settings.get('transport', True):
+    if settings['transport']:
         from . import ram_session
         for destination, source in ram_session.payload_files().items():
             if destination in files:
                 raise ValueError(f'rootfs/ provides {destination}; set transport = false in payload.toml to supply your own')
             files[destination] = source
-    if firmware:
-        from . import firmware as firmwares
-        from .progress import Clock, Progress
-        recipe = firmwares.recipe_for(device, hardware)
-        outputs = firmwares.ensure(device, Clock(), Progress(), hardware=hardware)
-        for item in recipe['outputs']:
-            if item['destination'] in files:
-                raise ValueError(f'rootfs/ and the {device} firmware both provide {item["destination"]}')
-            files[item['destination']] = outputs / item['sha256']
-    components = build.prepare_components(hardware, cache, device=device, kernel=kernel,
+    components = build.prepare_components(hardware, cache, device=representative, kernel=kernel,
                                           busybox=busybox, loader=loader, pongo=pongo)
     hostname = re.sub(r'[^A-Za-z0-9_-]', '-', directory.name).strip('-_')[:63] or 'orchard-ram'
-    assemble_ram(hardware, output, **components, init=init, files=files,
-                 modules=modules, hostname=hostname, device=device)
+    assemble_ram(hardware, output, **components, init=init, files=files, modules=settings['modules'],
+                 hostname=hostname, platform=platform, boards=boards)
     receipt = json.loads((output / 'build.json').read_text())
     # Catch newly added/removed overlay files too, not only changes to old inputs.
     receipt['overlay'] = {'path': str(overlay), 'sha256': recipe_key(directory, ['rootfs'], ignore=())}
+    receipt['firmware'] = settings['firmware']
     (output / 'build.json').write_text(json.dumps(receipt, indent=2) + '\n')
     return output
+
+
+def with_firmware(output, board, *, hardware=None, cache=None):
+    """OUTPUT's payload plus BOARD's firmware as a second initramfs, in the private cache.
+
+    Linux unpacks concatenated initramfs archives in order, so the platform
+    payload stays as built. Firmware is downloaded once (IPSW byte ranges) and
+    never written to the project directory.
+    """
+    from . import firmware as firmwares
+    from .image import initramfs
+    from .progress import Clock, Progress
+    receipt = verify_ram(output)
+    if board not in receipt['boards']:
+        raise ValueError(f'This payload is for {receipt["platform"]} ({", ".join(receipt["boards"])}), not {board}')
+    recipe = firmwares.recipe_for(board, hardware)
+    outputs = firmwares.ensure(board, Clock(), Progress(), hardware=hardware)
+    cache = Path(cache) if cache is not None else build.cache_root()
+    target = cache / 'private/ram' / f'{board}-{receipt["files"]["linux.bin"][:16]}'
+    if target.is_dir():
+        try:
+            verify_ram(target)
+            return target
+        except (OSError, ValueError):
+            shutil.rmtree(target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.parent.chmod(0o700)
+    with tempfile.TemporaryDirectory(prefix='firmware-', dir=target.parent) as temporary:
+        work = Path(temporary)
+        root = work / 'root'
+        for item in recipe['outputs']:
+            destination = root / PurePosixPath(item['destination'])
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(outputs / item['sha256'], destination)
+        initramfs.write(initramfs.entries([root]), work / 'firmware.cpio.gz')
+        combined = work / 'initramfs.cpio.gz'
+        with combined.open('wb') as stream:
+            for part in (output / 'initramfs.cpio.gz', work / 'firmware.cpio.gz'):
+                stream.write(part.read_bytes())
+        assembly = receipt['assembly']
+        profile = work / 'boot.json'
+        profile.write_text(json.dumps({'bootargs': 'chosen.bootargs=' + assembly['bootargs'] + '\n'}))
+        image = work / 'image'
+        image.mkdir()
+        assemble(profile, Path(assembly['loader']), [Path(path) for path in assembly['dtbs']],
+                 Path(assembly['kernel']), combined, image / 'linux.bin')
+        shutil.copyfile(output / 'pongo.bin', image / 'pongo.bin')
+        layered = {**receipt, 'boards': [board], 'firmware': True,
+                   'files': {name: digest(image / name) for name in ('linux.bin', 'pongo.bin')}}
+        layered.pop('overlay', None)
+        layered['sources'] = {}
+        (image / 'build.json').write_text(json.dumps(layered, indent=2) + '\n')
+        image.rename(target)
+    return target
 
 
 def verify_ram(output):
     output = Path(output).resolve()
     receipt = json.loads((output / 'build.json').read_text())
-    if (receipt.get('kind') not in (None, 'orchard.ram-build') or not receipt.get('device') or
+    if 'device' in receipt and 'boards' not in receipt:  # built before payloads were per platform
+        receipt['boards'], receipt['platform'] = [receipt['device']], None
+    if (receipt.get('kind') not in (None, 'orchard.ram-build') or not receipt.get('boards') or
             set(receipt['files']) != {'linux.bin', 'pongo.bin'}):
         raise ValueError('Not a RAM-boot build')
     for name, expected in receipt['files'].items():

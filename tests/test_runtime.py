@@ -124,8 +124,10 @@ class Runtime(unittest.TestCase):
         record, assets = releases.resolve(FIXTURE / 'index.toml', 'j71b')
         self.assertEqual(record['release'], 'example-1')
         self.assertEqual(record['default_root'], '/first')
-        self.assertEqual(set(assets), {'pongo', 'recovery', 'root'})
+        self.assertEqual(set(assets), {'pongo', 'recovery', 'root', 'layer'})
+        self.assertEqual(record['platform'], 'apple-16k')
         self.assertEqual(record['assets']['root']['sha256'], digest(assets['root']))
+        self.assertEqual(record['assets']['layer']['sha256'], digest(assets['layer']))
 
     def test_developer_boot_does_not_resolve_root_archive(self):
         record, assets = releases.resolve(CLI / 'tests/fixtures/developer/develop.toml', 'j71b', purpose='boot')
@@ -145,18 +147,20 @@ class Runtime(unittest.TestCase):
             releases.resolve('not-published', 'j71b')
 
     def test_remote_index_manifest_and_assets_are_pinned_and_cached(self):
-        manifest = (FIXTURE / 'j71b-checkm8-pongo.toml').read_text()
+        manifest = (FIXTURE / 'release.toml').read_text()
         manifest = manifest.replace('file = "fixtures/root.tar.gz"', 'url = "https://example.invalid/root"')
         manifest = manifest.replace('file = "fixtures/boot-stub.txt"', 'url = "https://example.invalid/boot"')
+        manifest = manifest.replace('file = "fixtures/platform.tar.gz"', 'url = "https://example.invalid/layer"')
         manifest_bytes = manifest.encode()
-        index = ('schema=1\nkind="orchard.index"\ndistro="fixture-linux"\n'
-                 '[devices.j71b.checkm8-pongo]\nurl="https://example.invalid/manifest"\n'
+        index = ('schema=2\nkind="orchard.index"\ndistro="fixture-linux"\n'
+                 '[release]\nurl="https://example.invalid/manifest"\n'
                  f'bytes={len(manifest_bytes)}\nsha256="{hashlib.sha256(manifest_bytes).hexdigest()}"\n').encode()
         responses = {
             'https://example.invalid/index': index,
             'https://example.invalid/manifest': manifest_bytes,
             'https://example.invalid/root': (FIXTURE / 'fixtures/root.tar.gz').read_bytes(),
             'https://example.invalid/boot': (FIXTURE / 'fixtures/boot-stub.txt').read_bytes(),
+            'https://example.invalid/layer': (FIXTURE / 'fixtures/platform.tar.gz').read_bytes(),
         }
         def download(url, total, destination, **kwargs):
             Path(destination).write_bytes(responses[url])
@@ -165,11 +169,13 @@ class Runtime(unittest.TestCase):
             record, assets = releases.resolve('https://example.invalid/index', 'j71b')
             self.assertEqual(record['release'], 'example-1')
             self.assertEqual(request.call_count, 1)
-            self.assertEqual(transfer.call_count, 3) # manifest and two distinct blobs; shared Pongo downloads once.
+            self.assertEqual(transfer.call_count, 4) # manifest and three distinct blobs; shared Pongo downloads once.
             self.assertEqual(assets['root'].read_bytes(), responses['https://example.invalid/root'])
+            self.assertEqual(assets['layer'].read_bytes(), responses['https://example.invalid/layer'])
+            self.assertEqual(record['platform'], 'apple-16k')
             releases.resolve('https://example.invalid/index', 'j71b')
             self.assertEqual(request.call_count, 2) # refresh index; immutable files reuse receipts.
-            self.assertEqual(transfer.call_count, 3)
+            self.assertEqual(transfer.call_count, 4)
 
     @unittest.skipUnless(shutil.which('openssl'), 'openssl required for isolated loopback TLS test')
     def test_real_https_stack_downloads_index_manifest_and_assets(self):
@@ -203,15 +209,17 @@ class Runtime(unittest.TestCase):
         context.load_cert_chain(cert, key)
         server.socket = context.wrap_socket(server.socket, server_side=True)
         base = 'https://127.0.0.1:' + str(server.server_port)
-        manifest = (FIXTURE / 'j71b-checkm8-pongo.toml').read_text()
+        manifest = (FIXTURE / 'release.toml').read_text()
         manifest = manifest.replace('file = "fixtures/root.tar.gz"', 'url = "' + base + '/root"')
         manifest = manifest.replace('file = "fixtures/boot-stub.txt"', 'url = "' + base + '/boot"')
+        manifest = manifest.replace('file = "fixtures/platform.tar.gz"', 'url = "' + base + '/layer"')
         data = manifest.encode()
         responses['/manifest'] = data
         responses['/root'] = (FIXTURE / 'fixtures/root.tar.gz').read_bytes()
         responses['/boot'] = (FIXTURE / 'fixtures/boot-stub.txt').read_bytes()
-        responses['/index'] = ('schema=1\nkind="orchard.index"\ndistro="fixture-linux"\n'
-            '[devices.j71b.checkm8-pongo]\nurl="' + base + '/manifest"\n'
+        responses['/layer'] = (FIXTURE / 'fixtures/platform.tar.gz').read_bytes()
+        responses['/index'] = ('schema=2\nkind="orchard.index"\ndistro="fixture-linux"\n'
+            '[release]\nurl="' + base + '/manifest"\n'
             f'bytes={len(data)}\nsha256="{hashlib.sha256(data).hexdigest()}"\n').encode()
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -230,7 +238,7 @@ class Runtime(unittest.TestCase):
             thread.join()
 
     def test_remote_manifest_cannot_read_host_local_paths(self):
-        data = (FIXTURE / 'j71b-checkm8-pongo.toml').read_bytes()
+        data = (FIXTURE / 'release.toml').read_bytes()
         with patch('orchard.releases.open_url', return_value=io.BytesIO(data)):
             with self.assertRaisesRegex(ValueError, 'Remote manifests must use exact URLs'):
                 releases.resolve('https://example.invalid/manifest', 'j71b')
@@ -266,10 +274,11 @@ class Runtime(unittest.TestCase):
                                                      'http://example.invalid/file')
 
     def test_incompatible_minimum_protocol_device_and_layout_fail_before_assets(self):
-        original = (FIXTURE / 'j71b-checkm8-pongo.toml').read_text()
+        original = (FIXTURE / 'release.toml').read_text()
         for old, new in (('min_orchard = "0.1.0"', 'min_orchard = "999.0.0"'),
                          ('protocol = 1', 'protocol = 999'),
-                         ('device = "j71b"', 'device = "wrong-device"'),
+                         ('boards = ["j71b"]', 'boards = ["wrong-device"]'),
+                         ('[platforms.apple-16k]', '[platforms.apple-4k]'),
                          ('default_root = "/first"', 'default_root = "/"')):
             with self.subTest(new=new):
                 path = self.root / 'incompatible.toml'

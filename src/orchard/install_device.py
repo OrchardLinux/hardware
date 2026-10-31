@@ -32,6 +32,7 @@ import hashlib
 import io
 import json
 import os
+import re
 from pathlib import Path, PurePosixPath
 import stat
 import struct
@@ -392,7 +393,7 @@ def extract(source, destination, *, size, sha256, expanded_limit, compression):
 
 def check_plan(plan, info, partitions, free):
     """The plan's new partitions lie in free space or the removed partition, nowhere else."""
-    if plan.get('version') != 1:
+    if plan.get('version') != 2:
         raise InstallError('plan-version', 'Unsupported plan version')
     if info['table_sha256'] != plan['disk']['table_sha256'] or info['sector'] != plan['disk']['sector']:
         raise InstallError('layout-changed', 'The partition table changed since it was inspected; inspect again')
@@ -453,13 +454,73 @@ def write_text(path, text):
 
 
 def remove_old_entries(boot_root, partuuid):
+    """The entries of a replaced root, and the files only they name."""
     entries = boot_root / 'loader/entries'
-    removed = []
+    removed, files, kept = [], set(), set()
     for entry in sorted(entries.glob('*.conf')) if entries.is_dir() else []:
-        if f'root=PARTUUID={partuuid}' in entry.read_text(errors='replace'):
+        text = entry.read_text(errors='replace')
+        named = {line.strip().partition(' ')[2].strip().lstrip('/') for line in text.splitlines()
+                 if line.strip().partition(' ')[0] in ('linux', 'initrd', 'devicetree')}
+        if f'root=PARTUUID={partuuid}' in text:
             entry.unlink()
             removed.append(entry.name)
+            files |= named
+        else:
+            kept |= named
+    for name in sorted(files - kept):
+        path = boot_root / name
+        if '..' not in PurePosixPath(name).parts and path.is_file() and not path.is_symlink():
+            path.unlink()
+            for parent in path.parents:
+                if parent == boot_root or any(parent.iterdir()):
+                    break
+                parent.rmdir()
     return removed
+
+
+# A distribution's boot splash in its root; launch paints it (OSPL: see launch.py).
+SPLASH = 'usr/share/orchard/splash'
+
+def entry_token(entry, partuuid):
+    """The BLS entry token: the system's id and its root, so two installs never share files."""
+    return f'{entry["id"]}-{partuuid.split("-")[0]}'
+
+
+def write_entry(boot_root, root, version, entry, partuuid):
+    """Copy the platform layer's kernel, initrd and the board's DTB to the boot partition; write the entry.
+
+    orchard owns the kernel side of every installed system, so the entry
+    comes from the layer and not from the system's kernel-install
+    (docs/boot-contract.md). Files go to /TOKEN/VERSION/ and the entry to
+    /loader/entries/TOKEN-VERSION.conf, as the Boot Loader Specification
+    lays them out.
+    """
+    source = root / 'usr/lib/modules' / version
+    token = entry_token(entry, partuuid)
+    files = {'linux': source / 'vmlinuz', 'initrd': source / 'initrd',
+             entry['devicetree']: source / 'dtb' / entry['devicetree']}
+    # The system's boot splash (docs/boot-contract.md), if it ships one.
+    splash = root / SPLASH
+    extra = {'splash': splash} if splash.is_file() and not splash.is_symlink() else {}
+    for name, path in files.items():
+        if path.is_symlink() or not path.is_file():
+            raise InstallError('no-kernel', f'The platform layer lacks /{path.relative_to(root)}')
+    directory = boot_root / token / version
+    directory.mkdir(parents=True, exist_ok=True)
+    for name, path in {**files, **extra}.items():
+        with path.open('rb') as data, (directory / name).open('wb') as output:
+            while chunk := data.read(1 << 20):
+                output.write(chunk)
+            output.flush()
+            os.fsync(output.fileno())
+    options = f'root=PARTUUID={partuuid} rw {entry.get("options", "")}'.strip()
+    text = (f'title {entry["title"]}\nversion {version}\nsort-key {entry["id"]}\n'
+            f'linux /{token}/{version}/linux\ninitrd /{token}/{version}/initrd\n'
+            f'devicetree /{token}/{version}/{entry["devicetree"]}\noptions {options}\narchitecture aa64\n')
+    entries = boot_root / 'loader/entries'
+    entries.mkdir(parents=True, exist_ok=True)
+    write_text(entries / f'{token}-{version}.conf', text)
+    return token
 
 
 def check_entry(boot_root, partuuid, devicetree):
@@ -480,7 +541,48 @@ def check_entry(boot_root, partuuid, devicetree):
             if not (boot_root / path.strip().lstrip('/')).is_file():
                 raise InstallError('entry-invalid', f'{entry.name}: initrd {path} is missing')
         return entry.name
-    raise InstallError('entry-missing', 'The system did not write a boot entry for its root')
+    raise InstallError('entry-missing', 'No boot entry names this root')
+
+
+def install_layer(path, root, *, size, sha256, expanded_limit):
+    """Orchard's platform layer (kernel, DTBs, modules, /usr/lib defaults) into the new root.
+
+    Regular files under usr/lib/ and usr/share/licenses/ only, and none the
+    root image already has: the root image carries no kernel, and a
+    collision means the image and the layer disagree about who owns a file.
+    """
+    with open(path, 'rb') as stream:
+        data = stream.read(size + 1)
+    if len(data) != size or hashlib.sha256(data).hexdigest() != sha256:
+        raise InstallError('layer-mismatch', 'Platform layer size or hash differs from the plan')
+    root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    count = expanded = 0
+    try:
+        with tarfile.open(fileobj=io.BytesIO(data), mode='r:gz') as archive:
+            for member in archive:
+                name = safe_name(member.name)
+                if not (member.isfile() and name.startswith(('usr/lib/', 'usr/share/licenses/'))):
+                    raise InstallError('unsafe-archive', 'Platform layer may contain only files under /usr/lib')
+                expanded += member.size
+                if expanded > expanded_limit:
+                    raise InstallError('stream-too-long', 'Platform layer exceeds its expanded size')
+                parent, leaf = parent_fd(root_fd, name)
+                try:
+                    try:
+                        fd = os.open(leaf, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=parent)
+                    except FileExistsError:
+                        raise InstallError('layer-collision', f'The root image already has /{name}, '
+                                           'which the platform layer provides') from None
+                    with os.fdopen(fd, 'wb') as output:
+                        output.write(archive.extractfile(member).read())
+                        os.fchown(output.fileno(), 0, 0)
+                        os.fchmod(output.fileno(), 0o644)
+                    count += 1
+                finally:
+                    os.close(parent)
+    finally:
+        os.close(root_fd)
+    return count
 
 
 def install_firmware(bundle, root, *, size, sha256):
@@ -519,8 +621,8 @@ def install_firmware(bundle, root, *, size, sha256):
 
 # --- account -----------------------------------------------------------------
 
-def read_secrets(path):
-    """The password and PIN the CLI uploaded for this run; the file is deleted at once."""
+def read_secrets(path, account):
+    """The password and PIN ACCOUNT asks for, uploaded by the CLI for this run; deleted at once."""
     try:
         info = path.lstat()
     except FileNotFoundError:
@@ -532,22 +634,23 @@ def read_secrets(path):
     finally:
         path.unlink()
     password, pin = secrets.get('password'), secrets.get('pin')
-    if not isinstance(password, str) or not password or '\n' in password or '\0' in password:
+    if account['password'] and (not isinstance(password, str) or not password
+                                or '\n' in password or '\0' in password):
         raise InstallError('bad-password', 'The password is empty or contains a line break')
-    if not isinstance(pin, str) or len(pin) != 6 or not (pin.isascii() and pin.isdigit()):
+    if account['pin'] and (not isinstance(pin, str) or len(pin) != 6 or not (pin.isascii() and pin.isdigit())):
         raise InstallError('bad-pin', 'The PIN must be exactly 6 digits')
     return password, pin
 
 
-def account_user(root):
-    """The system's one regular user (UID 1000-59999): name, uid, gid."""
+def account_user(root, name):
+    """The system's one regular user (UID 1000-59999), which must be NAME: name, uid, gid, home."""
     users = []
     for line in (root / 'etc/passwd').read_text().splitlines():
         fields = line.split(':')
         if len(fields) == 7 and fields[2].isdigit() and fields[3].isdigit() and 1000 <= int(fields[2]) < 60000:
-            users.append((fields[0], int(fields[2]), int(fields[3])))
-    if len(users) != 1:
-        raise InstallError('account-user', f'The system image needs exactly one regular user, '
+            users.append((fields[0], int(fields[2]), int(fields[3]), fields[5]))
+    if len(users) != 1 or users[0][0] != name:
+        raise InstallError('account-user', f'The system image needs exactly one regular user, {name}, '
                                            f'found {[u[0] for u in users]}')
     return users[0]
 
@@ -561,9 +664,40 @@ def write_file(path, text, mode, group=0):
         out.write(text)
 
 
-def set_account(root, password, pin):
-    user, uid, gid = account_user(root)
-    run('chroot', str(root), 'chpasswd', input=f'{user}:{password}\n'.encode())
+def set_account(root, account, password, pin):
+    """Set what ACCOUNT declares: password, lock-screen PIN, sudo without a password."""
+    user, uid, gid, home = account_user(root, account['user'])
+    if account.get('ssh_keys'):
+        set_ssh_keys(root, home, uid, gid, account['ssh_keys'])
+    if account['password']:
+        run('chroot', str(root), 'chpasswd', input=f'{user}:{password}\n'.encode())
+    if account['passwordless_sudo']:
+        # Plain sudo, any init system; that the image has sudo is the distribution's part.
+        write_file(root / 'etc/sudoers.d/orchard', f'{user} ALL=(ALL:ALL) NOPASSWD: ALL\n', 0o440)
+    if account['pin']:
+        set_pin(root, user, uid, gid, pin)
+    return user
+
+
+def set_ssh_keys(root, home, uid, gid, keys):
+    """The keys the installing computer may sign in with: HOME/.ssh/authorized_keys."""
+    if not home.startswith('/') or '..' in home.split('/'):
+        raise InstallError('account-home', f'Unusable home directory {home!r}')
+    for key in keys:
+        if not re.fullmatch(r'(ssh-ed25519|ecdsa-sha2-nistp(256|384|521)|ssh-rsa) [A-Za-z0-9+/=]{60,1024}', key):
+            raise InstallError('ssh-key', 'An SSH key to import is malformed')
+    directory = root / home.lstrip('/') / '.ssh'
+    for path in (directory.parent, directory):
+        if path.is_symlink():
+            raise InstallError('account-home', f'{path} is a link')
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chown(directory, uid, gid)
+    directory.chmod(0o700)
+    write_file(directory / 'authorized_keys', ''.join(key + '\n' for key in keys), 0o600, group=gid)
+    os.chown(directory / 'authorized_keys', uid, gid)
+
+
+def set_pin(root, user, uid, gid, pin):
     digest = run('chroot', str(root), 'openssl', 'passwd', '-6', '-stdin', input=pin.encode()).decode().strip()
     if not digest.startswith('$6$') or ':' in digest or '\n' in digest:
         raise InstallError('pin-hash', 'openssl in the system image did not return a SHA-512 crypt hash')
@@ -579,7 +713,6 @@ def set_account(root, password, pin):
     write_file(root / 'usr/lib/orchard/pin-check', PIN_CHECK, 0o755)
     for service in ('greetd', 'omarchy-lock-password'):
         write_file(root / 'etc/pam.d' / service, PIN_PAM, 0o644)
-    return user
 
 
 def kernel_version(root):
@@ -596,7 +729,8 @@ def install(plan, stream):
     disk = plan['disk']['path']
     if os.geteuid() != 0:
         raise InstallError('not-root', 'The installer must run as root')
-    secrets = read_secrets(SECRETS) if plan.get('account') else None
+    account = plan.get('account')
+    secrets = read_secrets(SECRETS, account) if account and (account['password'] or account['pin']) else None
     info, partitions, free = read_gpt(disk)
     check_plan(plan, info, partitions, free)
     check_quiet(disk, partitions)
@@ -628,6 +762,11 @@ def install(plan, stream):
                          expanded_limit=plan['root']['blocks'] * info['sector'],
                          compression=plan['image'].get('compression', 'zstd'))
         emit('step', step='extract-root', state='done', **result)
+        layer = plan['layer']
+        files = install_layer(layer['path'], TARGET, size=layer['bytes'], sha256=layer['sha256'],
+                              expanded_limit=layer['expanded_bytes'])
+        Path(layer['path']).unlink()
+        emit('step', step='platform-layer', state='done', files=files)
         firmware = plan.get('firmware')
         if firmware:
             with open(firmware['path'], 'rb') as bundle:
@@ -642,12 +781,6 @@ def install(plan, stream):
             gone = remove_old_entries(boot_mount, plan['remove']['partuuid'])
             emit('step', step='remove-old-entries', state='done', entries=gone)
         entry = plan['entry']
-        write_text(TARGET / 'etc/kernel/cmdline',
-                   f'root=PARTUUID={plan["root"]["partuuid"]} rw {entry.get("options", "")}'.strip() + '\n')
-        write_text(TARGET / 'etc/kernel/entry-token', entry['id'] + '\n')
-        # One root serves every board of its kernel platform; kernel-install
-        # copies the DTB this file names (see hardware docs/boot-contract.md).
-        write_text(TARGET / 'etc/kernel/devicetree', entry['devicetree'] + '\n')
         write_text(TARGET / 'etc/fstab',
                    f'PARTUUID={plan["root"]["partuuid"]} / ext4 rw,relatime 0 1\n'
                    f'PARTUUID={plan["boot"]["partuuid"]} /boot vfat rw,relatime,fmask=0077,dmask=0077 0 2\n')
@@ -656,12 +789,11 @@ def install(plan, stream):
             point.mkdir(exist_ok=True)
             run('mount', '-t', fs, name, str(point))
             mounts.append(point)
-        if secrets:
-            emit('step', step='account', state='done', user=set_account(TARGET, *secrets))
+        if account:
+            emit('step', step='account', state='done', user=set_account(TARGET, account, *(secrets or (None, None))))
             secrets = None
         version = kernel_version(TARGET)
-        kernel = f'/usr/lib/modules/{version}/vmlinuz'
-        run('chroot', str(TARGET), 'kernel-install', 'add', version, kernel, timeout=600)
+        write_entry(boot_mount, TARGET, version, entry, plan['root']['partuuid'])
         name = check_entry(boot_mount, plan['root']['partuuid'], entry['devicetree'])
         emit('step', step='boot-entry', state='done', entry=name)
     finally:

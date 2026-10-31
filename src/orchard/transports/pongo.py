@@ -59,6 +59,10 @@ class DeviceDescriptor(C.Structure):
                 ('iSerialNumber', C.c_uint8), ('bNumConfigurations', C.c_uint8)]
 
 
+# glu (a Homebrew-bottle installer) when it is not on PATH; its packages live below it.
+GLU = '/opt/glustore/bin/glu'
+
+
 def library_path():
     candidates = [find_library('usb-1.0')]
     pkg_config = shutil.which('pkg-config')
@@ -80,6 +84,9 @@ def library_path():
                 candidates.append(str(Path(prefix) / 'lib/libusb-1.0.dylib'))
             except (OSError, subprocess.SubprocessError):
                 pass
+        glu = shutil.which('glu') or (GLU if Path(GLU).is_file() else None)
+        if glu:
+            candidates.append(str(Path(glu).resolve().parents[1] / 'lib/libusb-1.0.dylib'))
         candidates.append('libusb-1.0.dylib')
     else:
         candidates.append('libusb-1.0.so.0')

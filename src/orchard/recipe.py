@@ -108,10 +108,12 @@ class UnsupportedRecipe(ValueError):
 
 
 def check(recipe):
-    """Validate the recipe against the hardware schema, then its steps (host side)."""
-    from orchard.manifests import firmware_schema
-    import jsonschema
-    jsonschema.validate(recipe, firmware_schema(), cls=jsonschema.Draft202012Validator)
+    """Validate the recipe against the hardware schema where jsonschema is installed, then its steps (host side)."""
+    from orchard.manifests import firmware_schema, schema_validator
+    validator = schema_validator()
+    if validator is not None:
+        import jsonschema
+        jsonschema.validate(recipe, firmware_schema(), cls=validator)
     return supported(recipe)
 
 

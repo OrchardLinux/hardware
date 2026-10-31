@@ -10,7 +10,12 @@ readme = "README.md"
 license = "GPL-2.0-only AND GPL-2.0-or-later AND MIT AND ISC"
 license-files = ["LICENSE", "NOTICE", "LICENSES/*"]
 requires-python = ">=3.11"
-dependencies = ["jsonschema>=4.25,<5"]
+# The core (install, launch) needs only the standard library; jsonschema
+# validates manifests and descriptors in development and release CI.
+dependencies = []
+
+[project.optional-dependencies]
+validate = ["jsonschema>=4.25,<5"]
 
 [project.urls]
 Repository = "https://github.com/OrchardLinux/orchard"
@@ -35,7 +40,7 @@ where = ["src"]
 orchard = ["py.typed", "usb-session"]
 
 [dependency-groups]
-dev = ["mypy==1.18.2"]
+dev = ["mypy==1.18.2", "jsonschema>=4.25,<5"]
 
 [tool.mypy]
 python_version = "3.11"

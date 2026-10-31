@@ -1,0 +1,33 @@
+#!/bin/sh
+# One command after cloning: everything this host needs to build and boot.
+# Shows what it will do and asks first; safe to rerun until everything is ready.
+set -eu
+root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+ask() {
+    printf '%s [Y/n] ' "$1"
+    read -r answer || answer=n
+    case $answer in ''|y|Y|yes) return 0 ;; *) return 1 ;; esac
+}
+
+# uv runs orchard; everything else is orchard's own `setup`.
+if ! command -v uv >/dev/null 2>&1; then
+    glu=$(command -v glu || { [ -x /opt/glustore/bin/glu ] && echo /opt/glustore/bin/glu; } || true)
+    if [ "$(uname -s)" = Darwin ]; then
+        if [ -n "$glu" ]; then install="$glu install --yes uv"
+        elif command -v brew >/dev/null 2>&1; then install='brew install uv'
+        else
+            echo 'Orchard needs uv. Install glu or Homebrew (https://brew.sh) first, then rerun ./setup.' >&2
+            exit 1
+        fi
+    elif command -v pacman >/dev/null 2>&1; then install='sudo pacman -S --needed --noconfirm uv'
+    elif command -v dnf >/dev/null 2>&1; then install='sudo dnf install -y uv'
+    else install='curl -LsSf https://astral.sh/uv/install.sh | sh'
+    fi
+    echo "Orchard needs uv, which runs it. Setup will run: $install"
+    ask 'Install uv?' || { echo 'Nothing changed.'; exit 1; }
+    sh -c "$install"
+    PATH="$HOME/.local/bin:$PATH"
+    command -v uv >/dev/null 2>&1 || { echo 'uv is still not found; open a new shell and rerun ./setup.' >&2; exit 1; }
+fi
+exec "$root/bin/orchard" setup "$@"
