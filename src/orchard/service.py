@@ -88,43 +88,37 @@ def entry_for(record, devicetree):
             'options': record.get('cmdline', 'rootwait'), 'devicetree': devicetree}
 
 
-def wait_ready(connection, ready, progress, seconds=180):
-    """Wait until the started system has created READY, over the session's pinned SSH."""
-    progress.step('Waiting until it is ready')
+def check_started(connection, user, ready, progress, seconds=180):
+    """Whether the started system is up, over its own SSH with this computer's key.
+
+    Only a report: it never changes the system. Until the switch the recovery
+    still answers, and a refused start is reported at once.
+    """
+    from . import computer_key
+    progress.step('Waiting until it is up')
+    system = computer_key.ssh_argv(user)
+    command = 'test -e ' + shlex.quote(ready) if ready else 'true'
+    recovery = True
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         try:
-            # Until the switch the recovery answers: a refused start is reported at once.
-            result = subprocess.run(connection.argv + [
-                'test -e ' + shlex.quote(ready) + ' && exit 0; '
-                '[ -e /run/orchard/start.failed ] && { cat /run/orchard/start.log; exit 3; }; exit 1'],
-                stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
+            if recovery:
+                result = subprocess.run(connection.argv + [
+                    '[ -e /run/orchard/start.failed ] && { cat /run/orchard/start.log; exit 3; }; exit 0'],
+                    stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
+                if result.returncode == 3:
+                    return 'The recovery could not start the system: ' + \
+                        result.stdout.decode(errors='replace').strip()[-400:]
+                recovery = result.returncode == 0
+            result = subprocess.run(system + [command], stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
             if result.returncode == 0:
-                return
-            if result.returncode == 3:
-                raise RuntimeError('The system was installed, but the recovery could not start it: '
-                                   + result.stdout.decode(errors='replace').strip()[-500:]
-                                   + ' Start it with orchard launch.')
-            error = result.stderr.decode(errors='replace').lower()
-            if 'permission denied' in error or 'host key verification failed' in error:
-                # The system serves SSH but not this session's key: waiting does not help.
-                raise RuntimeError('The system was installed and started, but its SSH does not accept '
-                                   "this session's key, so readiness cannot be checked. "
-                                   + result.stderr.decode(errors='replace').strip()[-300:])
+                return None
+            if 'permission denied' in result.stderr.decode(errors='replace').lower():
+                return "The system's SSH does not accept this computer's key"
         except subprocess.TimeoutExpired:
             pass
         time.sleep(1)
-    raise RuntimeError('The system was installed and started, but did not report that it is ready. '
-                       'Do not reinstall for this; start it with orchard launch to see its console.')
-
-
-def revoke_ssh(connection):
-    """Empty the session key the started system took over; open sessions end with this one."""
-    result = subprocess.run(connection.argv + [': > /run/recovery/authorized_keys'],
-                            stdin=subprocess.DEVNULL, capture_output=True, timeout=20)
-    if result.returncode:
-        raise RuntimeError('The system is ready, but SSH access could not be removed; '
-                           'restart the device to end this boot session')
+    return 'The system did not answer over SSH within 3 minutes'
 
 
 @exclusive_operation
@@ -181,6 +175,12 @@ def install(manifest=None, *, input_fn=input, secrets_fn=ask_secrets, progress=N
         if account and (account['password'] or account['pin']):
             with clock.exclude('input'):
                 secrets = secrets_fn(account) if secrets_fn is not ask_secrets else ask_secrets(account, say=progress.say)
+        if account:
+            # Like an OS installer's key import: this computer may sign in over SSH.
+            answer = ask(clock, 'Allow SSH logins from this computer? [Y/n] ', input_fn)
+            from . import computer_key
+            account = {**account, 'ssh_keys': computer_key.public_keys()
+                       if answer.lower() in ('', 'y', 'yes') else []}
         progress.section('Installing ' + name)
         progress.step('Preparing the installation')
         with tempfile.TemporaryDirectory(prefix='installation-', dir=private) as directory:
@@ -213,31 +213,21 @@ def install(manifest=None, *, input_fn=input, secrets_fn=ask_secrets, progress=N
         save_report(path, report)
         # The recovery runs the same kernel the new entry boots, so it switches
         # into the new root right away: the first start needs no second DFU boot.
-        # A release that declares `ready` keeps this session's SSH key until
-        # the started system is ready; then the user decides whether it stays.
-        ready = record.get('ready')
+        # The switch adds nothing: the system boots as from its own entry.
         progress.done('Installed')
         progress.section('Starting ' + name)
-        Client(connection, progress).call('start', {'root': report['root'], 'boot': report['boot'],
-                                                    'keep_ssh': bool(ready)})
+        Client(connection, progress).call('start', {'root': report['root'], 'boot': report['boot']})
         report['started'] = True
         save_report(path, report)
-        if ready:
-            wait_ready(connection, ready, progress)
-            progress.done()
-            report['ready'] = True
-            try:
-                answer = ask(clock, 'Keep SSH access for this boot session? [y/N] ', input_fn)
-            except EOFError:
-                answer = ''
-            if answer.lower() in ('y', 'yes'):
-                report['ssh_access'] = 'retained'
-            else:
-                revoke_ssh(connection)
-                report['ssh_access'] = 'revoked'
+        if account and account['ssh_keys']:
+            problem = check_started(connection, account['user'], record.get('ready'), progress)
+            progress.done(problem)
+            report['ready'] = problem is None
         report['phases'] = progress.timings
         save_report(path, report)
     progress.done()
-    progress.say(f'\n{name} is {"ready" if report.get("ready") else "starting"}. '
+    login = (f'\nSign in over SSH: ssh {account["user"]}@172.16.42.1'
+             if report.get('ready') and account and account['ssh_keys'] else '')
+    progress.say(f'\n{name} is {"ready" if report.get("ready") else "starting"}.{login}\n'
                  'To start it again later, put the device in DFU mode and run: orchard launch')
     return report

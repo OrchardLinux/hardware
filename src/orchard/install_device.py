@@ -32,6 +32,7 @@ import hashlib
 import io
 import json
 import os
+import re
 from pathlib import Path, PurePosixPath
 import stat
 import struct
@@ -636,12 +637,12 @@ def read_secrets(path, account):
 
 
 def account_user(root, name):
-    """The system's one regular user (UID 1000-59999), which must be NAME: name, uid, gid."""
+    """The system's one regular user (UID 1000-59999), which must be NAME: name, uid, gid, home."""
     users = []
     for line in (root / 'etc/passwd').read_text().splitlines():
         fields = line.split(':')
         if len(fields) == 7 and fields[2].isdigit() and fields[3].isdigit() and 1000 <= int(fields[2]) < 60000:
-            users.append((fields[0], int(fields[2]), int(fields[3])))
+            users.append((fields[0], int(fields[2]), int(fields[3]), fields[5]))
     if len(users) != 1 or users[0][0] != name:
         raise InstallError('account-user', f'The system image needs exactly one regular user, {name}, '
                                            f'found {[u[0] for u in users]}')
@@ -659,7 +660,9 @@ def write_file(path, text, mode, group=0):
 
 def set_account(root, account, password, pin):
     """Set what ACCOUNT declares: password, lock-screen PIN, sudo without a password."""
-    user, uid, gid = account_user(root, account['user'])
+    user, uid, gid, home = account_user(root, account['user'])
+    if account.get('ssh_keys'):
+        set_ssh_keys(root, home, uid, gid, account['ssh_keys'])
     if account['password']:
         run('chroot', str(root), 'chpasswd', input=f'{user}:{password}\n'.encode())
     if account['passwordless_sudo']:
@@ -668,6 +671,24 @@ def set_account(root, account, password, pin):
     if account['pin']:
         set_pin(root, user, uid, gid, pin)
     return user
+
+
+def set_ssh_keys(root, home, uid, gid, keys):
+    """The keys the installing computer may sign in with: HOME/.ssh/authorized_keys."""
+    if not home.startswith('/') or '..' in home.split('/'):
+        raise InstallError('account-home', f'Unusable home directory {home!r}')
+    for key in keys:
+        if not re.fullmatch(r'(ssh-ed25519|ecdsa-sha2-nistp(256|384|521)|ssh-rsa) [A-Za-z0-9+/=]{60,1024}', key):
+            raise InstallError('ssh-key', 'An SSH key to import is malformed')
+    directory = root / home.lstrip('/') / '.ssh'
+    for path in (directory.parent, directory):
+        if path.is_symlink():
+            raise InstallError('account-home', f'{path} is a link')
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chown(directory, uid, gid)
+    directory.chmod(0o700)
+    write_file(directory / 'authorized_keys', ''.join(key + '\n' for key in keys), 0o600, group=gid)
+    os.chown(directory / 'authorized_keys', uid, gid)
 
 
 def set_pin(root, user, uid, gid, pin):
