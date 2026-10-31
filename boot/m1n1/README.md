@@ -4,9 +4,8 @@
 ordered patch layers in `series` and compiles `m1n1.bin` with chainloading
 enabled. Git and Podman are required.
 
-```sh
-./boot/m1n1/build j71b --output out/m1n1.bin
-```
+`orchard build` and `orchard run` run it with their cache directories; don't
+call it directly (see [AGENTS.md](../../AGENTS.md)).
 
 Layers, in order:
 

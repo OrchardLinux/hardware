@@ -42,11 +42,29 @@ def public_keys():
     return keys
 
 
-def ssh_argv(user, host='172.16.42.1', timeout=8):
-    """SSH to an installed system with orchard's key. A new install has new host
-    keys, so the host's entry is learned again, then pinned."""
+def remember_user(user):
+    """The installed system's user this computer's key signs in as (orchard shell/exec)."""
+    path = directory() / 'user'
+    path.write_text(user + '\n')
+    path.chmod(0o600)
+
+
+def user():
+    try:
+        return (directory() / 'user').read_text().strip() or None
+    except FileNotFoundError:
+        return None
+
+
+def ssh_argv(user, host='172.16.42.1', timeout=8, *, forget=False):
+    """SSH to an installed system with orchard's key, its host key pinned.
+
+    FORGET drops the pinned host key first: a new install has new host keys,
+    which are then learned again on the first connection.
+    """
     hosts = directory() / 'known_hosts'
-    subprocess.run(['ssh-keygen', '-R', host, '-f', str(hosts)], capture_output=True, timeout=10)
+    if forget:
+        subprocess.run(['ssh-keygen', '-R', host, '-f', str(hosts)], capture_output=True, timeout=10)
     return ['ssh', '-i', str(identity()), '-o', 'IdentitiesOnly=yes', '-o', 'BatchMode=yes',
             '-o', f'UserKnownHostsFile="{hosts}"', '-o', 'StrictHostKeyChecking=accept-new',
             '-o', 'ConnectTimeout=' + str(timeout), f'{user}@{host}']

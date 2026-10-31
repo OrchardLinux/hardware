@@ -81,6 +81,7 @@ class InstallFlow(unittest.TestCase):
              patch('orchard.service.resolve', return_value=(record, {'root': image, 'layer': layer})), \
              patch('orchard.service.Client', return_value=status), \
              patch('orchard.computer_key.public_keys', return_value=['ssh-ed25519 ' + 'A' * 68]), \
+             patch('orchard.computer_key.remember_user') as remembered, \
              patch('orchard.service.check_started', return_value=None) as check, \
              patch('orchard.state.cache_root', return_value=root / 'cache'):
             output = io.StringIO()

@@ -7,7 +7,7 @@ is `apple-4k`, selecting the upstream `t7000-n61` DTB and 4 KiB ARM64 pages.
 Build the public kernel components from this repository:
 
 ```sh
-./kernel/build n61 --output out/kernel/n61
+orchard build --device n61
 ```
 
 The platform references Orchard's shared patch layers. Kernel output contains
