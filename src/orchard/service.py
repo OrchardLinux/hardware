@@ -94,10 +94,17 @@ def wait_ready(connection, ready, progress, seconds=180):
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         try:
-            result = subprocess.run(connection.argv + ['test -e ' + shlex.quote(ready)],
-                                    stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
+            # Until the switch the recovery answers: a refused start is reported at once.
+            result = subprocess.run(connection.argv + [
+                'test -e ' + shlex.quote(ready) + ' && exit 0; '
+                '[ -e /run/orchard/start.failed ] && { cat /run/orchard/start.log; exit 3; }; exit 1'],
+                stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
             if result.returncode == 0:
                 return
+            if result.returncode == 3:
+                raise RuntimeError('The system was installed, but the recovery could not start it: '
+                                   + result.stdout.decode(errors='replace').strip()[-500:]
+                                   + ' Start it with orchard launch.')
             error = result.stderr.decode(errors='replace').lower()
             if 'permission denied' in error or 'host key verification failed' in error:
                 # The system serves SSH but not this session's key: waiting does not help.
