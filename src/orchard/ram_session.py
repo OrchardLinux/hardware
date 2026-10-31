@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import shlex
 import subprocess
+import sys
 import time
 
 from .serial import SerialError, SerialPort
@@ -116,6 +117,29 @@ def _remote_sha256(text):
     return match.group(1)
 
 
+def _transfer(argv, command, *, stdin=None, stdout=None):
+    """Run one transfer over SSH; on a dropped connection (exit 255), connect again and retry once.
+
+    The device can stall long enough under load (a busy GPU) for SSH's
+    keepalive to give up. Both attempts start the stream from the beginning.
+    """
+    for attempt in (1, 2):
+        if stdin is not None:
+            stdin.seek(0)
+        if stdout is not None:
+            stdout.seek(0)
+            stdout.truncate()
+        result = subprocess.run([*argv, command], stdin=stdin, stdout=stdout)
+        if result.returncode == 0:
+            return argv
+        if result.returncode != 255 or attempt == 2:
+            break
+        print('orchard: the connection to the device dropped; connecting again', file=sys.stderr)
+        argv = connect()
+    raise ValueError('The transfer failed: the connection to the device dropped twice'
+                     if result.returncode == 255 else f'The transfer failed on the device (exit {result.returncode})')
+
+
 def push(local, remote, *, serial=False):
     """Copy a host file to the payload, written atomically and checked by SHA-256."""
     local, expected = Path(local), _sha256(local)
@@ -135,7 +159,7 @@ def push(local, remote, *, serial=False):
     else:
         argv = connect()
         with local.open('rb') as stream:
-            subprocess.run([*argv, f'cat > {quoted_part}'], stdin=stream, check=True)
+            argv = _transfer(argv, f'cat > {quoted_part}', stdin=stream)
         reply = subprocess.run([*argv, f'sha256sum {quoted_part}'], capture_output=True, text=True, check=True)
         actual = _remote_sha256(reply.stdout)
         if actual == expected:
@@ -162,8 +186,8 @@ def pull(remote, local, *, serial=False):
         argv = connect()
         reply = subprocess.run([*argv, f'sha256sum {quoted}'], capture_output=True, text=True, check=True)
         expected = _remote_sha256(reply.stdout)
-        with partial.open('wb') as stream:
-            subprocess.run([*argv, f'cat {quoted}'], stdout=stream, check=True)
+        with partial.open('w+b') as stream:
+            _transfer(argv, f'cat {quoted}', stdout=stream)
     if _sha256(partial) != expected:
         raise ValueError(f'{remote}: checksum mismatch after transfer; left as {partial}')
     partial.replace(local)
