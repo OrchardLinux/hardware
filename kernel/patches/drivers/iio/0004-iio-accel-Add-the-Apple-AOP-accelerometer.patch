@@ -1,0 +1,358 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Henrik Klee <henrik@goat-code.com>
+Date: Sat, 31 Oct 2026 18:35:50 +0000
+Subject: [PATCH] iio: accel: Add the Apple AOP accelerometer
+
+The Always-On Processor of Apple A10 devices samples the accelerometer
+(an InvenSense MPU-6900 on the iPad 6) and reports to the application
+processor once its batch, raw and report intervals are set, in that
+order, as iPadOS's AppleSPUHIDDriver does (EPIC set-property tags 0x16,
+0x5c and 0). Each motion report carries x, y and z in 1/65536 g in the
+device frame: x right, y up, z out of the screen, +1 g opposite to
+gravity.
+
+Expose them as an IIO accelerometer: raw values, scale, sampling
+frequency (the report interval), a software buffer with timestamps and
+the standard mount-matrix, which is the identity unless the device tree
+says otherwise.
+
+The enable sequence and the report format were worked out on an iPad 6
+(J71b): flat, upright and in all four orientations the axis pointing up
+reads +1 g.
+
+Assisted-by: LLM
+---
+ drivers/iio/accel/Kconfig           |  12 ++
+ drivers/iio/accel/Makefile          |   1 +
+ drivers/iio/accel/apple_aop_accel.c | 284 ++++++++++++++++++++++++++++
+ 3 files changed, 297 insertions(+)
+ create mode 100644 drivers/iio/accel/apple_aop_accel.c
+
+diff --git a/drivers/iio/accel/Kconfig b/drivers/iio/accel/Kconfig
+index 4094299..b015981 100644
+--- a/drivers/iio/accel/Kconfig
++++ b/drivers/iio/accel/Kconfig
+@@ -206,6 +206,18 @@ config ADXL380_I2C
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called adxl380_i2c.
+ 
++config APPLE_AOP_ACCEL
++	tristate "Apple AOP accelerometer"
++	depends on APPLE_AOP_T8010
++	select IIO_BUFFER
++	select IIO_KFIFO_BUF
++	help
++	  Say yes here to get support for the accelerometer that the Always-On
++	  Processor (AOP) of Apple A10 iPads and iPhones serves.
++
++	  To compile this driver as a module, choose M here: the module will be
++	  called apple_aop_accel.
++
+ config BMA180
+ 	tristate "Bosch BMA023/BMA1x0/BMA250 3-Axis Accelerometer Driver"
+ 	depends on I2C && INPUT_BMA150=n
+diff --git a/drivers/iio/accel/Makefile b/drivers/iio/accel/Makefile
+index fa440a8..dc4778d 100644
+--- a/drivers/iio/accel/Makefile
++++ b/drivers/iio/accel/Makefile
+@@ -24,6 +24,7 @@ obj-$(CONFIG_ADXL372_SPI) += adxl372_spi.o
+ obj-$(CONFIG_ADXL380) += adxl380.o
+ obj-$(CONFIG_ADXL380_I2C) += adxl380_i2c.o
+ obj-$(CONFIG_ADXL380_SPI) += adxl380_spi.o
++obj-$(CONFIG_APPLE_AOP_ACCEL) += apple_aop_accel.o
+ obj-$(CONFIG_BMA180) += bma180.o
+ obj-$(CONFIG_BMA220) += bma220_core.o
+ obj-$(CONFIG_BMA220_I2C) += bma220_i2c.o
+diff --git a/drivers/iio/accel/apple_aop_accel.c b/drivers/iio/accel/apple_aop_accel.c
+new file mode 100644
+index 0000000..27f6fd1
+--- /dev/null
++++ b/drivers/iio/accel/apple_aop_accel.c
+@@ -0,0 +1,284 @@
++// SPDX-License-Identifier: GPL-2.0-only OR MIT
++/*
++ * Accelerometer served by the Apple Always-On Processor (AOP)
++ *
++ * The AOP firmware samples the accelerometer itself and, once its batch, raw
++ * and report intervals are set (EPIC set-property tags 0x16, 0x5c and 0, in
++ * that order, as iPadOS does), sends one motion report (EPIC subtype 0xc2)
++ * per report interval:
++ *
++ *   0  u32 sequence
++ *   4  u16 reserved
++ *   6  s32 x, y, z in 1/65536 g, in the device frame (x right, y up,
++ *      z out of the screen; +1 g opposite to gravity)
++ *  18  u32 timestamp
++ */
++
++#include <linux/iio/buffer.h>
++#include <linux/iio/iio.h>
++#include <linux/iio/kfifo_buf.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/platform_device.h>
++#include <linux/soc/apple/aop.h>
++#include <linux/spinlock.h>
++#include <linux/unaligned.h>
++
++#define AOP_SET_PROPERTY		0x4
++#define AOP_PROP_REPORT_INTERVAL	0x00
++#define AOP_PROP_BATCH_INTERVAL		0x16
++#define AOP_PROP_RAW_INTERVAL		0x5c
++
++#define AOP_REPORT_MOTION		0xc2
++#define AOP_MOTION_LEN			22
++#define AOP_MOTION_XYZ			6
++
++#define AOP_ACCEL_DEFAULT_US		100000	/* 10 Hz */
++#define AOP_ACCEL_MIN_US		10000	/* 100 Hz */
++#define AOP_ACCEL_MAX_US		1000000	/* 1 Hz */
++
++/* 9.80665 m/s^2 / 65536 */
++#define AOP_ACCEL_SCALE_NANO		149637
++
++struct apple_aop_accel {
++	struct device *dev;
++	const struct apple_aop_service *service;
++	struct iio_mount_matrix orientation;
++
++	struct mutex lock; /* interval */
++	u32 interval_us;
++
++	spinlock_t sample_lock; /* sample, have_sample */
++	s32 sample[3];
++	bool have_sample;
++
++	IIO_DECLARE_BUFFER_WITH_TS(s32, scan, 3);
++};
++
++static int apple_aop_accel_set_property(struct apple_aop_accel *accel, u32 tag, u32 value)
++{
++	__le32 buf[3] = { 0, cpu_to_le32(tag), cpu_to_le32(value) };
++	int ret;
++
++	ret = apple_aop_call(accel->service, AOP_SET_PROPERTY, buf, sizeof(buf), NULL, 0);
++	if (ret > 0)
++		ret = -EIO;
++	return ret;
++}
++
++static int apple_aop_accel_set_interval(struct apple_aop_accel *accel, u32 interval_us)
++{
++	static const u32 tags[] = {
++		AOP_PROP_BATCH_INTERVAL, AOP_PROP_RAW_INTERVAL, AOP_PROP_REPORT_INTERVAL,
++	};
++	int i, ret;
++
++	for (i = 0; i < ARRAY_SIZE(tags); i++) {
++		ret = apple_aop_accel_set_property(accel, tags[i], interval_us);
++		if (ret)
++			return ret;
++	}
++	accel->interval_us = interval_us;
++	return 0;
++}
++
++static void apple_aop_accel_report(void *cookie, u16 subtype, const void *data, size_t len)
++{
++	struct iio_dev *indio_dev = cookie;
++	struct apple_aop_accel *accel = iio_priv(indio_dev);
++	unsigned long flags;
++	int i;
++
++	if (subtype != AOP_REPORT_MOTION || len < AOP_MOTION_LEN)
++		return;
++
++	spin_lock_irqsave(&accel->sample_lock, flags);
++	for (i = 0; i < 3; i++)
++		accel->sample[i] = get_unaligned_le32(data + AOP_MOTION_XYZ + 4 * i);
++	accel->have_sample = true;
++	spin_unlock_irqrestore(&accel->sample_lock, flags);
++
++	if (iio_buffer_enabled(indio_dev)) {
++		memcpy(accel->scan, accel->sample, sizeof(accel->sample));
++		iio_push_to_buffers_with_ts(indio_dev, accel->scan, sizeof(accel->scan),
++					    iio_get_time_ns(indio_dev));
++	}
++}
++
++static int apple_aop_accel_read_raw(struct iio_dev *indio_dev,
++				    struct iio_chan_spec const *chan,
++				    int *val, int *val2, long mask)
++{
++	struct apple_aop_accel *accel = iio_priv(indio_dev);
++	unsigned long flags;
++	int ret;
++
++	switch (mask) {
++	case IIO_CHAN_INFO_RAW:
++		spin_lock_irqsave(&accel->sample_lock, flags);
++		*val = accel->sample[chan->scan_index];
++		ret = accel->have_sample ? IIO_VAL_INT : -EAGAIN;
++		spin_unlock_irqrestore(&accel->sample_lock, flags);
++		return ret;
++	case IIO_CHAN_INFO_SCALE:
++		*val = 0;
++		*val2 = AOP_ACCEL_SCALE_NANO;
++		return IIO_VAL_INT_PLUS_NANO;
++	case IIO_CHAN_INFO_SAMP_FREQ:
++		mutex_lock(&accel->lock);
++		*val = USEC_PER_SEC / accel->interval_us;
++		*val2 = (u64)(USEC_PER_SEC % accel->interval_us) * USEC_PER_SEC /
++			accel->interval_us;
++		mutex_unlock(&accel->lock);
++		return IIO_VAL_INT_PLUS_MICRO;
++	default:
++		return -EINVAL;
++	}
++}
++
++static int apple_aop_accel_write_raw(struct iio_dev *indio_dev,
++				     struct iio_chan_spec const *chan,
++				     int val, int val2, long mask)
++{
++	struct apple_aop_accel *accel = iio_priv(indio_dev);
++	u64 micro_hz;
++	u32 interval;
++	int ret;
++
++	if (mask != IIO_CHAN_INFO_SAMP_FREQ)
++		return -EINVAL;
++	if (val < 0 || val2 < 0)
++		return -EINVAL;
++
++	micro_hz = (u64)val * USEC_PER_SEC + val2;
++	if (!micro_hz)
++		return -EINVAL;
++	interval = clamp_t(u64, div64_u64((u64)USEC_PER_SEC * USEC_PER_SEC, micro_hz),
++			   AOP_ACCEL_MIN_US, AOP_ACCEL_MAX_US);
++
++	mutex_lock(&accel->lock);
++	ret = apple_aop_accel_set_interval(accel, interval);
++	mutex_unlock(&accel->lock);
++	return ret;
++}
++
++static const struct iio_mount_matrix *
++apple_aop_accel_get_mount_matrix(const struct iio_dev *indio_dev,
++				 const struct iio_chan_spec *chan)
++{
++	struct apple_aop_accel *accel = iio_priv(indio_dev);
++
++	return &accel->orientation;
++}
++
++static const struct iio_chan_spec_ext_info apple_aop_accel_ext_info[] = {
++	IIO_MOUNT_MATRIX(IIO_SHARED_BY_TYPE, apple_aop_accel_get_mount_matrix),
++	{ }
++};
++
++#define APPLE_AOP_ACCEL_CHANNEL(axis, index) {				\
++	.type = IIO_ACCEL,						\
++	.modified = 1,							\
++	.channel2 = IIO_MOD_##axis,					\
++	.info_mask_separate = BIT(IIO_CHAN_INFO_RAW),			\
++	.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_SCALE),		\
++	.info_mask_shared_by_all = BIT(IIO_CHAN_INFO_SAMP_FREQ),	\
++	.scan_index = index,						\
++	.scan_type = {							\
++		.sign = 's',						\
++		.realbits = 32,						\
++		.storagebits = 32,					\
++		.endianness = IIO_CPU,					\
++	},								\
++	.ext_info = apple_aop_accel_ext_info,				\
++}
++
++static const struct iio_chan_spec apple_aop_accel_channels[] = {
++	APPLE_AOP_ACCEL_CHANNEL(X, 0),
++	APPLE_AOP_ACCEL_CHANNEL(Y, 1),
++	APPLE_AOP_ACCEL_CHANNEL(Z, 2),
++	IIO_CHAN_SOFT_TIMESTAMP(3),
++};
++
++static const struct iio_info apple_aop_accel_info = {
++	.read_raw = apple_aop_accel_read_raw,
++	.write_raw = apple_aop_accel_write_raw,
++};
++
++static void apple_aop_accel_stop(void *data)
++{
++	struct apple_aop_accel *accel = data;
++
++	apple_aop_accel_set_property(accel, AOP_PROP_REPORT_INTERVAL, 0);
++	apple_aop_unlisten(accel->service);
++}
++
++static int apple_aop_accel_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	const struct apple_aop_service *service = dev_get_platdata(dev);
++	struct apple_aop_accel *accel;
++	struct iio_dev *indio_dev;
++	int ret;
++
++	if (!service)
++		return -ENODEV;
++
++	indio_dev = devm_iio_device_alloc(dev, sizeof(*accel));
++	if (!indio_dev)
++		return -ENOMEM;
++	accel = iio_priv(indio_dev);
++	accel->dev = dev;
++	accel->service = service;
++	mutex_init(&accel->lock);
++	spin_lock_init(&accel->sample_lock);
++
++	ret = iio_read_mount_matrix(dev, &accel->orientation);
++	if (ret)
++		return ret;
++
++	indio_dev->name = "apple-aop-accel";
++	indio_dev->info = &apple_aop_accel_info;
++	indio_dev->channels = apple_aop_accel_channels;
++	indio_dev->num_channels = ARRAY_SIZE(apple_aop_accel_channels);
++	indio_dev->modes = INDIO_DIRECT_MODE;
++
++	ret = devm_iio_kfifo_buffer_setup(dev, indio_dev, NULL);
++	if (ret)
++		return ret;
++
++	ret = apple_aop_listen(service, apple_aop_accel_report, indio_dev);
++	if (ret)
++		return ret;
++
++	ret = apple_aop_accel_set_interval(accel, AOP_ACCEL_DEFAULT_US);
++	if (ret) {
++		apple_aop_unlisten(service);
++		return dev_err_probe(dev, ret, "failed to start reports\n");
++	}
++
++	ret = devm_add_action_or_reset(dev, apple_aop_accel_stop, accel);
++	if (ret)
++		return ret;
++
++	return devm_iio_device_register(dev, indio_dev);
++}
++
++static const struct platform_device_id apple_aop_accel_ids[] = {
++	{ "apple-aop-accel" },
++	{ }
++};
++MODULE_DEVICE_TABLE(platform, apple_aop_accel_ids);
++
++static struct platform_driver apple_aop_accel_driver = {
++	.driver = {
++		.name = "apple-aop-accel",
++	},
++	.probe = apple_aop_accel_probe,
++	.id_table = apple_aop_accel_ids,
++};
++module_platform_driver(apple_aop_accel_driver);
++
++MODULE_AUTHOR("Henrik Klee <henrik@goat-code.com>");
++MODULE_DESCRIPTION("Apple AOP accelerometer driver");
++MODULE_LICENSE("Dual MIT/GPL");
+-- 
+2.54.0 (Apple Git-157)
+
