@@ -35,10 +35,15 @@ def _ask_twice(label, again, problem, ask, say):
             return value
 
 
-def ask_secrets(ask=getpass.getpass, say=print):
+def ask_secrets(account, ask=getpass.getpass, say=print):
+    """The password and PIN ACCOUNT (the release's install.account) asks for."""
     say('')
-    say('Setting up your account')
-    password = _ask_twice('Password (for sudo)', 'Repeat the password', password_problem, ask, say)
-    pin = _ask_twice('Lock-screen PIN (6 digits)', 'Repeat the PIN', pin_problem, ask, say)
+    say(f"Setting up the user '{account['user']}'")
+    secrets = {}
+    if account['password']:
+        secrets['password'] = _ask_twice(f'Password (for sudo, at least {MIN_PASSWORD} characters)',
+                                         'Repeat the password', password_problem, ask, say)
+    if account['pin']:
+        secrets['pin'] = _ask_twice('Lock-screen PIN (6 digits)', 'Repeat the PIN', pin_problem, ask, say)
     say('')
-    return {'password': password, 'pin': pin}
+    return secrets

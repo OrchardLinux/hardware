@@ -94,6 +94,6 @@ STEPS = {
     'extract-root': 'System files written',
     'firmware': 'Firmware installed',
     'remove-old-entries': 'Old boot entries removed',
-    'account': 'Password and PIN set',
+    'account': 'User set up',
     'boot-entry': 'Boot entry written',
 }

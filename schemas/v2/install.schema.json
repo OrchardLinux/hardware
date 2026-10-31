@@ -61,9 +61,22 @@
           "type": "string",
           "pattern": "^/(?:[A-Za-z0-9][A-Za-z0-9._-]{0,63})?$"
         },
+        "ready": {
+          "type": "string",
+          "pattern": "^/run/[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$",
+          "description": "A file the started system creates once it is ready; the installer waits for it over the session's SSH."
+        },
         "account": {
-          "type": "boolean",
-          "description": "The installer sets the image's one regular user's password and a 6-digit lock-screen PIN (default false)."
+          "type": "object",
+          "description": "The image's one regular user, and what the installer sets for it.",
+          "properties": {
+            "user": {"type": "string", "pattern": "^[a-z_][a-z0-9_-]{0,31}$"},
+            "password": {"type": "boolean", "description": "Ask for the user's password (for sudo and login)."},
+            "pin": {"type": "boolean", "description": "Ask for a 6-digit lock-screen PIN."},
+            "passwordless_sudo": {"type": "boolean", "description": "sudo without a password (/etc/sudoers.d/orchard)."}
+          },
+          "required": ["user", "password", "pin", "passwordless_sudo"],
+          "additionalProperties": false
         }
       },
       "required": [

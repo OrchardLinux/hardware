@@ -614,8 +614,8 @@ def install_firmware(bundle, root, *, size, sha256):
 
 # --- account -----------------------------------------------------------------
 
-def read_secrets(path):
-    """The password and PIN the CLI uploaded for this run; the file is deleted at once."""
+def read_secrets(path, account):
+    """The password and PIN ACCOUNT asks for, uploaded by the CLI for this run; deleted at once."""
     try:
         info = path.lstat()
     except FileNotFoundError:
@@ -627,22 +627,23 @@ def read_secrets(path):
     finally:
         path.unlink()
     password, pin = secrets.get('password'), secrets.get('pin')
-    if not isinstance(password, str) or not password or '\n' in password or '\0' in password:
+    if account['password'] and (not isinstance(password, str) or not password
+                                or '\n' in password or '\0' in password):
         raise InstallError('bad-password', 'The password is empty or contains a line break')
-    if not isinstance(pin, str) or len(pin) != 6 or not (pin.isascii() and pin.isdigit()):
+    if account['pin'] and (not isinstance(pin, str) or len(pin) != 6 or not (pin.isascii() and pin.isdigit())):
         raise InstallError('bad-pin', 'The PIN must be exactly 6 digits')
     return password, pin
 
 
-def account_user(root):
-    """The system's one regular user (UID 1000-59999): name, uid, gid."""
+def account_user(root, name):
+    """The system's one regular user (UID 1000-59999), which must be NAME: name, uid, gid."""
     users = []
     for line in (root / 'etc/passwd').read_text().splitlines():
         fields = line.split(':')
         if len(fields) == 7 and fields[2].isdigit() and fields[3].isdigit() and 1000 <= int(fields[2]) < 60000:
             users.append((fields[0], int(fields[2]), int(fields[3])))
-    if len(users) != 1:
-        raise InstallError('account-user', f'The system image needs exactly one regular user, '
+    if len(users) != 1 or users[0][0] != name:
+        raise InstallError('account-user', f'The system image needs exactly one regular user, {name}, '
                                            f'found {[u[0] for u in users]}')
     return users[0]
 
@@ -656,9 +657,20 @@ def write_file(path, text, mode, group=0):
         out.write(text)
 
 
-def set_account(root, password, pin):
-    user, uid, gid = account_user(root)
-    run('chroot', str(root), 'chpasswd', input=f'{user}:{password}\n'.encode())
+def set_account(root, account, password, pin):
+    """Set what ACCOUNT declares: password, lock-screen PIN, sudo without a password."""
+    user, uid, gid = account_user(root, account['user'])
+    if account['password']:
+        run('chroot', str(root), 'chpasswd', input=f'{user}:{password}\n'.encode())
+    if account['passwordless_sudo']:
+        # Plain sudo, any init system; that the image has sudo is the distribution's part.
+        write_file(root / 'etc/sudoers.d/orchard', f'{user} ALL=(ALL:ALL) NOPASSWD: ALL\n', 0o440)
+    if account['pin']:
+        set_pin(root, user, uid, gid, pin)
+    return user
+
+
+def set_pin(root, user, uid, gid, pin):
     digest = run('chroot', str(root), 'openssl', 'passwd', '-6', '-stdin', input=pin.encode()).decode().strip()
     if not digest.startswith('$6$') or ':' in digest or '\n' in digest:
         raise InstallError('pin-hash', 'openssl in the system image did not return a SHA-512 crypt hash')
@@ -674,7 +686,6 @@ def set_account(root, password, pin):
     write_file(root / 'usr/lib/orchard/pin-check', PIN_CHECK, 0o755)
     for service in ('greetd', 'omarchy-lock-password'):
         write_file(root / 'etc/pam.d' / service, PIN_PAM, 0o644)
-    return user
 
 
 def kernel_version(root):
@@ -691,7 +702,8 @@ def install(plan, stream):
     disk = plan['disk']['path']
     if os.geteuid() != 0:
         raise InstallError('not-root', 'The installer must run as root')
-    secrets = read_secrets(SECRETS) if plan.get('account') else None
+    account = plan.get('account')
+    secrets = read_secrets(SECRETS, account) if account and (account['password'] or account['pin']) else None
     info, partitions, free = read_gpt(disk)
     check_plan(plan, info, partitions, free)
     check_quiet(disk, partitions)
@@ -750,8 +762,8 @@ def install(plan, stream):
             point.mkdir(exist_ok=True)
             run('mount', '-t', fs, name, str(point))
             mounts.append(point)
-        if secrets:
-            emit('step', step='account', state='done', user=set_account(TARGET, *secrets))
+        if account:
+            emit('step', step='account', state='done', user=set_account(TARGET, account, *(secrets or (None, None))))
             secrets = None
         version = kernel_version(TARGET)
         write_entry(boot_mount, TARGET, version, entry, plan['root']['partuuid'])

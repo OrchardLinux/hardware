@@ -93,11 +93,14 @@ class Progress:
                 return
             self.last = now
             message = transfer_text(sent, total, self.started, self.initial, now)
-            if self.interactive:
+            if sent == total:
+                # Done: the phase line above says what it was; no stray size line.
+                if self.active_line:
+                    print('\r\033[2K', end='', file=self.output, flush=True)
+                    self.active_line = False
+            elif self.interactive:
                 print('\r\033[2K' + message, end='', file=self.output, flush=True)
                 self.active_line = True
-                if sent == total:
-                    self.end_line()
             else:
                 print(message, file=self.output, flush=True)
 

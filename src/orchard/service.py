@@ -4,7 +4,10 @@ from concurrent.futures import ThreadPoolExecutor
 import os
 from pathlib import Path
 import re
+import shlex
+import subprocess
 import tempfile
+import time
 
 from .state import exclusive_operation, private_directory
 from .progress import Clock, Progress
@@ -85,6 +88,32 @@ def entry_for(record, devicetree):
             'options': record.get('cmdline', 'rootwait'), 'devicetree': devicetree}
 
 
+def wait_ready(connection, ready, progress, seconds=180):
+    """Wait until the started system has created READY, over the session's pinned SSH."""
+    progress.phase('Waiting for the system to be ready')
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        try:
+            result = subprocess.run(connection.argv + ['test -e ' + shlex.quote(ready)],
+                                    stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
+            if result.returncode == 0:
+                return
+        except subprocess.TimeoutExpired:
+            pass
+        time.sleep(1)
+    raise RuntimeError('The system was installed and started, but did not report that it is ready. '
+                       'Do not reinstall for this; start it with orchard launch to see its console.')
+
+
+def revoke_ssh(connection):
+    """Empty the session key the started system took over; open sessions end with this one."""
+    result = subprocess.run(connection.argv + [': > /run/recovery/authorized_keys'],
+                            stdin=subprocess.DEVNULL, capture_output=True, timeout=20)
+    if result.returncode:
+        raise RuntimeError('The system is ready, but SSH access could not be removed; '
+                           'restart the device to end this boot session')
+
+
 @exclusive_operation
 def install(manifest=None, *, input_fn=input, secrets_fn=ask_secrets, progress=None):
     clock, progress = Clock(), progress or Progress()
@@ -111,7 +140,7 @@ def install(manifest=None, *, input_fn=input, secrets_fn=ask_secrets, progress=N
             firmware = firmware_future.result()
         progress.phase('Downloads verified; firmware extracted')
         adapter.boot(device, assets, record, progress)
-    progress.phase('Waiting for authenticated recovery SSH')
+    progress.phase('Connecting over SSH')
     with adapter.connect(device) as connection:
         private = private_directory(connection.scope.root)
         identity = {'profile': connection.scope.device.profile, 'ecid': connection.scope.device.ecid,
@@ -130,12 +159,12 @@ def install(manifest=None, *, input_fn=input, secrets_fn=ask_secrets, progress=N
         remote.put(connection, remote.SCRIPT.read_bytes(), remote.SCRIPT.name)
         (layout,) = [e for e in remote.run(connection, ['inspect']) if e['event'] == 'layout']
         option = choose_target(layout, clock, input_fn=input_fn, output=progress.phase)
-        # Only a release that asks for it gets the password and PIN account.
-        account = record.get('account', False)
+        # The account is what the release declares; it may ask for nothing.
+        account = record.get('account')
         secrets = None
-        if account:
+        if account and (account['password'] or account['pin']):
             with clock.exclude('input'):
-                secrets = secrets_fn()
+                secrets = secrets_fn(account)
         progress.phase('Copying the kernel and firmware to the device')
         with tempfile.TemporaryDirectory(prefix='installation-', dir=private) as directory:
             mixin, mixin_record = adapter.prepare_mixin(firmware, Path(directory) / 'mixin')
@@ -150,7 +179,7 @@ def install(manifest=None, *, input_fn=input, secrets_fn=ask_secrets, progress=N
             'path': remote.DIRECTORY + '/firmware.tar.gz',
             'bytes': mixin_record['bytes'], 'sha256': mixin_record['sha256']})
         remote.put(connection, json.dumps(plan).encode(), 'plan.json')
-        if account:
+        if secrets is not None:
             remote.put(connection, json.dumps(secrets).encode(), 'secrets.json')
         secrets = None
         progress.phase('Installing ' + record.get('name', 'Linux') + '…')
@@ -168,16 +197,29 @@ def install(manifest=None, *, input_fn=input, secrets_fn=ask_secrets, progress=N
         save_report(path, report)
         # The recovery runs the same kernel the new entry boots, so it switches
         # into the new root right away: the first start needs no second DFU boot.
-        try:
-            answer = ask(clock, 'Keep SSH access for this boot session? [y/N] ', input_fn)
-        except EOFError:
-            answer = ''
-        report['ssh_access'] = 'retained' if answer.lower() in ('y', 'yes') else 'removed'
+        # A release that declares `ready` keeps this session's SSH key until
+        # the started system is ready; then the user decides whether it stays.
+        ready = record.get('ready')
+        progress.phase('Starting ' + record.get('name', 'Linux'))
         Client(connection, progress).call('start', {'root': report['root'], 'boot': report['boot'],
-                                                    'keep_ssh': report['ssh_access'] == 'retained'})
+                                                    'keep_ssh': bool(ready)})
         report['started'] = True
+        save_report(path, report)
+        if ready:
+            wait_ready(connection, ready, progress)
+            report['ready'] = True
+            try:
+                answer = ask(clock, 'Keep SSH access for this boot session? [y/N] ', input_fn)
+            except EOFError:
+                answer = ''
+            if answer.lower() in ('y', 'yes'):
+                report['ssh_access'] = 'retained'
+            else:
+                revoke_ssh(connection)
+                report['ssh_access'] = 'revoked'
         report['phases'] = progress.timings
         save_report(path, report)
-    progress.phase(record.get('name', 'Linux') + ' is starting on the device. To start it again later, '
-                   'put the device in DFU mode and run: orchard launch')
+    name = record.get('name', 'Linux')
+    progress.phase(f'{name} is {"ready" if report.get("ready") else "starting"}. '
+                   'To start it again later, put the device in DFU mode and run: orchard launch')
     return report

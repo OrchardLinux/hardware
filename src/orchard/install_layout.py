@@ -87,7 +87,7 @@ def options(layout) -> List[Option]:
 
 
 def plan(layout, option: Option, image: Dict, entry: Dict, layer: Dict, firmware: Optional[Dict] = None,
-         account: bool = False) -> Dict:
+         account: Optional[Dict] = None) -> Dict:
     """The plan `install_device.py run` executes for one chosen option.
 
     IMAGE is the distro's root image, LAYER orchard's platform layer (kernel,
@@ -130,5 +130,5 @@ def plan(layout, option: Option, image: Dict, entry: Dict, layer: Dict, firmware
         'layer': layer,
         'entry': entry,
         'firmware': firmware,
-        'account': account,     # secrets travel separately, never in the plan
+        'account': account,     # the release's install.account; secrets travel separately
     }

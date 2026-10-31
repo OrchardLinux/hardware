@@ -204,5 +204,6 @@ def resolve(manifest, profile, progress=None, clock=None, purpose='install'):
     record = {'protocol': document['protocol'], 'profile': profile, 'platform': platform, 'assets': receipts,
               'release': document.get('version'), 'name': document.get('name', 'Linux'),
               'default_root': document.get('install', {}).get('default_root', '/linux'),
-              'account': document.get('install', {}).get('account', False)}
+              'account': document.get('install', {}).get('account'),
+              'ready': document.get('install', {}).get('ready')}
     return record, paths

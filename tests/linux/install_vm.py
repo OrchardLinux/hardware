@@ -161,7 +161,8 @@ def install(disk, choose, image, data, label):
     (layout,) = [e for e in device(disk, 'inspect') if e['event'] == 'layout']
     option = choose(L.options(layout))
     Path('/run/orchard').mkdir(parents=True, exist_ok=True)
-    plan = L.plan(layout, option, image, {'id': 'test', 'options': 'quiet', 'devicetree': BOARD_DTB}, account=True,
+    plan = L.plan(layout, option, image, {'id': 'test', 'options': 'quiet', 'devicetree': BOARD_DTB}, account={'user': 'tablet', 'password': True, 'pin': True,
+                                                                                                'passwordless_sudo': False},
                   firmware=write_firmware())
     with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as f:
         json.dump(plan, f)

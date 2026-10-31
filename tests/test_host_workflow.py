@@ -115,12 +115,13 @@ class HostWorkflow(unittest.TestCase):
                 progress.transfer(2, 3)
                 progress.transfer(3, 3)
             text = output.getvalue()
+            # A finished transfer leaves no line behind.
             if interactive:
                 self.assertEqual(text.count('\r'), 3)
-                self.assertEqual(text.count('\n'), 1)
+                self.assertEqual(text.count('\n'), 0)
             else:
                 self.assertNotIn('\r', text)
-                self.assertEqual(text.count('\n'), 2)
+                self.assertEqual(text.count("\n"), 1)
 
     def test_recovery_detection_does_not_require_the_dfu_location(self):
         from orchard import devices

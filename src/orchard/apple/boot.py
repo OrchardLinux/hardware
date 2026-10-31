@@ -97,7 +97,7 @@ def start_pongo(device, image, log, say, *, chip, board, product, seconds=30, qu
     if control:
         say('If the Apple logo stays for about 15 seconds, reconnect the cable at the device once.')
     else:
-        say('If the Apple logo stays for a few seconds, reconnect the cable at the device once.')
+        say('If the Apple logo stays for more than a few seconds, reconnect the cable at the device once.')
     watcher = replug.PortReset(log.name, control) if control else None
     if watcher:
         watcher.start()
@@ -137,7 +137,7 @@ def boot(device, assets, manifest, progress, *, profile, chip, board, product):
     usb.selected(device['location'], device['ecid'], chip=chip, board=board)
     progress.reset_transfer()
     pongo.upload(assets['recovery'], device['location'], manifest['assets']['recovery']['sha256'], progress.transfer)
-    progress.phase('Waiting for recovery USB')
+    progress.phase('Waiting for the device on USB')
     wait_mode(device, 'linux', chip=chip, board=board, product=product, seconds=120)
 
 
