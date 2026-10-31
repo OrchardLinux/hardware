@@ -44,6 +44,7 @@ path available for review and reuse now.
 The shared 425 mA worker is a recorded development experiment, not a charger
 driver. Source identification, protections, sustainable net charging,
 USB reconnect behavior and a desktop regression remain qualification work.
-The prepared 850 mA test stays separate from the implementation PR until
-its physical result exists. No charging success or internal-storage
-installation is implied by publishing the source.
+The 850 mA follow-up now demonstrates brief positive net battery current
+and automatic restoration. Its result is documented separately; sustained
+charging and the production policy remain unqualified. Publishing this
+source does not qualify a charger driver or internal-storage installation.

@@ -15,7 +15,9 @@ exact-board guards and direct hardware access. Review them before reuse.
 | [battery](battery/) | BQ27545 HDQ/UART frontend, two-stop-bit serdev API patch, Kconfig/Makefile patch, capacity-pairing patch and tests | Identity `0x0545`, Linux voltage/current/temperature/percentage and consistent remaining/full pairing |
 | [charging](charging/) | Read-only PMIC observer and the tested 425 mA one-shot kernel worker/policy core | -764 mA baseline, -423…-400 mA trial, automatic restoration and -767 mA afterward |
 
-The 850 mA follow-up is not included as a measured result: it has not run.
+The later 850 mA / 30-second follow-up produced +20…+51 mA net battery
+current and verified restoration; sustained charging remains unqualified.
+This source snapshot contains the 425 mA worker, not that 850 mA variant.
 The Foot patch's independent contribution was not isolated from the other
 keyboard/input fixes. See [the evidence report](../../docs/bring-up/j72.md).
 Desktop sources are published [in the companion repository](https://github.com/thisiscamk/ipad-air-j72-linux/tree/090c68e/code/desktop); they belong in a separate omarchy-a contribution.
