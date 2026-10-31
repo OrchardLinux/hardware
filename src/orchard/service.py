@@ -98,6 +98,12 @@ def wait_ready(connection, ready, progress, seconds=180):
                                     stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
             if result.returncode == 0:
                 return
+            error = result.stderr.decode(errors='replace').lower()
+            if 'permission denied' in error or 'host key verification failed' in error:
+                # The system serves SSH but not this session's key: waiting does not help.
+                raise RuntimeError('The system was installed and started, but its SSH does not accept '
+                                   "this session's key, so readiness cannot be checked. "
+                                   + result.stderr.decode(errors='replace').strip()[-300:])
         except subprocess.TimeoutExpired:
             pass
         time.sleep(1)
