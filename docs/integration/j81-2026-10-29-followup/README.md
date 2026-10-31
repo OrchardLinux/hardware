@@ -1,9 +1,9 @@
 # J81 follow-up qualification — 2026-10-29
 
-The requested quiet-versus-normal Pongo comparison is complete: **both pinned
-source builds returned to iPadOS without a Pongo USB endpoint**. Removing
-`QUIET_BOOT` did not fix the source-built loader. The known-working Hoolock
-prebuilt remains the control; the underlying source-build failure is unresolved.
+A quiet-versus-normal Pongo comparison from this round is no longer part of this
+record: its source-built Pongo (`bb492b0`) lacked upstream `ad8b2d1`, the Xcode
+16.3 fix that orchard's Pongo has carried since (see boot/quiet/README.md), which
+explains why neither build reached USB. It remains in the history of #34.
 
 Separately, the full Omarchy A v0.1.1 desktop was installed to this J81's internal
 ext4 partition and returned after a clean reboot and fresh Pongo/m1n1 boot.
@@ -15,11 +15,6 @@ unchanged, and no J82 qualification is implied.
 
 | Evidence | Scope |
 | --- | --- |
-| [Pongo comparison](pongo/COMPARISON.md) | Fixed source/toolchain/patch; only quiet flag differs; forced rebuilds and two hardware rounds |
-| [Paired outcomes](pongo/live-comparison.json) | No endpoint or Linux upload for either source-built Pongo; no storage writes in these rounds |
-| [Rebuild receipt](pongo/rebuild-receipt.json) | Quiet/normal/quiet outputs reproduce; changing flags alone is not a Make dependency |
-| [Source identities](pongo/source-provenance.json) | Pinned Pongo/newlib, patch/source hashes and toolchain context |
-| [Preprocessor comparison](pongo/preprocessor-comparison.json) | Framebuffer/entry differ; sampled USB/shell units match at source level, without a runtime-equivalence claim |
 | [Native-root report](NATIVE-ROOT.md) | Installation, first global systemd boot, fixes and fresh-boot persistence |
 | [Installation result](native-install-result.json) | Full original archive transfer/extraction, native tools, exact storage extent and desktop/network checks |
 | [Fresh-boot result](native-reboot-result.json) | Distinct kernel boot, counter 2, exact surviving marker, unchanged SSH identity and guards |
